@@ -99,6 +99,10 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--params-json", err)
 
+    def test_long_prompt_is_text_not_path(self):
+        prompt = "a flat illustration, " * 30  # one path component > 255 bytes
+        self.assertEqual(cli.read_input(prompt, None), {"text": prompt})
+
     def test_sniff(self):
         self.assertEqual(core.sniff_ext(PNG, "bin"), "png")
         self.assertEqual(core.sniff_ext(b"RIFF\0\0\0\0WAVEfmt", "bin"), "wav")

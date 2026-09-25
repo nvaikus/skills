@@ -18,3 +18,6 @@
 - Without a key only the server-picked `pollinations:default` works: image via `image.pollinations.ai/prompt/...`, llm via `text.pollinations.ai/...`. Choosing `model=` or tts/video needs `POLLINATIONS_API_KEY`.
 - Anonymous image: ~45 s per call, intermittent 500 (upstream 429); `run` retries once. Adds a pollinations.ai watermark even with `nologo=true`.
 - `gen.pollinations.ai` rejects anonymous generation with 401 except for cached identical prompts (live-proven, do not "fix" to the new host).
+
+## Paid fallback (image)
+- `google/gemini-3.1-flash-lite-image` ≈ $0.034/image, ~4 s; aspect via `--params-json '{"image_config":{"aspect_ratio":"16:9"}}'` (1376×768). Returns JPEG even when `-o` says `.png`.

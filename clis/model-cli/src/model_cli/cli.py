@@ -89,11 +89,19 @@ def parse_params(args):
 def read_input(value, prompt):
     if value == "-":
         return {"text": sys.stdin.read()}
-    p = Path(value).expanduser()
-    if len(value) < 1024 and p.is_file():
+    if _is_file(value):
+        p = Path(value).expanduser()
         kind = _kind(p)
         return {"file": str(p), "kind": kind, "text": prompt or FILE_PROMPT.get(kind, "")}
     return {"text": value if not prompt else f"{prompt}\n\n{value}"}
+
+
+def _is_file(value):
+    """A prompt is not a path: a long one raises ENAMETOOLONG from stat()."""
+    try:
+        return Path(value).expanduser().is_file()
+    except (OSError, ValueError):
+        return False
 
 
 def _kind(p):
