@@ -1,0 +1,17 @@
+{
+  "free_only": true,
+  "hf_provider": "auto",
+  "defaults": {
+    "image": ["hf:black-forest-labs/FLUX.1-schnell", "pollinations:default"],
+    "video": ["hf:Wan-AI/Wan2.2-TI2V-5B"],
+    "tts": ["hf:hexgrad/Kokoro-82M", "pollinations:tts"],
+    "asr": ["hf:openai/whisper-large-v3"],
+    "llm": ["openrouter:openrouter/free", "pollinations:default"]
+  },
+  "aliases": {
+    "flux": "hf:black-forest-labs/FLUX.1-schnell",
+    "kokoro": "hf:hexgrad/Kokoro-82M",
+    "whisper": "hf:openai/whisper-large-v3",
+    "free-llm": "openrouter:openrouter/free"
+  }
+}
