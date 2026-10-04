@@ -43,6 +43,17 @@ Installs skilltap as a skill tracked from this repo (so it updates itself), adds
 
 `skilltap apply list.json` installs what is missing (origin `list:<path>`), switches the source of its own skills when the list changes it, and removes what it installed and the list no longer names. `user` skills and untracked folders are never touched; a user skill with the same repo+path stays the user's. `skilltap hook` wires `<root>/baseline/skills.json` into the SessionStart hook when that file exists.
 
+## Source remap (per host)
+
+```json
+{ "remap": { "https://github.com/owner/repo": "https://github.com/owner/repo-fork" } }
+```
+
+- File: `<root>/skilltap/config.json` (may be a symlink to a synced copy). Absent = no remap.
+- Applied to every list entry (`apply`, `refresh --apply`) and every `get` URL before anything else; keys match any form of the repo URL (scheme, `.git`, trailing slash, case).
+- Effects: list skills already tracked from the old URL switch to the new one (old clone dropped once unused); a `user` skill tracked from the new URL counts as the listed one, so no duplicate, no flip-back.
+- Already-tracked `user` skills keep their source; `get <new-url> --force` moves one.
+
 ## Coming from skillsync
 
 `skilltap migrate-from-skillsync` re-tracks everything in `<root>/skillsync/manifest.json` (reusing its clones), swaps the old SessionStart hook for skilltap's, deletes the old tool.

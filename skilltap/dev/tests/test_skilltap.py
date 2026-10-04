@@ -335,6 +335,55 @@ class TestApply(Base):
         self.ok("refresh", "--quiet", "--apply", str(self.tmp / "none.json"))
 
 
+class TestRemap(Base):
+    """Per-host source override: list entries and get URLs naming one repo resolve to another."""
+
+    def setUp(self):
+        super().setUp()
+        files = {n + "/SKILL.md": SKILL.format(name=n, v=1) for n in "amu"}
+        _, self.pub = self.make_repo("pub", files)
+        _, self.priv = self.make_repo("priv", files)
+        self.lst = self.cfg / "baseline" / "skills.json"
+        self.lst.parent.mkdir(parents=True)
+        self.lst.write_text(json.dumps({"skills": {n: {"repo": self.pub, "path": n} for n in "amu"}}))
+
+    def set_remap(self, table):
+        (self.cfg / "skilltap").mkdir(parents=True, exist_ok=True)
+        (self.cfg / "skilltap" / "config.json").write_text(json.dumps({"remap": table}))
+
+    def test_list_and_get_follow_remap(self):
+        self.ok("apply", str(self.lst), env={})                  # no config: public, as before
+        self.assertTrue(skilltap.same_repo(self.lock()["skills"]["m"]["repo"], self.pub))
+        self.ok("forget", "a")
+        self.ok("forget", "u")
+        for n in "au":
+            shutil.rmtree(self.skill(n))
+        # key in another URL form (.git dropped, trailing slash) still matches
+        self.set_remap({self.pub[:-4] + "/": self.priv})
+        out = self.ok("get", self.pub, "u")                      # user get of the public URL -> private
+        self.assertIn("remap:", out)
+        out = self.ok("apply", str(self.lst))
+        self.assertIn("a installed (list)", out)
+        self.assertIn("m switched source (list)", out)            # old public list install migrates
+        self.assertNotIn("u ", out)
+        locks = self.lock()["skills"]
+        self.assertEqual(sorted(locks), ["a", "m", "u"])          # no duplicates
+        for n in "amu":
+            self.assertTrue(skilltap.same_repo(locks[n]["repo"], self.priv), n)
+        self.assertEqual(locks["u"]["origin"], "user")            # user install stays the user's
+        self.assertEqual(locks["m"]["origin"], f"list:{self.lst}")
+        self.assertFalse((self.cfg / "skilltap" / "sources" / skilltap.slug(self.pub)).exists())
+        self.assertEqual(self.ok("apply", str(self.lst), "--quiet"), "")   # stable, no flip-flop
+        self.ok("refresh", "--apply", str(self.lst))
+        self.assertEqual(self.lock()["skills"]["u"]["origin"], "user")
+
+    def test_bad_remap_is_an_error(self):
+        self.set_remap(["x"])
+        code, _, err = self.run_cli("apply", str(self.lst))
+        self.assertEqual(code, 1)
+        self.assertIn("'remap' must be an object", err)
+
+
 class TestHook(Base):
     def test_hook_idempotent_and_wrapper(self):
         settings = self.cfg / "settings.json"

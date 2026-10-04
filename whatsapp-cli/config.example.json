@@ -1,0 +1,5 @@
+{
+  "default_account": "default",
+  "text_limit": 200,
+  "sync_wait": 20
+}

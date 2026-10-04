@@ -16,6 +16,7 @@ One CLI (`skilltap`, Python stdlib) that tracks skills by `repo + path`, keeps o
 - One clone per repo, shared by all its skills and all parallel agents: a push carries every local commit; unpublished work goes on a branch. `refresh` rebases clones (autostash) — while a peer edits a clone, don't refresh.
 - Tracked or not? `skilltap status`. Untracked skill → edit in place.
 - Origins: `user` (installed by hand) is never touched by `apply`; `list:<path>` skills come and go with that list.
+- Per-host source override: `<root>/skilltap/config.json` `{"remap": {"<repo>": "<repo>"}}` reroutes list entries and `get` URLs (one host installs from a fork/mirror, others from the list's URL). Details → `references/how-it-works.md`.
 
 ## Commands
 

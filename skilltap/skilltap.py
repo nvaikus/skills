@@ -60,6 +60,10 @@ def default_list():
     return config_root() / "baseline" / "skills.json"
 
 
+def config_file():
+    return state_dir() / "config.json"
+
+
 # ---------------------------------------------------------------- output
 
 class Out:
@@ -206,6 +210,19 @@ def norm_url(url):
 
 def same_repo(a, b):
     return norm_url(a) == norm_url(b)
+
+
+def remap_url(url):
+    """Per-host source override from <root>/skilltap/config.json {"remap": {"<from>": "<to>"}}.
+
+    Keys match any URL form of the same repo (scheme, .git, trailing slash, case)."""
+    table = read_json(config_file(), {}).get("remap") or {}
+    if not isinstance(table, dict):
+        raise Fail(f"{config_file()}: 'remap' must be an object of repo URL -> repo URL")
+    for src, dst in table.items():
+        if same_repo(src, url):
+            return dst
+    return url
 
 
 def slug(url):
@@ -561,6 +578,10 @@ def install(lock, name, repo, path, origin, update_clone=True, force=False):
 
 def cmd_get(a):
     repo, path, ref = parse_target(a.target)
+    mapped = remap_url(repo)
+    if not same_repo(mapped, repo):
+        info(f"remap: {norm_url(repo)} -> {norm_url(mapped)} ({config_file()})")
+        repo = mapped
     with locked() as ok:
         if not ok:
             raise Fail("another skilltap run holds the lock; retry")
@@ -608,18 +629,18 @@ def apply_list(lock, list_path):
     wanted = read_json(list_path, None)
     if wanted is None:
         raise Fail(f"list not found: {list_path}")
-    raw = wanted.get("skills", {})
+    wanted = {n: dict(s, repo=remap_url(s["repo"]), path=s.get("path", "").strip("/"))
+              for n, s in wanted.get("skills", {}).items()}
     stale = set()                                     # list is newer than the clone: pull it first
-    for spec in raw.values():
+    for spec in wanted.values():
         clone = sources_dir() / slug(spec["repo"])
-        if (clone / ".git").exists() and not (clone / spec.get("path", "").strip("/") / "SKILL.md").is_file():
+        if (clone / ".git").exists() and not (clone / spec["path"] / "SKILL.md").is_file():
             stale.add(clone)
     for clone in sorted(stale):
         try:
             pull(clone)
         except Fail as e:
             warn(str(e))
-    wanted = {n: dict(s, path=s.get("path", "").strip("/")) for n, s in raw.items()}
     for name, spec in sorted(wanted.items()):
         cur = lock["skills"].get(name)
         same = cur and same_repo(cur["repo"], spec["repo"]) and cur.get("path", "") == spec.get("path", "").strip("/")
@@ -925,7 +946,8 @@ def build_parser():
                        epilog='List format: {"skills": {"<name>": {"repo": "<git-url>", "path": "<dir>"}}}\n'
                               "Installs missing ones (origin list:<path>), removes ones this list installed\n"
                               "and no longer names. Never touches origin 'user' skills or untracked folders;\n"
-                              "a user skill with the same repo+path stays 'user'.")
+                              "a user skill with the same repo+path stays 'user'. List repos (and 'get' URLs)\n"
+                              "pass through the remap in <root>/skilltap/config.json first.")
     s.add_argument("list")
     s.add_argument("--quiet", action="store_true", help="skip silently if busy")
     s.set_defaults(fn=cmd_apply)
