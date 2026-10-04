@@ -2,7 +2,7 @@
 <data>/notify.yaml:
 
     telegram: on
-    telegram_topic: Notifications     # optional; default: claude-tg's own default topic
+    telegram_topic: system            # optional; claude-tg notify_topics key or literal name; default: its default topic
     claude_tg: ~/.local/bin/claude-tg  # optional; default: claude-tg on PATH, else ~/.local/bin/claude-tg
 
 Text = `<task> — ❌ failed in 1m 04s`, the last lines of the run's output in <pre>, a muted meta line.

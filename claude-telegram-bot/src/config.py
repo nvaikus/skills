@@ -29,6 +29,7 @@ DEFAULTS = {
     "protected_paths": [],       # leak filter (guard.py): files whose verbatim text never goes out; [] = off
     "protect_min_words": 12,     # consecutive matching words that count as a leak
     "protect_exempt_marker": ".user-made",  # dirs holding this file are not protected
+    "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
 }
 
 

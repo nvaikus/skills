@@ -838,7 +838,9 @@ class Notify(unittest.TestCase):
             self.assertEqual(bot.calls[1][1]["message_thread_id"], 300)
             self.assertTrue(bot.calls[1][1]["disable_notification"])
             self.assertEqual(r, {"chat": 7, "thread": 300, "message_ids": [5]})
-            self.assertEqual(json.loads((Path(d) / "notify.json").read_text()), {"topics": {"Notifications": 300}})
+            self.assertEqual(json.loads((Path(d) / "notify.json").read_text()),
+                             {"topics": {"Notifications": 300}, "meta": {"Notifications": {"name": "Notifications",
+                                                                                           "icon": None}}})
 
     def test_deleted_topic_is_recreated(self):
         class Bot(FakeBot):
@@ -855,6 +857,41 @@ class Notify(unittest.TestCase):
             (Path(d) / "notify.json").write_text('{"topics": {"Notifications": 300}}')
             r = self.run_send(d, Bot(), text="x")
             self.assertEqual(r["thread"], 301)
+
+    def test_registry_key_creates_named_topic_with_icon(self):
+        class Bot(FakeBot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                super().call(method, **p)
+                if method == "getForumTopicIconStickers":
+                    return [{"emoji": "\U0001f4ac", "custom_emoji_id": "111"}, {"emoji": "\u2b50\ufe0f", "custom_emoji_id": "222"}]
+                return {"message_thread_id": 400} if method == "createForumTopic" else {"message_id": 5}
+        cfg = dict(config.DEFAULTS, owner_id=7, notify_topics={"mail": {"name": "Mail box", "icon": "\u2b50"},
+                                                                 "plain": "Plain name"})
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = Bot()
+            self.n.send(bot, cfg, "x", topic="mail")
+            self.assertEqual(bot.calls[1], ("createForumTopic", {"chat_id": 7, "name": "Mail box",
+                                                                 "icon_custom_emoji_id": "222"}))
+            self.n.send(bot, cfg, "x", topic="plain")
+            self.assertEqual(bot.calls[3], ("createForumTopic", {"chat_id": 7, "name": "Plain name"}))
+            self.n.send(bot, cfg, "x", topic="Literal")
+            self.assertEqual(bot.calls[5], ("createForumTopic", {"chat_id": 7, "name": "Literal"}))
+            self.assertEqual(sorted(json.loads((Path(d) / "notify.json").read_text())["topics"]),
+                             ["Literal", "mail", "plain"])
+
+    def test_renamed_registry_entry_edits_cached_topic(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            (Path(d) / "notify.json").write_text('{"topics": {"Notifications": 300}}')  # pre-registry cache
+            cfg = dict(config.DEFAULTS, owner_id=7, notify_topics={"Notifications": "Other", "x": "X"})
+            bot = FakeBot()
+            r = self.n.send(bot, cfg, "a")
+            self.n.send(bot, cfg, "b")
+            self.assertEqual([c[0] for c in bot.calls], ["editForumTopic", "sendMessage", "sendMessage"])
+            self.assertEqual(bot.calls[0][1], {"chat_id": 7, "message_thread_id": 300, "name": "Other"})
+            self.assertEqual(r["thread"], 300)
+            bot = FakeBot(fail={"editForumTopic": "Bad Request: TOPIC_NOT_MODIFIED"})
+            cfg["notify_topics"]["Notifications"] = "Third"
+            self.assertEqual(self.n.send(bot, cfg, "c")["thread"], 300)  # rename failure never blocks the send
 
     def test_main_chat_and_owner_from_state(self):
         with tempfile.TemporaryDirectory() as d:
@@ -881,6 +918,73 @@ class Notify(unittest.TestCase):
         self.assertEqual(len(self.n.chunks("x" * 5000, "plain")), 2)
         with self.assertRaises(self.n.NotifyError):
             self.n.chunks("x" * 5000, "html")
+
+    def parse(self, *argv, env=None):
+        from src import main as m
+        with mock.patch.object(self.n, "main", lambda cfg, a: setattr(self, "args", a) or 0):
+            m.main(["notify", *argv])
+        return self.n.target(self.args, env or {})
+
+    def test_target_resolution(self):
+        run = {config.RUN_TOPIC_ENV: "555"}
+        self.assertEqual(self.parse("x"), ("Notifications", None))
+        self.assertEqual(self.parse("x", env=run), (None, 555))  # inside a bot run: its own topic
+        self.assertEqual(self.parse("--topic", "mail", "x", env=run), ("mail", None))
+        self.assertEqual(self.parse("--main-chat", "x", env=run), (None, None))
+        self.assertEqual(self.parse("--thread", "77", "--file", "a.mp4", "--file", "b.png", env=run), (None, 77))
+        self.assertEqual(self.args.file, ["a.mp4", "b.png"])
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            self.parse("--thread", "1", "--topic", "k")
+
+    class UpBot(FakeBot):
+        def __init__(self, fail=None):
+            super().__init__(fail)
+            self.uploads = []
+
+        def upload(self, method, field, path, _timeout=120, **p):
+            self.uploads.append((method, field, path.name, p))
+            if method in self.fail:
+                raise TgError(method, 400, self.fail[method])
+            return {"message_id": len(self.uploads) + 10}
+
+    def test_files_by_type_caption_and_fallback(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            for n in ("v.MP4", "p.png", "r.html"):
+                (Path(d) / n).write_bytes(b"x")
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            bot = self.UpBot(fail={"sendPhoto": "Bad Request: IMAGE_PROCESS_FAILED"})
+            r = self.n.send_files(bot, cfg, [f"{d}/v.MP4", f"{d}/p.png", f"{d}/r.html"], "**done**", "md", thread=9)
+            self.assertEqual([u[:2] for u in bot.uploads], [("sendVideo", "video"), ("sendPhoto", "photo"),
+                                                            ("sendDocument", "document"), ("sendDocument", "document")])
+            v = bot.uploads[0][3]
+            self.assertEqual((v["supports_streaming"], v["caption"], v["parse_mode"], v["message_thread_id"]),
+                             (True, "<b>done</b>", "HTML", 9))
+            self.assertNotIn("caption", bot.uploads[3][3])
+            self.assertEqual(bot.calls, [])  # short text = caption, no message
+            self.assertEqual(r["message_ids"], [11, 13, 14])
+            bot = self.UpBot()
+            self.n.send_files(bot, cfg, [f"{d}/r.html"], "y" * 2000, topic=None)
+            self.assertEqual([c[0] for c in bot.calls], ["sendMessage"])  # long text goes before the file
+            self.assertNotIn("caption", bot.uploads[0][3])
+
+    def test_file_limits_and_leak_guard(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            big = Path(d) / "big.mp4"
+            with open(big, "wb") as f:
+                f.truncate(self.n.MAX_FILE + 1)
+            bot = self.UpBot()
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            with self.assertRaisesRegex(self.n.NotifyError, "50 MB"):
+                self.n.send_files(bot, cfg, [str(big)], topic=None)
+            with self.assertRaisesRegex(self.n.NotifyError, "no such file"):
+                self.n.send_files(bot, cfg, [f"{d}/missing"], topic=None)
+            self.assertEqual((bot.calls, bot.uploads), ([], []))
+            (Path(d) / "s.txt").write_text("secret")
+            g = mock.Mock(file_leak=lambda p: "/protected/x" if p.name == "s.txt" else None)
+            with mock.patch("sys.stderr"):
+                r = self.n.send_files(bot, cfg, [f"{d}/s.txt"], topic=None, guard=g)
+            self.assertEqual((bot.uploads, r["blocked"]), ([], [f"{d}/s.txt"]))
+            self.assertEqual(bot.calls[0][1]["text"], ui.t("en", "leak_file"))
 
     def test_reply_to_bot_message_is_quoted(self):
         bot_msg = {"message_id": 10, "from": {"is_bot": True}, "text": "Bill due 5 Oct"}

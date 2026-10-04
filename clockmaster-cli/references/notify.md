@@ -38,7 +38,7 @@ teams_channel: 19:...@thread.tacv2
 
 ```yaml
 telegram: on
-# telegram_topic: Jobs        # default: claude-tg's own default topic
+# telegram_topic: system      # claude-tg notify_topics key or literal name; default: its default topic
 # claude_tg: ~/.local/bin/claude-tg   # default: on PATH, else ~/.local/bin/claude-tg (services have a bare PATH)
 ```
 

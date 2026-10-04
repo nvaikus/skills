@@ -2,6 +2,7 @@
 URLs are built here and never logged; errors carry only Telegram's description."""
 import http.client
 import json
+import mimetypes
 import socket
 import time
 import urllib.error
@@ -97,7 +98,7 @@ class Bot:
                     continue
                 raise
 
-    def upload(self, method, field, path: Path, **params):
+    def upload(self, method, field, path: Path, _timeout=120, **params):
         """multipart/form-data upload (sendDocument etc.)."""
         boundary = uuid.uuid4().hex
         parts = []
@@ -108,10 +109,10 @@ class Bot:
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
         parts.append(
             f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\n'
-            f"Content-Type: application/octet-stream\r\n\r\n".encode() + path.read_bytes() + b"\r\n"
+            f"Content-Type: {mimetypes.guess_type(path.name)[0] or 'application/octet-stream'}\r\n\r\n".encode() + path.read_bytes() + b"\r\n"
         )
         parts.append(f"--{boundary}--\r\n".encode())
-        return self._post(method, b"".join(parts), f"multipart/form-data; boundary={boundary}", 120)
+        return self._post(method, b"".join(parts), f"multipart/form-data; boundary={boundary}", _timeout)
 
     def download(self, file_id: str, dest: Path) -> Path:
         info = self.call("getFile", file_id=file_id)

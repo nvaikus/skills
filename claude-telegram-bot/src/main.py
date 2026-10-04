@@ -17,6 +17,7 @@ examples:
   claude-tg logs -f          # journalctl -u claude-tg
   claude-tg run              # foreground (debugging); only one poller per token
   echo done | claude-tg notify       # bot -> owner, topic "Notifications" (scripts, scheduled jobs)
+  claude-tg notify --file out.mp4 "demo"   # file -> owner; inside a bot run: into that run's topic
 """
 
 
@@ -78,18 +79,27 @@ def main(argv=None):
     s.add_argument("-f", "--follow", action="store_true")
     sub.add_parser("run", help="run the bot in the foreground")
     s = sub.add_parser("notify", help="send a message from the bot to the owner (no service needed)",
-                       description="Text from args or stdin. Default target: topic 'Notifications' (created once, "
-                                   "id kept in STATE_DIR/notify.json); replying there starts a claude session "
-                                   "that sees the quoted notification. Prints {chat, thread, message_ids}.")
+                       description="Text from args or stdin (with --file: args only, becomes the caption). Target: "
+                                   "--thread > --main-chat > --topic > $CLAUDE_TG_RUN_TOPIC (inside a bot run: its own "
+                                   "topic) > topic 'Notifications' (created once, id kept in STATE_DIR/notify.json); "
+                                   "--topic KEY resolves via config notify_topics. Replying there starts a claude "
+                                   "session that sees the quoted notification. Prints {chat, thread, message_ids}. "
+                                   "Exit 3 = a file was withheld by the leak guard.")
     s.add_argument("text", nargs="*", help="message text (default: stdin)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
     g.add_argument("--markdown", "--md", action="store_true", help="text is markdown (converted like bot answers)")
     s.add_argument("--silent", action="store_true", help="no sound / vibration")
+    s.add_argument("--file", action="append", metavar="PATH",
+                   help="send a file (repeatable; <= 50 MB): mp4/mov/m4v as streaming video, jpg/png/webp as photo, "
+                        "else as document")
     s.add_argument("--button", action="append", metavar="TEXT=URL",
                    help="inline URL button under the message (repeatable, one per row)")
     g = s.add_mutually_exclusive_group()
-    g.add_argument("--topic", default="Notifications", metavar="NAME", help="topic name (default: Notifications)")
+    g.add_argument("--topic", metavar="KEY",
+                   help="config notify_topics key, else a literal topic name (default: own topic inside a bot run, "
+                        "else Notifications)")
+    g.add_argument("--thread", type=int, metavar="ID", help="send into this topic (message_thread_id)")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
     a = p.parse_args(argv)
     try:

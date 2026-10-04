@@ -211,11 +211,33 @@ def busy():
     return run, [e["thread"] for e in pending.values() if not e.get("started")]
 
 
+def live_runs():
+    """Topic ids of claude processes the bot still runs. A run outlives its answer while background
+    teammates work, and its pending entry is gone by then: busy() alone would let a restart kill them."""
+    mode = installed_mode() or "system"
+    argv = ["systemctl"] + (["--user"] if mode == "user" else []) + ["show", "-p", "MainPID", "--value", config.SERVICE]
+    main = subprocess.run(argv, capture_output=True, text=True, env=_user_env()).stdout.strip()
+    if not main or main == "0":
+        return []
+    topics = []
+    for d in Path("/proc").iterdir():
+        try:
+            if not d.name.isdigit() or (d / "stat").read_text().rsplit(")", 1)[1].split()[1] != main:
+                continue
+            env = dict(kv.split("=", 1) for kv in (d / "environ").read_bytes().decode(errors="replace").split("\0") if "=" in kv)
+        except (OSError, IndexError):
+            continue
+        if config.RUN_TOPIC_ENV in env:
+            topics.append(env[config.RUN_TOPIC_ENV])
+    return topics
+
+
 def wait_idle(timeout: int) -> bool:
     end = time.monotonic() + timeout
     said = False
     while True:
         run, queued = busy()
+        run = run + [t for t in live_runs() if t not in map(str, run)]
         if not run and not queued:
             return True
         if time.monotonic() >= end:
@@ -261,10 +283,24 @@ def restart(cfg, wait: int, report=None):
         time.sleep(10)  # a crash on import / config shows up as failed or activating (auto-restart) by now
         argv = ["systemctl"] + (["--user"] if mode == "user" else []) + ["is-active", config.SERVICE]
         state = subprocess.run(argv, capture_output=True, text=True, env=_user_env()).stdout.strip()
-        rev = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[1]), "log", "-1", "--format=%h %s"],
-                             capture_output=True, text=True).stdout.strip() or "?"
+        rev = _revision()
         _report(cfg, report, "restart_ok" if state == "active" else "restart_down", rev=rev, state=state)
     return 0
+
+
+def _revision():
+    """'<short sha> <subject>' of the running code: git in a dev clone, else the skilltap lock commit."""
+    git = lambda d, *a: subprocess.run(["git", "-C", str(d), *a], capture_output=True, text=True).stdout.strip()
+    here = Path(__file__).resolve().parents[1]
+    if rev := git(here, "log", "-1", "--format=%h %s"):
+        return rev
+    try:  # skilltap install: ~/.claude/skills/<name> is a plain copy, the lock records its source commit
+        lock = json.loads((here.parents[1] / "skilltap" / "lock.json").read_text())
+        entry = lock.get("skills", lock)[here.name]
+        src = here.parents[1] / "skilltap" / "sources" / entry["source"]
+        return git(src, "log", "-1", "--format=%h %s", entry["commit"]) or entry["commit"][:7]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "?"
 
 
 def _report(cfg, topic, key, **kw):
@@ -287,6 +323,7 @@ def status(cfg):
         argv = ["systemctl", "status", "--no-pager", "-n", "0", config.SERVICE]
     rc = subprocess.run(argv, env=_user_env()).returncode
     run, queued = busy()
+    run = run + [t for t in live_runs() if t not in map(str, run)]
     print(f"runs in flight: {len(run)}{f' (topics {sorted(run)})' if run else ''}; queued: {len(queued)}")
     return rc
 

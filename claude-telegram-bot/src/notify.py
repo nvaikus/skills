@@ -3,7 +3,15 @@
 Runs without the service (plain sendMessage never conflicts with its getUpdates poll). Default target is a
 dedicated topic ("Notifications"), created on first use and remembered in STATE_DIR/notify.json - a separate
 file, so the running bot never races us on state.json. The bot treats that topic like any other: a reply there
-starts a claude session, and the quoted notification reaches the prompt (bridge.Worker.prompt)."""
+starts a claude session, and the quoted notification reaches the prompt (bridge.Worker.prompt).
+
+Topic registry (config `notify_topics`): short key -> display name (+ optional icon). The cache is keyed by the key,
+so a new display name / icon in config edits the existing topic (editForumTopic) instead of creating another one.
+An unknown --topic is a literal name (key == name), as before.
+
+Target order: --thread ID > --main-chat > --topic KEY > $CLAUDE_TG_RUN_TOPIC (a bot-spawned claude: its own topic)
+> "Notifications". Files (--file): video -> sendVideo (streams inline), image -> sendPhoto, else / on error ->
+sendDocument; text becomes the caption when it fits, else a message before the files."""
 import json
 import os
 import sys
@@ -14,6 +22,11 @@ from .botapi import Bot, TgError
 
 DEFAULT_TOPIC = "Notifications"
 GONE = ("message thread not found", "TOPIC_")
+MAX_FILE = 50 * 1024 * 1024  # Bot API upload limit
+MAX_PHOTO = 10 * 1024 * 1024  # sendPhoto limit; bigger images go as documents
+CAPTION = 1024
+VIDEO = {".mp4", ".mov", ".m4v"}
+PHOTO = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 class NotifyError(Exception):
@@ -53,18 +66,68 @@ def _save(data: dict):
     os.replace(tmp, p)
 
 
-def topic_id(bot, chat: int, name: str, fresh=False):
-    """Remembered thread id of topic `name`, created when missing (or `fresh`). None = topics unavailable."""
+def spec(cfg: dict, key: str) -> dict:
+    """Registry entry for `key`: {"name", "icon"}. Value in config: "Name" or {"name": .., "icon": ..};
+    icon = an emoji from getForumTopicIconStickers or a custom_emoji_id. Unknown key = literal name, no icon."""
+    v = (cfg.get("notify_topics") or {}).get(key)
+    if isinstance(v, str):
+        v = {"name": v}
+    v = v or {}
+    return {"name": v.get("name") or key, "icon": v.get("icon") or None}
+
+
+def icon_id(bot, icon):
+    """custom_emoji_id for an icon given as emoji or id; None (with a warning) when unknown."""
+    if not icon:
+        return None
+    if str(icon).isdigit():
+        return str(icon)
+    try:
+        for s in bot.call("getForumTopicIconStickers"):
+            if s.get("emoji", "").rstrip("\ufe0f") == str(icon).rstrip("\ufe0f"):
+                return s["custom_emoji_id"]
+    except TgError as e:
+        print(f"claude-tg notify: no topic icons ({e.description})", file=sys.stderr)
+        return None
+    print(f"claude-tg notify: icon {icon} is not a topic icon (getForumTopicIconStickers); none set", file=sys.stderr)
+    return None
+
+
+def _icon_args(bot, icon) -> dict:
+    cid = icon_id(bot, icon)
+    return {"icon_custom_emoji_id": cid} if cid else {}
+
+
+def topic_id(bot, chat: int, key: str, fresh=False, cfg=None):
+    """Remembered thread id of topic `key`, created when missing (or `fresh`), renamed when its registry entry
+    changed. None = topics unavailable."""
+    want = spec(cfg or {}, key)
     data = _load()
     topics = data.setdefault("topics", {})
-    if not fresh and topics.get(name):
-        return topics[name]
+    meta = data.setdefault("meta", {})
+    if not fresh and topics.get(key):
+        have = meta.get(key) or {"name": key, "icon": None}  # pre-registry entries were created as their key
+        if have != want:
+            try:
+                bot.call("editForumTopic", chat_id=chat, message_thread_id=topics[key], name=want["name"],
+                         **_icon_args(bot, want["icon"]))
+                meta[key] = want
+                _save(data)
+            except TgError as e:  # cosmetic: keep sending to the old-named topic
+                if "TOPIC_NOT_MODIFIED" in e.description:  # already looks like that
+                    meta[key] = want
+                    _save(data)
+                else:
+                    print(f"claude-tg notify: rename failed ({e.description})", file=sys.stderr)
+        return topics[key]
     try:
-        thread = bot.call("createForumTopic", chat_id=chat, name=name)["message_thread_id"]
+        thread = bot.call("createForumTopic", chat_id=chat, name=want["name"],
+                          **_icon_args(bot, want["icon"]))["message_thread_id"]
     except TgError as e:
         print(f"claude-tg notify: no topic ({e.description}); sending to the main chat", file=sys.stderr)
         return None
-    topics[name] = thread
+    topics[key] = thread
+    meta[key] = want
     _save(data)
     return thread
 
@@ -91,41 +154,143 @@ def keyboard(buttons) -> dict:
     return {"inline_keyboard": rows} if rows else None
 
 
-def send(bot, cfg: dict, text: str, mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None) -> dict:
-    text = text.strip()
-    if not text:
-        raise NotifyError("empty text")
-    chat = owner_chat(cfg)
-    markup = keyboard(buttons)
-    thread = topic_id(bot, chat, topic) if topic else None
+def target(a, env=None):
+    """(topic key, thread id) from the CLI args; at most one is set, (None, None) = All messages."""
+    if a.thread:
+        return None, a.thread
+    if a.main_chat:
+        return None, None
+    if a.topic:
+        return a.topic, None
+    run = (os.environ if env is None else env).get(config.RUN_TOPIC_ENV, "")
+    if run.isdigit() and int(run):
+        return None, int(run)
+    return DEFAULT_TOPIC, None
+
+
+class _Dest:
+    """Owner chat + thread; a cached topic deleted in the client is recreated once. An explicit thread is not."""
+
+    def __init__(self, bot, cfg, topic, thread):
+        self.bot, self.cfg, self.topic = bot, cfg, topic
+        self.chat = owner_chat(cfg)
+        self.thread = thread or (topic_id(bot, self.chat, topic, cfg=cfg) if topic else None)
+
+    def do(self, fn):
+        try:
+            return fn(self.thread)
+        except TgError as e:
+            if not (self.topic and self.thread and any(g in e.description for g in GONE)):
+                raise
+            self.thread = topic_id(self.bot, self.chat, self.topic, fresh=True, cfg=self.cfg)
+            return fn(self.thread)
+
+    def result(self, sent, **extra):
+        return dict({"chat": self.chat, "thread": self.thread, "message_ids": [m.get("message_id") for m in sent]},
+                    **extra)
+
+
+def _messages(bot, dest, parts, silent, markup):
     sent = []
-    parts = chunks(text, mode)
     for i, (body, parse) in enumerate(parts):
-        p = {"chat_id": chat, "text": body, "parse_mode": parse, "disable_notification": silent or None,
+        p = {"chat_id": dest.chat, "text": body, "parse_mode": parse, "disable_notification": silent or None,
              "link_preview_options": {"is_disabled": True}}
         if markup and i == len(parts) - 1:
             p["reply_markup"] = markup
+        sent.append(dest.do(lambda th: bot.call("sendMessage", message_thread_id=th, **p)))
+    return sent
+
+
+def send(bot, cfg: dict, text: str, mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None, thread=None) -> dict:
+    text = text.strip()
+    if not text:
+        raise NotifyError("empty text")
+    markup = keyboard(buttons)
+    dest = _Dest(bot, cfg, topic, thread)
+    return dest.result(_messages(bot, dest, chunks(text, mode), silent, markup))
+
+
+def check_files(paths) -> list:
+    """Existing regular files within the Bot API limit, else NotifyError before anything is sent."""
+    out = []
+    for p in paths:
+        f = Path(p).expanduser()
+        if not f.is_file():
+            raise NotifyError(f"no such file: {p}")
+        size = f.stat().st_size
+        if size > MAX_FILE:
+            raise NotifyError(f"{p} is {size / 2**20:.1f} MB; the Bot API uploads at most 50 MB "
+                              "(compress it, e.g. ffmpeg -crf 28, or split it)")
+        out.append(f)
+    return out
+
+
+def method_for(f: Path):
+    """(Bot API method, multipart field, extra params) by extension."""
+    ext = f.suffix.lower()
+    if ext in VIDEO:
+        return "sendVideo", "video", {"supports_streaming": True}
+    if ext in PHOTO and f.stat().st_size <= MAX_PHOTO:
+        return "sendPhoto", "photo", {}
+    return "sendDocument", "document", {}
+
+
+def send_files(bot, cfg: dict, paths, text="", mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None,
+               thread=None, guard=None) -> dict:
+    """Upload files; text = caption of the first file when it fits in one caption, else messages before them.
+    Files the leak guard rejects are replaced by a notice (listed under "blocked")."""
+    files = check_files(paths)
+    markup = keyboard(buttons)
+    dest = _Dest(bot, cfg, topic, thread)
+    sent, blocked = [], []
+    parts = chunks(text.strip(), mode) if text.strip() else []
+    caption = parts[0] if len(parts) == 1 and len(parts[0][0]) <= CAPTION else None
+    if parts and not caption:
+        sent += _messages(bot, dest, parts, silent, None)
+    for i, f in enumerate(files):
+        why = guard and guard.file_leak(f)
+        if why:
+            print(f"claude-tg notify: {f} blocked, quotes protected {why}", file=sys.stderr)
+            blocked.append(str(f))
+            sent += _messages(bot, dest, [(ui.t(ui.lang(cfg), "leak_file"), None)], silent, None)
+            continue
+        p = {"chat_id": dest.chat, "disable_notification": silent or None,
+             "_timeout": 120 + f.stat().st_size // (256 * 1024)}
+        if caption and i == 0:
+            p["caption"], p["parse_mode"] = caption
+        if markup and i == len(files) - 1:
+            p["reply_markup"] = markup
+        method, field, extra = method_for(f)
+
+        def up(th, method=method, field=field, extra=extra):
+            return bot.upload(method, field, f, message_thread_id=th, **p, **extra)
         try:
-            sent.append(bot.call("sendMessage", message_thread_id=thread, **p))
+            sent.append(dest.do(up))
         except TgError as e:
-            if not (thread and any(g in e.description for g in GONE)):
+            if method == "sendDocument":
                 raise
-            thread = topic_id(bot, chat, topic, fresh=True)  # topic deleted in the client: recreate once
-            sent.append(bot.call("sendMessage", message_thread_id=thread, **p))
-    return {"chat": chat, "thread": thread, "message_ids": [m.get("message_id") for m in sent]}
+            print(f"claude-tg notify: {method} failed for {f.name} ({e.description}); sending as a document",
+                  file=sys.stderr)
+            sent.append(dest.do(lambda th: bot.upload("sendDocument", "document", f, message_thread_id=th, **p)))
+    return dest.result(sent, **({"blocked": blocked} if blocked else {}))
 
 
 def main(cfg: dict, a) -> int:
-    text = " ".join(a.text) if a.text else sys.stdin.read()
+    files = getattr(a, "file", None) or []
+    text = " ".join(a.text) if a.text else "" if files else sys.stdin.read()  # with files: text from args only
     mode = "html" if a.html else "md" if a.markdown else "plain"
     g = guard.from_config(cfg)
     src = g and g.match(text, is_html=mode == "html")
     if src:  # quotes a protected file (config protected_paths): the owner gets the notice instead
         print(f"claude-tg notify: blocked, quotes protected {src}", file=sys.stderr)
         text, mode = ui.t(ui.lang(cfg), "leak"), "plain"
+    topic, thread = target(a)
     try:
         token = config.read_token(cfg)
-        r = send(Bot(token), cfg, text, mode, a.silent, None if a.main_chat else a.topic, a.button)
+        if files:
+            r = send_files(Bot(token), cfg, files, text, mode, a.silent, topic, a.button, thread, g)
+        else:
+            r = send(Bot(token), cfg, text, mode, a.silent, topic, a.button, thread)
     except NotifyError as e:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 2
@@ -133,4 +298,4 @@ def main(cfg: dict, a) -> int:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 1
     print(json.dumps(r))
-    return 0
+    return 3 if r.get("blocked") else 0
