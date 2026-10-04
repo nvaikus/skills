@@ -2,6 +2,7 @@
 into a few UI events. Pure: no I/O, fully unit-tested."""
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -12,9 +13,11 @@ ICONS = {
 }
 
 
+DENIED = re.compile(r"permission .{0,40}denied|denied by .{0,60}(classifier|permission)|requested permissions", re.I)
+
 @dataclass
 class Event:
-    kind: str                 # session | turn | thinking | tool | text | text_end | result | user | bg
+    kind: str                 # session | turn | thinking | tool | text | text_end | result | user | bg | denied
     text: str = ""            # tool line / streamed text or thinking so far / final result / session model /
                               # user: uuid of our stdin line claude just took in
     session_id: Optional[str] = None
@@ -23,7 +26,8 @@ class Event:
     api_ms: int = 0
     name: str = ""            # tool events: raw tool name (friendly status maps it to a phase)
     sub: bool = False         # tool events: called inside a subagent
-    count: int = 0            # bg: background tasks (helpers, background shells) still running
+    count: int = 0            # bg: background tasks (helpers, background shells) still running;
+                              # result: permission denials in the turn
 
 
 def _short(s: str, n: int = 60) -> str:
@@ -59,6 +63,7 @@ class Parser:
         self.text = ""   # current top-level text block being streamed
         self.think = ""  # current top-level thinking block (often empty: models may omit thinking text)
         self.block = ""  # type of the open top-level content block
+        self.tools = {}  # tool_use_id -> tool name (a denial names only the id)
 
     def feed(self, line: str) -> list:
         line = line.strip()
@@ -76,6 +81,13 @@ class Parser:
             return [Event("bg", count=len(d.get("tasks") or []))]
         if t == "user" and d.get("isReplay") and not sub:  # --replay-user-messages: a stdin line was taken in
             return [Event("user", d.get("uuid") or "")]
+        if t == "user":  # tool results: a permission-mode denial comes back as an error result, the run goes on
+            content = (d.get("message") or {}).get("content")
+            out = []
+            for c in content if isinstance(content, list) else []:
+                if c.get("type") == "tool_result" and c.get("is_error") and DENIED.search(str(c.get("content"))[:400]):
+                    out.append(Event("denied", name=self.tools.get(c.get("tool_use_id"), "?"), sub=sub))
+            return out
         if t == "stream_event" and not sub:
             ev = d.get("event") or {}
             et = ev.get("type")
@@ -104,10 +116,13 @@ class Parser:
             out = []
             for block in (d.get("message") or {}).get("content") or []:
                 if block.get("type") == "tool_use":
+                    self.tools[block.get("id")] = block.get("name", "?")
                     line_ = tool_line(block.get("name", "?"), block.get("input"), self.cwd)
                     out.append(Event("tool", ("↳ " if sub else "") + line_, name=block.get("name", ""), sub=sub))
             return out
         if t == "result":
-            return [Event("result", d.get("result") or "", d.get("session_id"),
-                          bool(d.get("is_error")), d.get("num_turns") or 0, d.get("duration_api_ms") or 0)]
+            self.tools = {}
+            return [Event("result", d.get("result") or "", d.get("session_id"), bool(d.get("is_error")),
+                          d.get("num_turns") or 0, d.get("duration_api_ms") or 0,
+                          count=len(d.get("permission_denials") or []))]
         return []

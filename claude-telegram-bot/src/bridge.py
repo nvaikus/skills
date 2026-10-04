@@ -412,6 +412,7 @@ class Worker:
         self.interim = self.posted = ""  # ended text block not yet posted / last posted one
         self.stream_id = self.st = self.typing = None
         self.last_draft = 0.0
+        self.denials = set()  # tools denied by the permission mode this turn (one status line each)
         self.tripped = self.noticed = False  # leak filter: block's drafts suppressed / notice posted this turn
         threading.Thread(target=self._loop, daemon=True, name=f"topic-{thread}").start()
 
@@ -598,7 +599,7 @@ class Worker:
             b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
         t = b.store.topic(thread)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
-        argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"])
+        argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"))
         run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread)}))
         self.stopped, self.last_stderr = False, run.stderr
         unsent = []
@@ -642,6 +643,8 @@ class Worker:
                     self.st.thinking(ev.text)
                 elif ev.kind == "tool":
                     self.st.tool(ev)
+                elif ev.kind == "denied":
+                    self.denied(ev)
                 elif ev.kind == "text":
                     self.st.set("write")
                     if now - self.last_draft >= 1.0 and ev.text.strip():
@@ -660,6 +663,8 @@ class Worker:
                         answered, self.seen, self.idle = self.seen, [], True
                     if ev.session_id:
                         b.store.update(thread, session_id=ev.session_id)
+                    if ev.count:
+                        log.info("topic %s: %d permission denial(s) this turn", thread, ev.count)
                     if not self.timing["results"] and t["session_id"] and ev.is_error and ev.num_turns == 0:
                         lost = ev  # likely a failed --resume: decided after exit, once stderr is in
                         unsent += answered
@@ -713,6 +718,7 @@ class Worker:
             self.interim = self.posted = ""
         self.stream_id, self.last_draft = None, 0.0
         self.tripped = self.noticed = False
+        self.denials = set()
         self.typing = threading.Event()
         threading.Thread(target=self._typing, args=(self.typing,), daemon=True).start()
         self.st = Status(self, self.b.detailed(self.thread), self.b.lang)
@@ -746,6 +752,17 @@ class Worker:
             except TgError as e:
                 log.warning("interim message: %s", e.description)
             self.tripped = False  # the next block streams again
+        if self.st:
+            self.st.below()
+
+    def denied(self, ev):
+        """A tool call refused by the permission mode (auto classifier): one short line per tool per turn."""
+        log.info("topic %s: permission denied: %s%s", self.thread, ev.name, " (subagent)" if ev.sub else "")
+        if ev.name in self.denials:
+            return
+        self.denials.add(ev.name)
+        self.b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread,
+                     text=self.b.s("denied", tool=ev.name))
         if self.st:
             self.st.below()
 

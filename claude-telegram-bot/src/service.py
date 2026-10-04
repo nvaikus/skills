@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config
+from . import config, runner
 from .botapi import Bot, TgError
 
 UNIT_PATH = Path(f"/etc/systemd/system/{config.SERVICE}.service")
@@ -334,6 +334,15 @@ def doctor(cfg) -> int:
     row("ffmpeg (voice, optional)", True, shutil.which("ffmpeg") or "missing: ogg sent as-is")
     for f in cfg["env_files"]:
         row("env_file", Path(f).expanduser().exists(), f)
+    pm = cfg.get("permission_mode") or "bypass"
+    args = cfg.get("claude_args") or []
+    model = args[args.index("--model") + 1] if "--model" in args[:-1] else ""
+    if pm not in runner.PERMISSION_MODES:
+        row("permission_mode", False, f"{pm!r} unknown -> one of {', '.join(runner.PERMISSION_MODES)}")
+    elif pm == "auto" and "haiku" in model.lower():
+        rows.append(f"permission_mode\tWARN\tauto on {model}: haiku silently falls back to default (no prompts headless)")
+    else:
+        row("permission_mode", True, pm)
     if cfg.get("protected_paths"):
         from . import guard
         row("leak_filter", True, guard.from_config(cfg).stats())

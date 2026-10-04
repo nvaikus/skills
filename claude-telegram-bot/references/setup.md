@@ -34,6 +34,7 @@
 | `status_style` | `friendly` | `friendly` = one short activity line; `detailed` = tool calls + thinking (debug). Per topic: `/verbose` |
 | `reactions` | true | false = no status reactions (👀 ✍ 👍 💔 👌) on the owner's messages; typing, status line, draft and error text stay |
 | `stt_paid` | false | allow paid STT (`--paid`); e.g. add `openrouter:google/gemini-2.5-flash-lite` (fractions of a cent per note) |
+| `permission_mode` | `bypass` | `bypass` = `--dangerously-skip-permissions`; `auto` \| `default` \| `acceptEdits` → `--permission-mode <v>`. `auto` = classifier-gated tools, works headless on Sonnet/Opus; Haiku silently falls back to `default` (`doctor` WARN). A denied call → one "🚫 not allowed" line per tool per turn, logged; claude goes on |
 | `protected_paths` | `[]` | leak filter: dirs/files/globs (`~`, `$VAR` expanded) whose text must never go out verbatim. Any answer, draft, status, notify text or file quoting ≥ `protect_min_words` consecutive words of them → replaced by a "hidden" notice, logged as `leak blocked topic … quotes <file>`; files under these paths are never sent. Paraphrase passes. Index rebuilt on change (checked at run start); `doctor` shows its size. An unlistable dir (`--x`) indexes nothing: list its readable files explicitly |
 | `protect_min_words` | 12 | words in a row that count as a quote (words = letters/digits, case and markup ignored) |
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |

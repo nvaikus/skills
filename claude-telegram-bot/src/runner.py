@@ -29,11 +29,19 @@ def child_env(token: str, extra: dict, connectors: bool = True) -> dict:
     return env
 
 
-def build_argv(claude: str, session_id, extra_args) -> list:
+PERMISSION_MODES = ("bypass", "auto", "default", "acceptEdits")
+
+
+def build_argv(claude: str, session_id, extra_args, permission_mode="bypass") -> list:
     """Prompts go in on stdin as user lines (one process, many turns); --replay-user-messages echoes each
     line with its uuid when claude takes it in -> we know which `result` answered which message."""
     argv = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-            "--include-partial-messages", "--replay-user-messages", "--dangerously-skip-permissions", *extra_args]
+            "--include-partial-messages", "--replay-user-messages"]
+    if permission_mode in (None, "", "bypass"):
+        argv.append("--dangerously-skip-permissions")
+    else:  # auto: classifier-gated; denials come back as tool errors (streamjson "denied"), the run goes on
+        argv += ["--permission-mode", permission_mode]
+    argv += list(extra_args)
     if session_id:
         argv += ["--resume", session_id]
     return argv

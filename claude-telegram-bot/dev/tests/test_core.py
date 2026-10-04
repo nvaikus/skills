@@ -55,6 +55,21 @@ class StreamJson(unittest.TestCase):
         self.assertEqual(ev[5].text, "↳ 🔎 Grep: TODO")
         self.assertEqual((ev[6].text, ev[6].is_error, ev[6].num_turns), ("Done.", False, 3))
 
+    def test_permission_denial_is_an_event_and_counted_in_result(self):
+        deny = ("Permission for this action was denied by the Claude Code auto mode classifier. Reason: x")
+        ev = self.feed([
+            j(type="assistant", parent_tool_use_id=None, message={"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "rm -rf /"}}]}),
+            j(type="user", message={"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": deny}]}),
+            j(type="user", message={"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "exit code 1"}]}),
+            j(type="result", subtype="success", is_error=False, num_turns=2, result="Could not.", session_id=SID,
+              permission_denials=[{"tool_name": "Bash", "tool_use_id": "t1"}]),
+        ])
+        self.assertEqual([(e.kind, e.name) for e in ev], [("tool", "Bash"), ("denied", "Bash"), ("result", "")])
+        self.assertEqual(ev[-1].count, 1)
+
     def test_new_text_block_resets_and_subagent_text_ignored(self):
         start = j(type="stream_event", event={"type": "content_block_start", "content_block": {"type": "text"}})
         ev = self.feed([start, delta("a"), delta("x", sub="toolu_9"), start, delta("b")])
@@ -190,6 +205,10 @@ class Env(unittest.TestCase):
         for flag in ("--dangerously-skip-permissions", "--replay-user-messages", "--input-format"):
             self.assertIn(flag, a)
         self.assertNotIn("--resume", runner.build_argv("claude", None, []))
+        a = runner.build_argv("claude", None, ["--model", "opus"], "auto")
+        self.assertNotIn("--dangerously-skip-permissions", a)
+        self.assertEqual(a[-4:], ["--permission-mode", "auto", "--model", "opus"])
+        self.assertIn("--dangerously-skip-permissions", runner.build_argv("claude", None, [], config.DEFAULTS["permission_mode"]))
         line = json.loads(runner.user_line("-привет", "u1"))
         self.assertEqual(line, {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "-привет"}})
 
@@ -702,6 +721,27 @@ class LeakBridge(TopicCommands):
             self.assertEqual([m for m, p in b.bot.calls if m == "sendMessage" and p["text"] == notice], ["sendMessage"])
             drafts = [p["text"] for m, p in b.bot.calls if m == "sendMessageDraft"]
             self.assertEqual(drafts, ["Here: " + " ".join(words[:5]), notice])  # tripped: rest of block suppressed
+
+
+class Denied(TopicCommands):
+    E = streamjson.Event
+
+    def test_denial_shows_one_line_per_tool_and_the_run_goes_on(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            b = self.bridge(d)
+            w = b.worker(1, 50)
+            w.put([{"message_id": 1, "chat": {"id": 1, "type": "private"}, "date": 0, "text": "wipe it"}])
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            r = FakeRun.runs[0]
+            for e in (self.E("session", "m", "s50"), self.E("user", "u1"), self.E("denied", name="Bash"),
+                      self.E("denied", name="Bash"), self.E("result", "Not allowed, skipped.", "s50", count=2), None):
+                r.ev.put(e)
+            until(lambda: w.run is None)
+            texts = [p.get("text") for m, p in b.bot.calls if m == "sendMessage"]
+            self.assertEqual(texts.count(ui.t("en", "denied", tool="Bash")), 1)
+            self.assertIn("Not allowed, skipped.", texts)
 
 
 class ServiceMode(unittest.TestCase):
