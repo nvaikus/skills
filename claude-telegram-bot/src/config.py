@@ -25,6 +25,9 @@ DEFAULTS = {
     "ui_lang": "en",             # bot-facing language: "en" | "ru"
     "status_style": "friendly",  # "friendly" = one short status line; "detailed" = tool calls (per topic: /verbose)
     "reactions": True,           # False = no status reactions on the owner's messages (text/typing/status stay)
+    "protected_paths": [],       # leak filter (guard.py): files whose verbatim text never goes out; [] = off
+    "protect_min_words": 12,     # consecutive matching words that count as a leak
+    "protect_exempt_marker": ".user-made",  # dirs holding this file are not protected
 }
 
 

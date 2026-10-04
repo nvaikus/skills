@@ -334,6 +334,9 @@ def doctor(cfg) -> int:
     row("ffmpeg (voice, optional)", True, shutil.which("ffmpeg") or "missing: ogg sent as-is")
     for f in cfg["env_files"]:
         row("env_file", Path(f).expanduser().exists(), f)
+    if cfg.get("protected_paths"):
+        from . import guard
+        row("leak_filter", True, guard.from_config(cfg).stats())
     st = config.STATE_DIR / "state.json"
     owner = cfg.get("owner_id") or (json.loads(st.read_text()).get("owner_id") if st.exists() else None)
     row("owner", True, str(owner) if owner else "not yet: first private-chat user becomes owner")

@@ -39,6 +39,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `runner.py` | claude argv, env scrub, process group kill, one-shot titles |
 | `streamjson.py` / `fmt.py` | pure parsers: stream-json → events; markdown → Telegram HTML + splitter |
 | `media.py` | attachment download, model-cli STT |
+| `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
 | `notify.py` | `claude-tg notify`: owner chat, remembered topic (`notify.json`, not state.json - the bot owns that) |
 | `service.py` | systemd unit (system / user mode: user unit file present → user), doctor, setup |
 

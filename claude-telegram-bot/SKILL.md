@@ -22,6 +22,7 @@ claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--topic NA
 
 - The bot runs `claude --dangerously-skip-permissions` as the installing user: whoever owns the bot has a shell on the box.
 - Owner = the first user who writes to the bot in private, persisted in `~/.local/share/claude-tg/state.json`; everyone else is ignored silently. Pin it in advance with `owner_id` in config.
+- Optional leak filter (`protected_paths`, `references/setup.md`): outbound text quoting protected files verbatim is replaced by a notice. A backstop, not a sandbox: paraphrase passes, and claude can read the token file in user mode.
 - The token never reaches claude's env (`LoadCredential` → `$CREDENTIALS_DIRECTORY`, scrubbed from children).
 - System mode: root-only copy `/etc/claude-tg/token`; the user's own token file may be deleted after `install`.
 - User mode (no sudo): the credential is read from the user's token file at every start - it must stay, and claude (same user) can read it. Owner of the bot = shell as that user anyway, so the token adds little; still never print it.

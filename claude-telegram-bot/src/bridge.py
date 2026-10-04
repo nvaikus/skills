@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, fmt, media, runner, ui
+from . import config, fmt, guard, media, runner, ui
 from .botapi import Bot, TgError
 from .store import GENERAL, Store
 
@@ -52,9 +52,17 @@ class Bridge:
         self.stopping = False
         self.owner = cfg.get("owner_id") or self.store.owner_id
         self.lang = ui.lang(cfg)
+        self.guard = guard.from_config(cfg)  # outbound leak filter; None = off
 
     def s(self, key, **kw):
         return ui.t(self.lang, key, **kw)
+
+    def leak(self, text, thread) -> bool:
+        """Model text quoting a protected file (config protected_paths): never sent, logged with the source."""
+        src = self.guard and self.guard.match(text)
+        if src:
+            log.warning("leak blocked topic %s: quotes %s", thread, src)
+        return bool(src)
 
     def detailed(self, thread) -> bool:
         """Per-topic /verbose wins over config status_style."""
@@ -68,6 +76,8 @@ class Bridge:
         text = self.s("err", why=why)
         if detail and self.detailed(thread):
             text += "\n\n" + detail
+        if self.leak(text, thread):
+            text = self.s("leak")
         self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, text=text[:fmt.LIMIT],
                    link_preview_options={"is_disabled": True})
 
@@ -133,10 +143,17 @@ class Bridge:
             path = config.STATE_DIR / "files" / str(thread) / "answer.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(md)
-            try:
-                self.bot.upload("sendDocument", "document", path, chat_id=chat, message_thread_id=thread or None)
-            except TgError as e:
-                log.warning("answer.md upload: %s", e)
+            self.send_file(chat, thread, path)
+
+    def send_file(self, chat, thread, path):
+        why = self.guard and self.guard.file_leak(path)
+        if why:
+            log.warning("leak blocked topic %s: file %s (%s)", thread, path, why)
+            return self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, text=self.s("leak_file"))
+        try:
+            self.bot.upload("sendDocument", "document", path, chat_id=chat, message_thread_id=thread or None)
+        except TgError as e:
+            log.warning("%s upload: %s", path.name, e)
 
     # ---------- update routing ----------
     def handle(self, upd: dict):
@@ -395,6 +412,7 @@ class Worker:
         self.interim = self.posted = ""  # ended text block not yet posted / last posted one
         self.stream_id = self.st = self.typing = None
         self.last_draft = 0.0
+        self.tripped = self.noticed = False  # leak filter: block's drafts suppressed / notice posted this turn
         threading.Thread(target=self._loop, daemon=True, name=f"topic-{thread}").start()
 
     def close(self):
@@ -576,6 +594,8 @@ class Worker:
         if not batches:  # a process without input would wait on stdin forever
             return [], None
         b, chat, thread = self.b, self.chat, self.thread
+        if b.guard:
+            b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
         t = b.store.topic(thread)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
         argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"])
@@ -677,7 +697,7 @@ class Worker:
             b.fail(chat, thread, ui.reason(ev.text) or b.s("why.claude"), f"claude error: {ev.text}")
         else:
             if (answered or ev.text.strip()) and ev.text.strip() != self.posted.strip():
-                b.send_answer(chat, thread, ev.text)  # skipped if the idle ticker posted it already
+                self.answer(ev.text)  # skipped if the idle ticker posted it already
             for bt in answered:
                 b.react(chat, bt.key, "👍")
             if answered and not self.renamed and b.store.topic(thread).get("implicit"):
@@ -692,6 +712,7 @@ class Worker:
         with self.ilock:
             self.interim = self.posted = ""
         self.stream_id, self.last_draft = None, 0.0
+        self.tripped = self.noticed = False
         self.typing = threading.Event()
         threading.Thread(target=self._typing, args=(self.typing,), daemon=True).start()
         self.st = Status(self, self.b.detailed(self.thread), self.b.lang)
@@ -720,16 +741,32 @@ class Worker:
                 self.b.quiet("deleteMessage", chat_id=self.chat, message_id=self.stream_id)
                 self.stream_id = None
             try:
-                self.b.send_answer(self.chat, self.thread, text)
+                self.answer(text)
                 self.posted = text
             except TgError as e:
                 log.warning("interim message: %s", e.description)
+            self.tripped = False  # the next block streams again
         if self.st:
             self.st.below()
 
+    def answer(self, text):
+        """A real answer message; one quoting a protected file becomes one notice per turn."""
+        b = self.b
+        if not (b.guard and b.leak(text, self.thread)):
+            return b.send_answer(self.chat, self.thread, text)
+        if not self.noticed:
+            self.noticed = True
+            b.say(self.chat, self.thread, b.s("leak"))
+
     def _stream(self, text, stream_id):
-        """Partial answer: sendMessageDraft (Bot API 9.3+); if the API refuses it, one edited message."""
-        b, tail = self.b, text[-fmt.LIMIT:]
+        """Partial answer: sendMessageDraft (Bot API 9.3+); if the API refuses it, one edited message.
+        A draft quoting a protected file shows the notice once; the rest of that block is not streamed."""
+        b = self.b
+        if self.tripped:
+            return stream_id
+        if b.guard and b.leak(text, self.thread):
+            self.tripped, text = True, b.s("leak")
+        tail = text[-fmt.LIMIT:]
         if b.draft_ok:
             try:
                 b.bot.call("sendMessageDraft", _retries=0, chat_id=self.chat, message_thread_id=self.thread,
@@ -843,6 +880,9 @@ class Status:
             if body == self.shown or not (phase != self.shown_phase or now - self.at >= self.MIN_EDIT):
                 return
             b, chat = self.w.b, self.w.chat
+            raw = body
+            if self.detailed and b.guard and b.leak(body, self.w.thread):  # thinking snippets are model text
+                body = b.s("leak")
             if not body:
                 if self.id:
                     b.quiet("deleteMessage", chat_id=chat, message_id=self.id)
@@ -852,7 +892,7 @@ class Status:
             else:
                 sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread, text=body)
                 self.id = sent and sent["message_id"]
-            self.shown, self.shown_phase, self.at = body, phase, now
+            self.shown, self.shown_phase, self.at = raw, phase, now
 
     def _loop(self):
         while not self.done.wait(self.TICK):

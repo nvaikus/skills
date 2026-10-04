@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import config, fmt
+from . import config, fmt, guard, ui
 from .botapi import Bot, TgError
 
 DEFAULT_TOPIC = "Notifications"
@@ -118,6 +118,11 @@ def send(bot, cfg: dict, text: str, mode="plain", silent=False, topic=DEFAULT_TO
 def main(cfg: dict, a) -> int:
     text = " ".join(a.text) if a.text else sys.stdin.read()
     mode = "html" if a.html else "md" if a.markdown else "plain"
+    g = guard.from_config(cfg)
+    src = g and g.match(text, is_html=mode == "html")
+    if src:  # quotes a protected file (config protected_paths): the owner gets the notice instead
+        print(f"claude-tg notify: blocked, quotes protected {src}", file=sys.stderr)
+        text, mode = ui.t(ui.lang(cfg), "leak"), "plain"
     try:
         token = config.read_token(cfg)
         r = send(Bot(token), cfg, text, mode, a.silent, None if a.main_chat else a.topic, a.button)
