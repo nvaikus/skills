@@ -1,0 +1,49 @@
+{
+ "_note": "ActivoBank statement mail: header says ISO-8859-15, body bytes and <meta> are UTF-8",
+ "payload": {
+  "mimeType": "multipart/mixed",
+  "headers": [
+   {
+    "name": "Content-Type",
+    "value": "multipart/mixed; boundary=\"b\""
+   }
+  ],
+  "body": {
+   "size": 0
+  },
+  "parts": [
+   {
+    "mimeType": "text/html",
+    "filename": "",
+    "headers": [
+     {
+      "name": "Content-Type",
+      "value": "text/html; charset=\"ISO-8859-15\""
+     },
+     {
+      "name": "Content-Transfer-Encoding",
+      "value": "quoted-printable"
+     }
+    ],
+    "body": {
+     "size": 234,
+     "data": "PGh0bWw-PGhlYWQ-PG1ldGEgaHR0cC1lcXVpdj0iQ29udGVudC1UeXBlIiBjb250ZW50PSJ0ZXh0L2h0bWw7IGNoYXJzZXQ9VVRGLTgiPjwvaGVhZD48Ym9keT48cD5PbMOhLDwvcD48cD5BcXVpIGVzdMOhIGEgaW5mb3JtYcOnw6NvIGRvcyBzZXVzIG1vdmltZW50b3MsIHPDo28gMTIgbWVzZXMuPC9wPjxwPkNvbnNlcnZhdCZvYWN1dGU7cmlhIGRvIFJlZ2lzdG8sIG4uwrogMjMuPC9wPjwvYm9keT48L2h0bWw-"
+    }
+   },
+   {
+    "mimeType": "application/octet-stream",
+    "filename": "EXTRATO.pdf",
+    "headers": [
+     {
+      "name": "Content-Type",
+      "value": "application/octet-stream; name=\"EXTRATO.pdf\""
+     }
+    ],
+    "body": {
+     "size": 1000,
+     "attachmentId": "att1"
+    }
+   }
+  ]
+ }
+}

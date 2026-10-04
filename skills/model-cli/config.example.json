@@ -1,0 +1,44 @@
+{
+  "free_only": true,
+  "hf_provider": "auto",
+  "defaults": {
+    "image": [
+      "cloudflare:@cf/black-forest-labs/flux-1-schnell",
+      "hf:black-forest-labs/FLUX.1-schnell",
+      "pollinations:default"
+    ],
+    "video": [
+      "hf:Wan-AI/Wan2.2-TI2V-5B"
+    ],
+    "tts": [
+      "gemini:gemini-3.8-flash-tts",
+      "groq:canopylabs/orpheus-v1-english",
+      "cloudflare:@cf/myshell-ai/melotts",
+      "hf:hexgrad/Kokoro-82M",
+      "pollinations:tts"
+    ],
+    "asr": [
+      "groq:whisper-large-v3-turbo",
+      "gemini:gemini-3.5-flash",
+      "cloudflare:@cf/openai/whisper-large-v3-turbo",
+      "mistral:voxtral-mini-latest",
+      "hf:openai/whisper-large-v3"
+    ],
+    "llm": [
+      "groq:openai/gpt-oss-120b",
+      "gemini:gemini-3.5-flash",
+      "openrouter:openrouter/free",
+      "cloudflare:@cf/openai/gpt-oss-120b",
+      "mistral:mistral-small-latest",
+      "pollinations:default"
+    ]
+  },
+  "aliases": {
+    "flux": "hf:black-forest-labs/FLUX.1-schnell",
+    "kokoro": "hf:hexgrad/Kokoro-82M",
+    "whisper": "groq:whisper-large-v3",
+    "whisper-hf": "hf:openai/whisper-large-v3",
+    "gemini": "gemini:gemini-3.5-flash",
+    "free-llm": "openrouter:openrouter/free"
+  }
+}

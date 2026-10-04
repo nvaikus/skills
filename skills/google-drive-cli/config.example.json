@@ -1,0 +1,10 @@
+{
+ "client_id": "1234567890-abc.apps.googleusercontent.com",
+ "client_secret": "GOCSPX-...",
+ "project_id": "gdrive-work-123456",
+ "mount": {"what": "/", "where": "/Users/me/gdrive/work", "persist": true},
+ "cache_limit": "10G",
+ "index_max_mb": 50,
+ "ocr": "auto",
+ "ocr_max_mb": 20
+}

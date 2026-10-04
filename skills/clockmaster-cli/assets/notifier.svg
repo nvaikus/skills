@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Source of truth for notifier.icns: the web UI's own mark (TopBar.tsx) —
+     four rounded bars, the tall one in the UI accent — on a graphite tile.
+     Render: qlmanage -t -s 1024 -o . notifier.svg && sips -z <n> <n> ... -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="512" y1="100" x2="512" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2c2c31"/>
+      <stop offset="1" stop-color="#121214"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#tile)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" ry="184.5"
+        fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <g fill="#f4f4f6">
+    <rect x="277" y="445" width="67" height="134" rx="33.5"/>
+    <rect x="545" y="411" width="67" height="202" rx="33.5"/>
+    <rect x="680" y="478" width="67" height="67" rx="33.5"/>
+  </g>
+  <rect x="411" y="344" width="67" height="336" rx="33.5" fill="#4e9bff"/>
+</svg>

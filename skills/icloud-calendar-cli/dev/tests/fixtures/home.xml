@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/" xmlns:A="http://apple.com/ns/ical/">
+<D:response><D:href>/1234567/calendars/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/work/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>Work</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>1</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege><D:privilege><D:write-properties/></D:privilege><D:privilege><D:bind/></D:privilege><D:privilege><D:unbind/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/family/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/><CS:shared-owner/></D:resourcetype><D:displayname>Family</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>2</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege><D:privilege><D:write-properties/></D:privilege><D:privilege><D:bind/></D:privilege><D:privilege><D:unbind/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner><CS:invite><CS:user><D:href>mailto:anna@example.com</D:href><CS:common-name>Anna</CS:common-name><CS:invite-accepted/><CS:access><CS:read-write/></CS:access></CS:user><CS:user><D:href>mailto:bob@example.com</D:href><CS:common-name>Bob</CS:common-name><CS:invite-noresponse/><CS:access><CS:read/></CS:access></CS:user></CS:invite><CS:publish-url><D:href>webcal://p99-caldav.icloud.com/published/2/abc</D:href></CS:publish-url>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/annas-trip/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/><CS:shared/></D:resourcetype><D:displayname>Anna's Trip</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>3</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege><D:privilege><D:write-properties/></D:privilege><D:privilege><D:bind/></D:privilege><D:privilege><D:unbind/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner><CS:invite><CS:organizer><D:href>mailto:anna@example.com</D:href><CS:common-name>Anna Smith</CS:common-name></CS:organizer><CS:user><D:href>mailto:me@icloud.com</D:href><CS:invite-accepted/><CS:access><CS:read-write/></CS:access></CS:user></CS:invite>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/work-trips/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>Work Trips</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>4</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege><D:privilege><D:write-properties/></D:privilege><D:privilege><D:bind/></D:privilege><D:privilege><D:unbind/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/bob-ro/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/><CS:shared/></D:resourcetype><D:displayname>Bob Schedule</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>5</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege><D:privilege><D:write-properties/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner><CS:invite><CS:organizer><D:href>mailto:bob@example.com</D:href><CS:first-name>Bob</CS:first-name><CS:last-name>Jones</CS:last-name></CS:organizer><CS:user><D:href>mailto:me@icloud.com</D:href><CS:invite-accepted/><CS:access><CS:read/></CS:access></CS:user></CS:invite>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/holidays/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><CS:subscribed/></D:resourcetype><D:displayname>Holidays</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>6</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner><CS:source><D:href>webcal://example.com/holidays.ics</D:href></CS:source>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/tasks/</D:href><D:propstat><D:prop>
+<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>Reminders</D:displayname>
+<A:calendar-color>#1BADF8FF</A:calendar-color><A:calendar-order>7</A:calendar-order>
+<C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege><D:privilege><D:write-properties/></D:privilege><D:privilege><D:bind/></D:privilege><D:privilege><D:unbind/></D:privilege><D:privilege><D:read-current-user-privilege-set/></D:privilege></D:current-user-privilege-set>
+<D:owner><D:href>/1234567/principal/</D:href></D:owner>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+<D:propstat><D:prop><CS:source/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/inbox/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:schedule-inbox/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/outbox/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:schedule-outbox/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/1234567/calendars/notification/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><CS:notification/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>

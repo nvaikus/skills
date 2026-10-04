@@ -1,0 +1,6 @@
+{"items": [
+ {"itemId": "v1|444444444444|501", "legacyItemId": "444444444444", "title": "Shirt", "price": {"value": "20.00", "currency": "EUR"},
+  "buyingOptions": ["FIXED_PRICE"], "localizedAspects": [{"name": "Size", "value": "L"}, {"name": "Brand", "value": "X"}]},
+ {"itemId": "v1|444444444444|502", "legacyItemId": "444444444444", "title": "Shirt", "price": {"value": "15.00", "currency": "EUR"},
+  "buyingOptions": ["FIXED_PRICE"], "localizedAspects": [{"name": "Size", "value": "M"}, {"name": "Brand", "value": "X"}]}
+]}

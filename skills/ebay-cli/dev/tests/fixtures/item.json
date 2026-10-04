@@ -1,0 +1,13 @@
+{"itemId": "v1|111111111111|0", "legacyItemId": "111111111111", "title": "ThinkPad X1 Carbon Gen 9 i7 16GB",
+ "price": {"value": "399.00", "currency": "EUR"}, "buyingOptions": ["FIXED_PRICE"],
+ "condition": "Gebraucht", "conditionDescription": "Small scratch on the lid.",
+ "shippingOptions": [{"shippingServiceCode": "DHL Paket International", "shippingCostType": "FIXED",
+   "shippingCost": {"value": "12.90", "currency": "EUR"},
+   "minEstimatedDeliveryDate": "2026-10-08T07:00:00.000Z", "maxEstimatedDeliveryDate": "2026-10-12T07:00:00.000Z"}],
+ "returnTerms": {"returnsAccepted": true, "returnPeriod": {"value": 30, "unit": "CALENDAR_DAY"}, "returnShippingCostPayer": "BUYER"},
+ "seller": {"username": "laptopshop", "feedbackPercentage": "99.6", "feedbackScore": 15234, "sellerAccountType": "BUSINESS"},
+ "itemLocation": {"city": "Berlin", "postalCode": "10115", "country": "DE"},
+ "estimatedAvailabilities": [{"estimatedAvailableQuantity": 3, "estimatedSoldQuantity": 11}],
+ "localizedAspects": [{"name": "Marke", "value": "Lenovo"}, {"name": "Arbeitsspeicher", "value": "16 GB"}],
+ "description": "<div><p>Great&nbsp;laptop</p><script>x()</script><br>Battery 90%</div>",
+ "image": {"imageUrl": "https://i.ebayimg.com/1.jpg"}, "additionalImages": [{"imageUrl": "https://i.ebayimg.com/2.jpg"}]}

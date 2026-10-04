@@ -1,0 +1,67 @@
+{
+  "_comment": "Skill moves read by skilltap: installs tracking `from` follow to `to`; a skill still installed under `from_name` is renamed to `to_name` and references to its old dir/path (wrappers, settings.json hooks, user services) are repointed. Append only; keep entries while old installs may exist.",
+  "moves": [
+    {
+      "from": "clis/tg-cli",
+      "to": "skills/telegram-cli",
+      "from_name": "tg-cli",
+      "to_name": "telegram-cli"
+    },
+    {
+      "from": "clis/gdrive",
+      "to": "skills/google-drive-cli",
+      "from_name": "gdrive",
+      "to_name": "google-drive-cli"
+    },
+    {
+      "from": "clis/claude-tg",
+      "to": "skills/claude-telegram-bot",
+      "from_name": "claude-tg",
+      "to_name": "claude-telegram-bot"
+    },
+    {
+      "from": "clis/ebay",
+      "to": "skills/ebay-cli",
+      "from_name": "ebay",
+      "to_name": "ebay-cli"
+    },
+    {
+      "from": "clis/gmail",
+      "to": "skills/gmail-cli",
+      "from_name": "gmail",
+      "to_name": "gmail-cli"
+    },
+    {
+      "from": "clis/icloud-calendar",
+      "to": "skills/icloud-calendar-cli",
+      "from_name": "icloud-calendar",
+      "to_name": "icloud-calendar-cli"
+    },
+    {
+      "from": "clis/clockmaster",
+      "to": "skills/clockmaster-cli",
+      "from_name": "clockmaster",
+      "to_name": "clockmaster-cli"
+    },
+    {
+      "from": "clis/model-cli",
+      "to": "skills/model-cli"
+    },
+    {
+      "from": "clis/skilltap",
+      "to": "skills/skilltap"
+    },
+    {
+      "from": "skills/checkpoint",
+      "to": "skills/survive-compaction",
+      "from_name": "checkpoint",
+      "to_name": "survive-compaction"
+    },
+    {
+      "from": "skills/agent-courier",
+      "to": "skills/agent-messaging",
+      "from_name": "agent-courier",
+      "to_name": "agent-messaging"
+    }
+  ]
+}

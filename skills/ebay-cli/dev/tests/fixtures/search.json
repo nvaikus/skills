@@ -1,0 +1,20 @@
+{"total": 1234, "limit": 3, "offset": 0, "itemSummaries": [
+ {"itemId": "v1|111111111111|0", "legacyItemId": "111111111111", "title": "ThinkPad X1 Carbon Gen 9 i7 16GB",
+  "price": {"value": "399.00", "currency": "EUR"}, "condition": "Gebraucht", "conditionId": "3000",
+  "buyingOptions": ["FIXED_PRICE", "BEST_OFFER"],
+  "shippingOptions": [{"shippingCostType": "FIXED", "shippingCost": {"value": "12.90", "currency": "EUR"}}],
+  "seller": {"username": "laptopshop", "feedbackPercentage": "99.6", "feedbackScore": 15234},
+  "itemLocation": {"country": "DE", "postalCode": "10115"}, "image": {"imageUrl": "https://i.ebayimg.com/1.jpg"},
+  "itemWebUrl": "https://www.ebay.de/itm/111111111111?hash=abc"},
+ {"itemId": "v1|222222222222|0", "legacyItemId": "222222222222", "title": "Lenovo X1 Carbon\tGen 9",
+  "price": {"value": "250.00", "currency": "EUR"}, "currentBidPrice": {"value": "180.50", "currency": "EUR"},
+  "bidCount": 7, "condition": "Gebraucht", "conditionId": "3000", "buyingOptions": ["AUCTION"],
+  "itemEndDate": "2026-10-05T18:30:00.000Z",
+  "shippingOptions": [{"shippingCostType": "FIXED", "shippingCost": {"value": "0.00", "currency": "EUR"}}],
+  "seller": {"username": "privat99", "feedbackPercentage": "100.0", "feedbackScore": 12},
+  "itemWebUrl": "https://www.ebay.de/itm/222222222222"},
+ {"itemId": "v1|333333333333|0", "legacyItemId": "333333333333", "title": "X1 Carbon Akku",
+  "price": {"value": "45.00", "currency": "EUR"}, "condition": "Neu", "conditionId": "1000",
+  "buyingOptions": ["FIXED_PRICE"], "seller": {"username": "akkus", "feedbackPercentage": "98.1", "feedbackScore": 800},
+  "itemWebUrl": "https://www.ebay.de/itm/333333333333"}
+]}

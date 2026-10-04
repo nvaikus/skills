@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:"><response><href>/1234567/principal/</href><propstat><prop>
+<calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav"><href xmlns="DAV:">https://p99-caldav.icloud.com:443/1234567/calendars/</href></calendar-home-set>
+<calendar-user-address-set xmlns="urn:ietf:params:xml:ns:caldav"><href xmlns="DAV:">mailto:me@icloud.com</href><href xmlns="DAV:">/1234567/principal/</href></calendar-user-address-set>
+<notification-URL xmlns="http://calendarserver.org/ns/"><href xmlns="DAV:">/1234567/notification/</href></notification-URL>
+<displayname>Me Myself</displayname>
+</prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>

@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/* Theme = a class on <html> (light | dark) or none (= system). Tokens below are
+   light-dark() pairs, so the color-scheme in force picks the value and the first
+   paint is right before React mounts (index.html applies the stored class). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter var", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* type scale — features use these, never raw px */
+  --text-micro: 11px;
+  --text-micro--line-height: 14px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-title: 17px;
+  --text-title--line-height: 24px;
+  --text-display: 26px;
+  --text-display--line-height: 32px;
+
+  /* surfaces */
+  --color-canvas: light-dark(#f5f5f7, #0b0b0d);
+  --color-surface: light-dark(#ffffff, #151518);
+  --color-raised: light-dark(#f0f0f3, #1e1e22);
+  --color-sunken: light-dark(#fafafb, #101013);
+  /* recessed well behind the timeline lanes: a step below surface in both themes */
+  --color-well: light-dark(#f1f1f4, #0e0e11);
+  --color-well-shade: light-dark(rgb(0 0 0 / 0.07), rgb(0 0 0 / 0.55));
+  --color-line: light-dark(#e4e4e9, #2a2a30);
+  --color-line-soft: light-dark(#eeeef2, #202025);
+
+  /* foreground tiers */
+  --color-fg-1: light-dark(#18181b, #f4f4f6);
+  --color-fg-2: light-dark(#52525b, #a8a8b2);
+  --color-fg-3: light-dark(#71717a, #82828c);
+
+  /* roles */
+  --color-accent: light-dark(#0a66e0, #5aa2ff);
+  --color-on-accent: light-dark(#ffffff, #0b0b0d);
+  --color-ok: light-dark(#17864a, #3fd283);
+  --color-fail: light-dark(#d13a2f, #ff6b61);
+  --color-warn: light-dark(#a96c00, #f2b630);
+  --color-live: light-dark(#0a66e0, #5aa2ff);
+  /* waiting in a task's queue: violet, apart from running blue */
+  --color-queue: light-dark(#7c4dd8, #a78bfa);
+  /* planned (future) run: solid neutral, quieter than any status colour */
+  --color-planned: light-dark(#a1a1aa, #71717a);
+  --color-idle: light-dark(#a1a1aa, #5e5e68);
+  --color-claude: light-dark(#bf5b37, #e48c6b);
+  /* tooltip: near-black in light; a raised dark surface (never a white box) in dark */
+  --color-tip: light-dark(#1f1f23, #26262c);
+  --color-on-tip: light-dark(#f4f4f6, #ececf0);
+  --color-tip-line: light-dark(transparent, #3a3a42);
+  /* scrim darkens in both themes; alpha lives in the token */
+  --color-scrim: light-dark(rgb(16 16 20 / 0.28), rgb(0 0 0 / 0.6));
+
+  --animate-beat: beat 1.6s ease-in-out infinite;
+  --animate-rise: rise 160ms ease-out;
+}
+
+:root {
+  color-scheme: light dark;
+  /* z layers (used as z-(--z-…) inside ui/ only) */
+  --z-sticky: 10;
+  --z-popover: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+  --z-tip: 70;
+}
+:root.light {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
+@keyframes beat {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-canvas text-fg-1 font-sans text-body antialiased;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+  ::selection {
+    @apply bg-accent/20;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--color-fg-3) 40%, transparent) transparent;
+  }
+  /* preflight leaves buttons on the arrow: everything clickable gets the hand */
+  button:not(:disabled),
+  [role="button"],
+  [role="switch"],
+  [role="radio"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  a[href],
+  label[for],
+  summary,
+  select {
+    cursor: pointer;
+  }
+  /* a long press shows the tooltip: no iOS text callout over it */
+  [data-tip] {
+    -webkit-touch-callout: none;
+  }
+  :disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+  /* safety net for ui/Field: iOS Safari zooms into a focused field under 16px and stays zoomed */
+  @media (width < 40rem) {
+    input:not([type="checkbox"], [type="radio"], [type="range"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

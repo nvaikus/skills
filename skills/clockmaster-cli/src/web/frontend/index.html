@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6.5' fill='none' stroke='%23707078' stroke-width='1.6'/><path d='M8 4.5V8l2.5 1.5' fill='none' stroke='%23707078' stroke-width='1.6' stroke-linecap='round'/></svg>"
+    />
+    <title>clockmaster</title>
+    <script>
+      // first paint in the stored theme, before React mounts (no flash)
+      try { var t = localStorage.getItem("clockmaster:theme"); if (t === "light" || t === "dark") document.documentElement.classList.add(t); } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
