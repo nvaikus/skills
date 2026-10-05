@@ -23,13 +23,16 @@ S = {
                 "/cd <path> - working directory (starts a new session)\n/new - new session\n"
                 "/stop - stop the running task\n/status - session info\n"
                 "/verbose - detailed progress (tool calls) on/off\n"
-                "/rename <title> - rename the topic\n/delete - delete the topic (the Claude session file stays on disk)",
+                "/rename <title> - rename the topic\n/icon <emoji> - topic icon (/icon - list, /icon off - remove)\n/delete - delete the topic (the Claude session file stays on disk)",
         "cmd.new": "Start a new Claude session in this topic", "cmd.stop": "Stop the running Claude in this topic",
         "cmd.status": "Session, cwd, running?", "cmd.cd": "Set working directory: /cd <path>",
         "cmd.verbose": "Detailed progress on/off", "cmd.rename": "Rename this topic: /rename <title>",
         "cmd.delete": "Delete this topic and forget its session", "cmd.help": "How this bot works",
         "in_topic": "/{cmd} works inside a topic.",
         "write_in_topic": "Please write inside a topic: each topic is a separate Claude session.",
+        "cmd.icon": "Topic icon: /icon <emoji>, /icon off",
+        "icon_usage": "Usage: /icon <emoji> or /icon off\nAvailable: {icons}",
+        "icon_bad": "😕 Not a topic icon. Available: {icons}", "icon_fail": "😕 Could not change the icon: {e}",
         "rename_usage": "Usage: /rename <title>", "rename_fail": "😕 Could not rename: {e}",
         "delete_fail": "😕 Could not delete: {e}",
         "new": "🆕 New session from the next message. Folder: {cwd}",
@@ -66,13 +69,16 @@ S = {
                 "/cd <путь> - рабочая папка (начинает новую сессию)\n/new - новая сессия\n"
                 "/stop - остановить текущую задачу\n/status - информация о сессии\n"
                 "/verbose - подробный ход работы вкл/выкл\n"
-                "/rename <название> - переименовать тему\n/delete - удалить тему (файл сессии Claude останется)",
+                "/rename <название> - переименовать тему\n/icon <эмодзи> - иконка темы (/icon - список, /icon off - убрать)\n/delete - удалить тему (файл сессии Claude останется)",
         "cmd.new": "Новая сессия Claude в этой теме", "cmd.stop": "Остановить Claude в этой теме",
         "cmd.status": "Сессия, папка, идёт ли работа", "cmd.cd": "Рабочая папка: /cd <путь>",
         "cmd.verbose": "Подробный ход работы вкл/выкл", "cmd.rename": "Переименовать тему: /rename <название>",
         "cmd.delete": "Удалить тему и забыть сессию", "cmd.help": "Как работает бот",
         "in_topic": "/{cmd} работает внутри темы.",
         "write_in_topic": "Пишите, пожалуйста, внутри темы: каждая тема - отдельная сессия Claude.",
+        "cmd.icon": "Иконка темы: /icon <эмодзи>, /icon off",
+        "icon_usage": "Так: /icon <эмодзи> или /icon off\nДоступные: {icons}",
+        "icon_bad": "😕 Такой иконки для темы нет. Доступные: {icons}", "icon_fail": "😕 Не удалось сменить иконку: {e}",
         "rename_usage": "Так: /rename <название>", "rename_fail": "😕 Не удалось переименовать: {e}",
         "delete_fail": "😕 Не удалось удалить: {e}",
         "new": "🆕 Со следующего сообщения - новая сессия. Папка: {cwd}",

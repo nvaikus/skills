@@ -1,6 +1,6 @@
 ---
 name: icloud-calendar-cli
-description: iCloud Calendar for agents over CalDAV, one stdlib CLI on macOS, Linux and Windows (no Mac needed); changes sync to Calendar on Mac, iPhone and icloud.com. List calendars with their kind (own, shared by me, shared with me rw/ro, subscribed, reminders), list events in a range (recurring ones expanded), show, add, edit, delete events; pending share invitations. Guided onboarding in chat with an app-specific password. Use when a task touches the user's Apple / iCloud calendar - "what's on my calendar", "am I free on", "schedule / add / book / move / cancel a meeting", "put it in my calendar", "events next week", "iCloud calendar", "Apple Calendar", "календарь", "запиши в календарь", "что у меня завтра". NOT for Google Calendar, nor Reminders/to-dos.
+description: iCloud Calendar for agents over CalDAV, one stdlib CLI on macOS, Linux and Windows (no Mac needed); changes sync to Calendar on Mac, iPhone and icloud.com. List calendars with their kind (own, shared by me, shared with me rw/ro, subscribed, reminders), list events in a range (recurring ones expanded), show, add, edit, delete events; create/delete own calendars; pending share invitations. Guided onboarding in chat with an app-specific password. Use when a task touches the user's Apple / iCloud calendar - "what's on my calendar", "am I free on", "schedule / add / book / move / cancel a meeting", "put it in my calendar", "events next week", "iCloud calendar", "Apple Calendar", "календарь", "запиши в календарь", "что у меня завтра". NOT for Google Calendar, nor Reminders/to-dos.
 ---
 
 # icloud-calendar-cli
@@ -19,6 +19,7 @@ icloud-calendar edit UID --start 'fri 15:00'               # keeps duration; --t
 icloud-calendar delete UID                                 # --dry-run first when unsure
 icloud-calendar invites                                    # pending share invitations (read-only)
 icloud-calendar calendars --set-default NAME               # where `add` goes without --cal
+icloud-calendar calendars --create NAME [--color '#RRGGBB']  # new own calendar; --delete NAME [--force] (own only)
 ```
 
 ## Calendar kinds
@@ -38,7 +39,7 @@ New Apple ID: `icloud-calendar onboard --profile NAME` (first one: `main`). Each
 
 ## Writing events
 
-- Confirm with the user before touching an event in a shared calendar (other people see it) and before `delete`. Own calendars: act at once.
+- Confirm with the user before touching an event in a shared calendar (other people see it) and before `delete` / `calendars --delete`. Own calendars: act at once.
 - Times are the machine's zone (`--tz` / `profiles --set-tz` to change); output shows the same zone.
 - `edit`/`delete` act on the whole series of a recurring event (no single-occurrence edits); say so when the uid is recurring.
 - Attendees / invitations to people are not supported: put names in `--notes`.

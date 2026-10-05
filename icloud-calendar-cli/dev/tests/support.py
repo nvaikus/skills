@@ -54,6 +54,7 @@ class FakeDav:
         self.nominatim = []  # geocoder answers (JSON); default = no hit
         self.photon = {"features": []}
         self.n = 0
+        self.made = {}  # MKCALENDAR'd collection path -> request body
 
     def add(self, path, ics, etag=None):
         self.n += 1
@@ -80,7 +81,13 @@ class FakeDav:
             if path == "/1234567/principal/":
                 return self._ms(fixture("principal.xml"), url)
             if path == "/1234567/calendars/":
-                return self._ms(fixture("home.xml"), url)
+                return self._ms(self._home(), url)
+            if path in self.made:  # depth 1 on a created calendar: itself + its resources
+                rows = [path] + [p for p in self.res if p.startswith(path)]
+                return self._ms('<d:multistatus xmlns:d="DAV:">' + "".join(
+                    f"<d:response><d:href>{p}</d:href><d:propstat><d:prop><d:getetag>x</d:getetag></d:prop>"
+                    "<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>" for p in rows)
+                    + "</d:multistatus>", url)
             if path == "/1234567/notification/":
                 return self._ms(fixture("notifications.xml"), url)
         if method == "GET":
@@ -100,6 +107,14 @@ class FakeDav:
                 return http.Response(412, {}, b"", url)
             self.add(path, body)
             return http.Response(204 if exists else 201, {"ETag": self.res[path][0]}, b"", url)
+        if method == "MKCALENDAR":
+            if path in self.made:
+                return http.Response(405, {}, b"", url)
+            self.made[path] = body
+            return http.Response(201, {}, b"", url)
+        if method == "DELETE" and path in self.made:
+            del self.made[path]
+            return http.Response(204, {}, b"", url)
         if method == "DELETE":
             if path not in self.res:
                 return http.Response(404, {}, b"", url)
@@ -125,11 +140,24 @@ class FakeDav:
                + "".join(out) + "</d:multistatus>")
         return http.Response(207, {}, xml.encode(), url)
 
+    def _home(self):
+        xml = fixture("home.xml")
+        extra = ""
+        for p, body in self.made.items():
+            name = re.search(r"<d:displayname>(.*?)</d:displayname>", body).group(1)
+            color = re.search(r"<a:calendar-color>(.*?)</a:calendar-color>", body)
+            extra += (f"<D:response><D:href>{p}</D:href><D:propstat><D:prop><D:resourcetype><D:collection/>"
+                      f"<C:calendar/></D:resourcetype><D:displayname>{name}</D:displayname>"
+                      + (f"<A:calendar-color>{color.group(1)}</A:calendar-color>" if color else "")
+                      + '<C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>'
+                      "</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>")
+        return xml.replace("</D:multistatus>", extra + "</D:multistatus>")
+
     def _ms(self, text, url):
         return http.Response(207, {}, text.encode(), url)
 
     def puts(self):
-        return [c for c in self.calls if c["method"] in ("PUT", "DELETE")]
+        return [c for c in self.calls if c["method"] in ("PUT", "DELETE", "MKCALENDAR")]
 
 
 def _x(s):

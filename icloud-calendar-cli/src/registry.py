@@ -6,7 +6,7 @@ FAMILIES = set()
 COMMANDS = {
     "onboard": ("src.commands.start.onboard", "guided setup of an Apple ID, one step per run (exit 5 = waiting on the user)"),
     "profiles": ("src.commands.start.profiles", "Apple IDs set up here; --default NAME; --remove NAME"),
-    "calendars": ("src.commands.cal.calendars", "every calendar: name, kind, access, owner, components, color, id; --set-default"),
+    "calendars": ("src.commands.cal.calendars", "every calendar: name, kind, access, owner, components, color, id; --set-default, --create NAME, --delete NAME"),
     "invites": ("src.commands.cal.invites", "pending calendar share invitations (read-only; accept/decline in Calendar)"),
     "list": ("src.commands.event.list", "events in a time range, recurring ones expanded; --from --to --cal"),
     "show": ("src.commands.event.show", "one event in full: times, zone, repeat rule, alarms, notes, calendar"),

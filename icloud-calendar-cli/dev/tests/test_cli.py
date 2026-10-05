@@ -87,6 +87,50 @@ class TestDiscoveryAndKinds(Base):
         self.assertIn("read-only", err)
 
 
+class TestCreateDeleteCalendar(Base):
+    def test_create(self):
+        rc, out, err = self.cli("calendars", "--create", "Gym & Sport", "--color", "#34c759")
+        self.assertEqual(rc, 0, err)
+        mk = self.dav.puts()[0]
+        self.assertEqual(mk["method"], "MKCALENDAR")
+        self.assertRegex(mk["url"], r"/1234567/calendars/[0-9A-F-]{36}/$")
+        self.assertIn("<d:displayname>Gym &amp; Sport</d:displayname>", mk["body"])
+        self.assertIn('<c:comp name="VEVENT"/>', mk["body"])
+        self.assertIn("<a:calendar-color>#34C759FF</a:calendar-color>", mk["body"])
+        row = tsv(out)[0]
+        self.assertEqual((row["name"], row["kind"], row["access"], row["color"]), ("Gym & Sport", "own", "rw", "#34C759"))
+        self.assertEqual(len(tsv(out)), 1)
+
+    def test_create_refusals(self):
+        for argv in (("--create", "work"), ("--create", "X", "--color", "red"), ("--color", "#000000"),
+                     ("--create", "X", "--set-default", "Work")):
+            rc, out, err = self.cli("calendars", *argv)
+            self.assertEqual(rc, 2, argv)
+        self.assertEqual(self.dav.puts(), [])
+
+    def test_delete(self):
+        self.cli("calendars", "--create", "Probe")
+        cid = re.search(r"/calendars/([0-9A-F-]{36})/", self.dav.puts()[0]["url"]).group(1)
+        path = f"{P}{cid}/"
+        self.dav.add(path + "e.ics", SINGLE)
+        rc, out, err = self.cli("calendars", "--delete", "Prob")  # substring is not enough
+        self.assertEqual(rc, 2)
+        rc, out, err = self.cli("calendars", "--delete", "probe")
+        self.assertEqual(rc, 2)
+        self.assertIn("--force", err)
+        del self.dav.res[path + "e.ics"]
+        rc, out, err = self.cli("calendars", "--delete", "probe")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(path, self.dav.made)
+        self.assertTrue(out.startswith("deleted\tProbe\t0\t"))
+
+    def test_delete_only_own(self):
+        for name in ("Family", "Anna's Trip", "Holidays", "Reminders"):
+            rc, out, err = self.cli("calendars", "--delete", name)
+            self.assertEqual(rc, 2, name)
+        self.assertEqual(self.dav.puts(), [])
+
+
 class TestAdd(Base):
     def put(self):
         puts = self.dav.puts()

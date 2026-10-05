@@ -16,7 +16,7 @@ from .store import GENERAL, Store
 
 log = logging.getLogger("claude-tg")
 
-COMMANDS = ["new", "stop", "status", "cd", "verbose", "rename", "delete", "help"]
+COMMANDS = ["new", "stop", "status", "cd", "verbose", "rename", "icon", "delete", "help"]
 RESTARTED = ("[The bridge restarted while you were answering this message. Your partial work may already be in "
              "this session: check before repeating side effects.]\n\n")
 RERUN_MAX_AGE = 3600  # older unfinished requests are not re-run after a restart: the user is told to resend
@@ -274,6 +274,8 @@ class Bridge:
             except TgError as e:
                 return self.say(chat, thread, self.s("rename_fail", e=e.description))
             self.store.update(thread, title=arg[:128], implicit=False)  # auto-title never overrides it
+        elif cmd == "icon":
+            self.set_icon(chat, thread, msg["message_id"], arg)
         elif cmd == "delete":
             try:
                 self.bot.call("deleteForumTopic", chat_id=chat, message_thread_id=thread)
@@ -311,6 +313,24 @@ class Bridge:
             self.say(chat, thread, self.s("cd_ok", path=path))
         else:
             self.worker(chat, thread).put([msg])  # unknown /command: let Claude see it
+
+    def set_icon(self, chat, thread, mid, arg):
+        """/icon <emoji> | off. Only getForumTopicIconStickers emojis are allowed; no arg = list them."""
+        try:
+            icons = {x["emoji"].rstrip("\ufe0f"): x["custom_emoji_id"] for x in self.bot.call("getForumTopicIconStickers")}
+        except TgError as e:
+            return self.say(chat, thread, self.s("icon_fail", e=e.description))
+        if not arg:
+            return self.say(chat, thread, self.s("icon_usage", icons=" ".join(icons)))
+        cid = "" if arg.lower() in ("off", "none", "-") else icons.get(arg.rstrip("\ufe0f"))
+        if cid is None:
+            return self.say(chat, thread, self.s("icon_bad", icons=" ".join(icons)))
+        try:
+            self.bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=cid)
+        except TgError as e:
+            if "not modified" not in e.description:
+                return self.say(chat, thread, self.s("icon_fail", e=e.description))
+        self.react(chat, mid, "👌")
 
     # ---------- restart safety ----------
     def restore(self):

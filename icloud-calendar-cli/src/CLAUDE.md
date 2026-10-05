@@ -8,7 +8,7 @@ Keep this file one screen. Entry `icloud-calendar.py` → `src/main.py:main`. Py
 - A command never speaks HTTP and never prints: `api/` does the work, rows go to `ctx.write` / `ctx.text`. A test greps `src/commands` for `allow_mutate|http.request|.mutate(`.
 - Transport rail: `core/http.request` refuses non-read methods without `allow_mutate=True`; only `api/dav.Session.mutate` passes it. Basic auth is sent only to `https://*.icloud.com` (`http.trusted`); redirects are followed by hand (method + body kept).
 - The password never reaches argv, files, output or exceptions: env var named in config or `password_cmd`.
-- Write gate: `calendars.write_gate` before every PUT/DELETE (ro shares, subscribed, reminders → UsageError exit 2).
+- Write gate: `calendars.write_gate` before every event PUT/DELETE (ro shares, subscribed, reminders → UsageError exit 2). Calendar MKCALENDAR/DELETE: `calendars.create/remove` (dup name → exit 2; delete own only, exact name/id, non-empty needs --force).
 - Writes are conditional: new = `If-None-Match: *`, edit/delete = `If-Match: <etag>`.
 - ICS edits change only the touched properties (`ics.Component.set`); unknown properties and sub-components survive.
 - stdout = data; stderr = `# ` notes and `icloud-calendar: <error>`. Exit 0 · 1 · 2 · 5 · 130. Branch on `e.status` / `AuthError`, never on message text.

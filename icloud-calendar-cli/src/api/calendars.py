@@ -1,10 +1,13 @@
 """Discovery (principal -> calendar home, cached per profile), the calendar list with its kind and
 access, calendar choice by name/id, and the per-kind write gate."""
+import re
 import urllib.parse
+import uuid
+from xml.sax.saxutils import escape as xesc
 
 from ..core import config
 from ..core.errors import CliError, UsageError
-from .dav import ROOT_URL, Session, q
+from .dav import ROOT_URL, Session, q, same_path, xml_body
 
 PRINCIPAL_PROPS = ("<d:prop><c:calendar-home-set/><c:calendar-user-address-set/><cs:notification-URL/>"
                    "<d:displayname/></d:prop>")
@@ -210,3 +213,55 @@ def choose_for_write(cals, spec, cfg):
         cal = rw[0]
     write_gate(cal)
     return cal
+
+
+def _exact(cals, name):
+    low = name.strip().lower()
+    return [c for c in cals if c["name"].lower() == low]
+
+
+def create(session, cfg, cals, name, color=None):
+    """MKCALENDAR <home>/<UUID>/ (VEVENT only) -> the new calendar dict. Same name exists -> exit 2."""
+    name = (name or "").strip()
+    if not name:
+        raise UsageError("calendar name is empty")
+    if color is not None and not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        raise UsageError(f"--color {color!r}: use #RRGGBB, e.g. '#1BADF8'")
+    dup = _exact(cals, name)
+    if dup:
+        raise UsageError(f"a calendar named {name!r} already exists", payload=_cands(dup))
+    cid = str(uuid.uuid4()).upper()
+    href = urllib.parse.urljoin(cfg["home"], cid + "/")
+    props = (f"<d:displayname>{xesc(name)}</d:displayname>"
+             '<c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>')
+    if color:
+        props += f"<a:calendar-color>{color.upper()}FF</a:calendar-color>"
+    session.mutate("MKCALENDAR", href, xml_body("C:mkcalendar", f"<d:set><d:prop>{props}</d:prop></d:set>"),
+                   headers={"Content-Type": "application/xml; charset=utf-8"})
+    hit = [c for c in list_all(session, cfg) if same_path(c["href"], href)]
+    if not hit:
+        raise CliError(f"MKCALENDAR succeeded but {href} is not in the calendar list yet; rerun `calendars`")
+    return hit[0]
+
+
+def item_count(session, cal):
+    """Resources (events) inside a calendar collection."""
+    items = session.propfind(cal["href"], "<d:prop><d:getetag/></d:prop>", depth=1)
+    return sum(1 for i in items if not same_path(i.href, cal["href"]))
+
+
+def remove(session, cals, spec, force=False):
+    """DELETE an own calendar named exactly (or by id). Non-empty needs force. -> (cal, item count)."""
+    hits = [c for c in cals if c["id"] == spec.strip()] or _exact(cals, spec)
+    if len(hits) != 1:
+        what = "ambiguous: pass the id" if hits else "not found (exact name or id needed)"
+        raise UsageError(f"calendar {spec!r} {what}", payload=_cands(hits or cals))
+    cal = hits[0]
+    if cal["kind"] != "own":
+        raise UsageError(f"{cal['name']!r} is {cal['kind']}: only own, unshared calendars are deleted here "
+                         "(stop sharing / unsubscribe in Calendar)")
+    n = item_count(session, cal)
+    if n and not force:
+        raise UsageError(f"{cal['name']!r} holds {n} event(s): pass --force to delete it with them")
+    session.mutate("DELETE", cal["href"])
+    return cal, n
