@@ -385,7 +385,10 @@ def doctor(cfg) -> int:
         row("leak_filter", True, guard.from_config(cfg).stats())
     st = config.STATE_DIR / "state.json"
     owner = cfg.get("owner_id") or (json.loads(st.read_text()).get("owner_id") if st.exists() else None)
-    row("owner", True, str(owner) if owner else "not yet: first private-chat user becomes owner")
+    if owner and not str(owner).lstrip("-").isdigit():
+        row("owner", False, f"{owner!r} is not a numeric Telegram user id: the bot ignores everyone")
+    else:
+        row("owner", True, str(owner) if owner else "not yet: first private-chat user becomes owner")
     if sys.platform == "linux" and shutil.which("systemctl"):
         mode = installed_mode()
         would = mode or pick_mode()

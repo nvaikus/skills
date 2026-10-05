@@ -339,6 +339,23 @@ class FriendlyUi(unittest.TestCase):
         st = bridge.Status(w, detailed, "ru", clock=lambda: clock[0], ticker=False)
         return st, clock, w.b.quiet.call_args_list
 
+    def test_status_stop_button_and_callback(self):
+        st, clock, calls = self.status()
+        st.tool(streamjson.Event("tool", "🔧 Bash: ls", name="Bash"))
+        clock[0] = 3.0
+        st.tick()
+        kb = calls[-1][1]["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual((kb["text"], kb["callback_data"]), ("⏹ Стоп", "stop"))
+        b = bridge.Bridge.__new__(bridge.Bridge)
+        b.owner, b.lang, b.quiet = 5, "ru", mock.Mock()
+        st.w.st, st.w.run = st, object()
+        b.workers = {50: st.w}
+        b.button({"id": "q", "from": {"id": 6}, "data": "stop", "message": {"message_id": 77}})
+        st.w.stop.assert_not_called()  # not the owner
+        b.button({"id": "q", "from": {"id": 5}, "data": "stop", "message": {"message_id": 77}})
+        st.w.stop.assert_called_once_with(drop_queue=False)
+        self.assertEqual(b.quiet.call_args[1]["text"], "⏹ Остановлено.")
+
     def test_status_no_flash_single_line_and_cleanup(self):
         st, clock, calls = self.status()
         st.set("write")

@@ -166,6 +166,8 @@ class Bridge:
                         self.quiet("sendMessage", chat_id=w.chat, message_thread_id=w.thread or None,
                                    text=self.s("stopped"))
             return
+        if "callback_query" in upd:
+            return self.button(upd["callback_query"])
         msg = upd.get("message")
         if not msg or msg["chat"]["type"] != "private" or "from" not in msg:
             return
@@ -194,6 +196,16 @@ class Bridge:
             return self.command(chat, thread, msg, text)
         self.react(chat, msg["message_id"], "👀")
         self.collect(chat, thread, msg)
+
+    def button(self, cq):
+        """⏹ under the status message: stops the current run (queue kept, like the draft stop button)."""
+        mid = (cq.get("message") or {}).get("message_id")
+        hit = None
+        if cq["from"]["id"] == self.owner and cq.get("data") == "stop":
+            hit = next((w for w in list(self.workers.values()) if w.st and w.st.id == mid and w.run), None)
+            if hit:
+                hit.stop(drop_queue=False)
+        self.quiet("answerCallbackQuery", callback_query_id=cq["id"], text=self.s("stopped" if hit else "idle"))
 
     def collect(self, chat, thread, msg):
         """Debounce per topic: every new message restarts the timer; the burst runs once, as one prompt."""
@@ -375,7 +387,7 @@ class Bridge:
         while True:
             try:
                 ups = self.bot.call("getUpdates", _timeout=65, offset=offset, timeout=50,
-                                    allowed_updates=["message", "stopped_message_generation"])
+                                    allowed_updates=["message", "stopped_message_generation", "callback_query"])
             except TgError as e:
                 if e.code == 409:
                     log.error("another poller uses this token (409); retrying in 30 s")
@@ -924,11 +936,14 @@ class Status:
                 if self.id:
                     b.quiet("deleteMessage", chat_id=chat, message_id=self.id)
                 self.id = None
-            elif self.id:
-                b.quiet("editMessageText", chat_id=chat, message_id=self.id, text=body)
-            else:
-                sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread, text=body)
-                self.id = sent and sent["message_id"]
+            else:  # every edit repeats the keyboard: editMessageText without reply_markup drops it
+                kb = {"inline_keyboard": [[{"text": ui.t(self.lang, "btn.stop"), "callback_data": "stop"}]]}
+                if self.id:
+                    b.quiet("editMessageText", chat_id=chat, message_id=self.id, text=body, reply_markup=kb)
+                else:
+                    sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread, text=body,
+                                   reply_markup=kb)
+                    self.id = sent and sent["message_id"]
             self.shown, self.shown_phase, self.at = raw, phase, now
 
     def _loop(self):
