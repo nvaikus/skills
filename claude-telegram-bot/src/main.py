@@ -18,6 +18,7 @@ examples:
   claude-tg run              # foreground (debugging); only one poller per token
   echo done | claude-tg notify       # bot -> owner, topic "Notifications" (scripts, scheduled jobs)
   claude-tg notify --file out.mp4 "demo"   # file -> owner; inside a bot run: into that run's topic
+  claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
 """
 
 
@@ -101,6 +102,16 @@ def main(argv=None):
                         "else Notifications)")
     g.add_argument("--thread", type=int, metavar="ID", help="send into this topic (message_thread_id)")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
+    s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
+                       description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
+                                   "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "
+                                   "An empty TEXT clears the field.")
+    s.add_argument("--name", metavar="TEXT", help="bot name (<= 64 chars)")
+    s.add_argument("--description", metavar="TEXT", help="text shown in an empty chat with the bot (<= 512)")
+    s.add_argument("--short", metavar="TEXT", help="profile 'about' text, also in shares (<= 120)")
+    s.add_argument("--photo", metavar="FILE", help="profile photo; jpg, other images converted via ffmpeg")
+    s.add_argument("--photo-remove", action="store_true", help="remove the bot's profile photo")
+    s.add_argument("--lang", metavar="CODE", help="two-letter language code for name / descriptions (default: all)")
     a = p.parse_args(argv)
     try:
         cfg = config.load()
@@ -112,6 +123,9 @@ def main(argv=None):
         if a.cmd == "notify":
             from . import notify
             return notify.main(cfg, a)
+        if a.cmd == "profile":
+            from . import botprofile
+            return botprofile.main(cfg, a)
         if a.cmd == "run":
             return run(cfg) or 0
         if a.cmd == "setup":

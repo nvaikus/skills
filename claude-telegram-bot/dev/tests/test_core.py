@@ -1010,3 +1010,79 @@ class Notify(unittest.TestCase):
         self.assertIsNone(bridge.reply_context({"reply_to_message": root}, 300))
         own = dict(bot_msg, **{"from": {"is_bot": False}})
         self.assertIsNone(bridge.reply_context({"reply_to_message": own}, 300))
+
+
+class Profile(unittest.TestCase):
+    from src import botprofile as bp
+
+    def args(self, *argv):
+        from src import main as m
+        with mock.patch.object(self.bp, "main", lambda cfg, a: setattr(self, "a", a) or 0):
+            m.main(["profile", *argv])
+        return self.a
+
+    class Bot(FakeBot):
+        def __init__(self, fail=None):
+            super().__init__(fail)
+            self.uploads = []
+
+        def call(self, method, _timeout=35, _retries=3, **p):
+            super().call(method, **p)
+            return {"name": "Bot", "description": "a\nb", "short_description": "s"}
+
+        def upload(self, method, field, path, _timeout=120, **p):
+            self.uploads.append((method, field, path.suffix, path.read_bytes()[:2], p))
+            return True
+
+    def test_validation(self):
+        self.assertEqual(self.bp.validate(self.args("--name", "x" * 64, "--short", "")), [])
+        errs = self.bp.validate(self.args("--name", "x" * 65, "--description", "d" * 513, "--short", "s" * 121,
+                                          "--photo", "/nope.jpg", "--photo-remove"))
+        self.assertEqual(len(errs), 5)
+        self.assertFalse(self.bp.wants_change(self.args()))
+        self.assertTrue(self.bp.wants_change(self.args("--short", "")))  # empty = clear the field
+
+    def test_show_uses_getters(self):
+        bot = self.Bot()
+        rows = self.bp.show(bot, "ru")
+        self.assertEqual(rows, [("name", "Bot"), ("description", "a\\nb"), ("short", "s")])
+        self.assertEqual([c for c in bot.calls], [("getMyName", {"language_code": "ru"}),
+                                                  ("getMyDescription", {"language_code": "ru"}),
+                                                  ("getMyShortDescription", {"language_code": "ru"})])
+
+    def test_setters_and_photo_payload(self):
+        with tempfile.TemporaryDirectory() as d:
+            jpg = Path(d) / "a.JPG"
+            jpg.write_bytes(b"\xff\xd8jpeg")
+            bot = self.Bot(fail={"setMyDescription": "Bad Request: too long"})
+            rows = self.bp.apply(bot, self.args("--name", "N", "--description", "D", "--short", "S",
+                                                "--lang", "en", "--photo", str(jpg)))
+        self.assertEqual(rows, [("name", "ok"), ("description", "error: Bad Request: too long"),
+                                ("short", "ok"), ("photo", "ok")])
+        self.assertEqual(bot.calls[0], ("setMyName", {"language_code": "en", "name": "N"}))
+        self.assertEqual(bot.calls[2], ("setMyShortDescription", {"language_code": "en", "short_description": "S"}))
+        self.assertEqual(bot.uploads, [("setMyProfilePhoto", "p", ".JPG", b"\xff\xd8",
+                                        {"photo": {"type": "static", "photo": "attach://p"}})])
+        bot = self.Bot()
+        self.assertEqual(self.bp.apply(bot, self.args("--photo-remove")), [("photo", "removed")])
+        self.assertEqual(bot.calls, [("removeMyProfilePhoto", {})])
+
+    def test_non_jpg_needs_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = Path(d) / "a.png"
+            png.write_bytes(b"x")
+            with mock.patch("shutil.which", return_value=None):
+                rows = self.bp.apply(self.Bot(), self.args("--photo", str(png)))
+            self.assertEqual(rows[0][0], "photo")
+            self.assertIn("install ffmpeg", rows[0][1])
+
+    @unittest.skipUnless(__import__("shutil").which("ffmpeg"), "no ffmpeg")
+    def test_png_converted_to_jpg(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            png = Path(d) / "a.png"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=64x64", "-frames:v", "1",
+                            str(png)], check=True)
+            bot = self.Bot()
+            self.assertEqual(self.bp.apply(bot, self.args("--photo", str(png))), [("photo", "ok")])
+        self.assertEqual(bot.uploads[0][1:4], ("p", ".jpg", b"\xff\xd8"))

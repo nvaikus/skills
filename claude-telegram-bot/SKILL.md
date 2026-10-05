@@ -14,6 +14,7 @@ claude-tg status | logs [-f] [-n N]    # status also shows runs in flight / queu
 claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after every update, never raw systemctl
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat]   # bot -> owner; stdin if no TEXT
+claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
 ```
 
 `python3 ~/.claude/skills/claude-telegram-bot/claude-tg.py ...` when no wrapper is on PATH. Flags: `claude-tg <cmd> -h`.
@@ -57,6 +58,7 @@ claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PAT
 - `claude-tg restart` only: from a run it returns at once and a detached waiter restarts after your answer + idle, then posts "♻️ restarted: <commit>" or "💔 not running" into the topic. Tell the owner that; don't verify in the same run.
 - Never `--now`, raw `systemctl`, `kill`: cuts your own run → it re-runs with partial work done.
 - Background teammates keep your run alive: they must not restart either - restart once, from the main run, after their reports.
+- Owner asks to change the bot's name / about / description / avatar → `claude-tg profile ...` (no restart). A photo they sent is a file path in your prompt → `--photo <path>`.
 - Code edits: `src/CLAUDE.md` + green tests before the restart; a bot that fails to start is unreachable from Telegram (SSH only).
 
 | when | read |

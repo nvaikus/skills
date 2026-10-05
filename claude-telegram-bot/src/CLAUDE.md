@@ -26,6 +26,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 - Prompts go on stdin (`--input-format stream-json`, one process, many turns: `system/init` + `result` per turn). `--replay-user-messages` echoes each line with our `uuid` when claude takes it in → `Worker.sent`/`seen` map every `result` to the batches it answers (a mid-turn line is absorbed into the running turn; a finished helper starts a turn with no line). `background_tasks_changed.tasks` = full list of running top-level tasks. `Worker.maybe_close` closes stdin when idle, 0 tasks, nothing sent unseen, nothing being built; closing is safe any time (claude finishes helpers + their turn, then exits). Failed `--resume` exits by itself.
 - `result` carries only the last text block; drafts die in 30 s. An ended text block followed by more events (or 3 s of silence, e.g. waiting for a background Agent) is posted as a real message by `Worker.post_interim`; the final answer is skipped if identical to the last posted one.
 - New bot-facing text → a key in both `ui.S` tables (a test checks key/placeholder parity).
+- `setMyProfilePhoto` takes `photo` = InputProfilePhoto JSON `{"type":"static","photo":"attach://p"}` + the jpg as multipart field `p` (jpg only: `botprofile` converts via ffmpeg).
 - `getUpdates` 409 = another poller with the same token; the file lock in `STATE_DIR/lock` only guards one host.
 
 ## Layers
@@ -42,6 +43,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `media.py` | attachment download, model-cli STT |
 | `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
 | `notify.py` | `claude-tg notify`: owner chat, topic registry (`notify_topics` key → name/icon), thread id + applied name/icon cached per key (`notify.json`, not state.json - the bot owns that); `--file` uploads (video/photo/document, fallback document); default target = `$CLAUDE_TG_RUN_TOPIC` inside a run |
+| `botprofile.py` | `claude-tg profile`: getMy*/setMy* name, descriptions, profile photo |
 | `service.py` | systemd unit (system / user mode: user unit file present → user), doctor, setup |
 
 ## Test
