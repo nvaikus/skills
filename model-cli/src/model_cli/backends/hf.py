@@ -140,6 +140,10 @@ def _split_kwargs(fn, params):
     return known
 
 
+def takes_refs(task):
+    return task in ("text-generation", "image-text-to-text")
+
+
 def run(model_id, task, inp, params, out, cfg):
     if not available():
         raise MissingToken(ENV, SIGNUP)
@@ -156,6 +160,9 @@ def run(model_id, task, inp, params, out, cfg):
                     raise UsageError(f"hf chat run takes text or an image, not {inp.get('kind')}; "
                                      "send audio/pdf to an openrouter model")
                 content = [{"type": "text", "text": inp["text"]}, file_part(inp["file"])]
+            if inp.get("refs"):
+                content = (content if isinstance(content, list) else [{"type": "text", "text": content}]) \
+                    + [file_part(r) for r in inp["refs"]]
             msgs = [{"role": "user", "content": content}]
             r = fn(messages=msgs, model=model_id, **_split_kwargs(fn, params))
             return {"text": r.choices[0].message.content}

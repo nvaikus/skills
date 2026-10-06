@@ -15,6 +15,7 @@ COMMANDS = {
     "user-find": ("src.commands.chats.user_find", "find people/chats by name or phone; checks a number is on WhatsApp"),
     "history": ("src.commands.messages.history", "recent messages of one chat (from the store)"),
     "search": ("src.commands.messages.search", "full-text search over the stored messages"),
+    "download": ("src.commands.messages.download", "save media of stored messages (by id, or all in a chat) to a dir"),
     "send": ("src.commands.messages.send", "send a message or file(s) - immediately, no preview"),
     "group-info": ("src.commands.groups.group_info", "what a group invite link points to - without joining"),
     "join": ("src.commands.groups.join", "join a group by invite link (only on the user's explicit request)"),

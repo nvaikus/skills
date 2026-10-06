@@ -40,10 +40,31 @@ def io_log(task_name):
     return identity.data_dir() / "scheduler-io" / f"{task_name}.log"
 
 
+RUN_USER = "/run/user"  # tests point it at a temp dir
+
+
+def user_bus_env():
+    """Env for `systemctl --user`. A process started outside a login session (a system
+    unit, cron, sudo -u) lacks XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, yet the user
+    manager may run (linger). Fill them from /run/user/<uid>/bus when that socket exists,
+    as `--machine=<user>@.host --user` would; otherwise leave the env as is."""
+    env = dict(os.environ)
+    if env.get("XDG_RUNTIME_DIR") and env.get("DBUS_SESSION_BUS_ADDRESS"):
+        return env
+    runtime = env.get("XDG_RUNTIME_DIR") or f"{RUN_USER}/{os.getuid()}"
+    bus = Path(runtime) / "bus"
+    if not bus.exists():
+        return env
+    env.setdefault("XDG_RUNTIME_DIR", runtime)
+    if not env.get("DBUS_SESSION_BUS_ADDRESS"):
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    return env
+
+
 def systemctl(*args, check=False):
     try:
         r = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True,
-                           errors="replace", timeout=TIMEOUT)
+                           errors="replace", timeout=TIMEOUT, env=user_bus_env())
     except FileNotFoundError:
         raise Conflict("systemctl not found — this Linux has no systemd; schedule with cron instead "
                        "(see references/systemd.md)")

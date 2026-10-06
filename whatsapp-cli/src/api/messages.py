@@ -20,7 +20,7 @@ def row(m, names, text_limit=None):
     if sender and sender.startswith("+") and m["sender_name"]:
         sender = f"{m['sender_name']} ({sender})"  # unknown number: show the name they chose
     return {"date": iso_ts(m["ts"]), "chat_jid": m["chat_jid"], "chat": names.name(m["chat_jid"]), "msg_id": m["id"],
-            "sender": sender, "sender_jid": m["sender_jid"], "kind": m["kind"],
+            "sender": sender, "sender_jid": m["sender_jid"], "kind": m["kind"], "file": m.get("file"),
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
             "server_id": m["server_id"], "views": m["views"]}
 

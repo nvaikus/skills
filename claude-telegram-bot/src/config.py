@@ -29,6 +29,10 @@ DEFAULTS = {
     "protected_paths": [],       # leak filter (guard.py): files whose verbatim text never goes out; [] = off
     "protect_min_words": 12,     # consecutive matching words that count as a leak
     "protect_exempt_marker": ".user-made",  # dirs holding this file are not protected
+    "local_api_url": None,       # local Bot API server (--local) for attachments > 20 MB, e.g. http://127.0.0.1:8081
+    "local_api_id": "rbw:TELEGRAM_API_ID",      # secret REFERENCES for `local-api serve`: rbw:NAME | env:NAME |
+    "local_api_hash": "rbw:TELEGRAM_API_HASH",  # cred:NAME (systemd credential); literal values are refused
+    "local_api_bin": None,       # telegram-bot-api binary; None = PATH, then ~/.local/bin
     "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
 }
 

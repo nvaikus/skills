@@ -4,29 +4,34 @@ from datetime import datetime, timezone
 from ..core import tg
 from ..core.errors import Refused, UsageError
 from ..core.timeparse import iso
-from . import peers
+from . import media, peers
 
 MSG_FIELDS = ["date", "chat_id", "chat", "msg_id", "sender", "text"]
 
 
 def media_label(m):
-    media = getattr(m, "media", None)
-    if media is None or type(media).__name__ == "MessageMediaWebPage":  # link preview: the URL is already in the text
+    """'[document: report.pdf]', '[photo]', '[geo]'; None for no media or a link preview (URL is in the text)."""
+    k = media.kind(m)
+    if k is None:
         return None
-    return "[" + type(media).__name__.replace("MessageMedia", "").lower() + "]"
+    name = media.file_info(m)[0] if k in media.KINDS else None
+    return f"[{k}: {name}]" if name else f"[{k}]"
 
 
 def row(m, chat, sender, text_limit=None):
     text = getattr(m, "message", None) or ""
-    label = media_label(m)
+    action = getattr(m, "action", None)  # service message: call, join, pin, ...
+    label = "[" + type(action).__name__.replace("MessageAction", "").lower() + "]" if action else media_label(m)
     if label:
         text = f"{label} {text}".strip()
     cut = bool(text_limit) and len(text) > text_limit
+    k = media.kind(m)
     return {"date": iso(m.date), "chat_id": peers.peer_id(chat) if chat is not None else None,
             "chat": peers.name(chat) if chat is not None else None, "msg_id": m.id,
             "sender": peers.name(sender) if sender is not None else None,
             "sender_id": peers.peer_id(sender) if sender is not None else None,
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
+            "media": k, "file": media.file_info(m)[0] if k in media.KINDS else None,
             "link": peers.link(chat, m.id)}
 
 

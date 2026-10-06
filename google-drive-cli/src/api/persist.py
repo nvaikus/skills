@@ -9,6 +9,13 @@ from pathlib import Path
 from ..core.errors import CliError, UsageError
 from . import mounts
 
+# `systemctl --user` needs the user bus; agent/ssh/cron shells often lack XDG_RUNTIME_DIR, which made a
+# live mount read as "stale" (MainPID lookup failed) and `sync` refuse. Point it at the standard path.
+if sys.platform.startswith("linux") and not os.environ.get("XDG_RUNTIME_DIR"):
+    _rt = f"/run/user/{os.getuid()}"
+    if os.path.isdir(_rt):
+        os.environ["XDG_RUNTIME_DIR"] = _rt
+
 
 def kind():
     if sys.platform.startswith("linux"):

@@ -1086,3 +1086,150 @@ class Profile(unittest.TestCase):
             bot = self.Bot()
             self.assertEqual(self.bp.apply(bot, self.args("--photo", str(png))), [("photo", "ok")])
         self.assertEqual(bot.uploads[0][1:4], ("p", ".jpg", b"\xff\xd8"))
+
+
+class DlBot:
+    """download() fake: records calls; fail = TgError to raise."""
+    def __init__(self, fail=None):
+        self.got, self.fail = [], fail
+
+    def download(self, file_id, dest, timeout=120):
+        self.got.append((file_id, timeout))
+        if self.fail:
+            raise self.fail
+        return dest
+
+
+class BigFiles(unittest.TestCase):
+    MB = 1 << 20
+
+    def video(self, size, name="IMG_7945.MOV"):
+        v = {"file_id": "F", "file_name": name, "mime_type": "video/quicktime"}
+        if size is not None:
+            v["file_size"] = size
+        return {"message_id": 722, "video": v, "caption": "seizure"}
+
+    def fetch(self, msg, bot, big=None):
+        from src import media
+        with tempfile.TemporaryDirectory() as d:
+            return media.fetch(bot, msg, Path(d), big)
+
+    def test_small_file_goes_through_the_cloud(self):
+        bot = DlBot()
+        files, audio, skipped = self.fetch(self.video(5 * self.MB), bot)
+        self.assertEqual((len(files), audio, skipped, bot.got), (1, None, [], [("F", 120)]))
+
+    def test_over_20mb_without_local_server_is_skipped_not_raised(self):
+        bot = DlBot()
+        files, _, skipped = self.fetch(self.video(90 * self.MB), bot)
+        self.assertEqual((files, bot.got), ([], []))  # no doomed getFile call
+        sk = skipped[0]
+        self.assertEqual((sk.reason, sk.name, sk.kind, sk.mid), ("too_big", "IMG_7945.MOV", "video", 722))
+        note = sk.note()
+        for part in ("NOT downloaded", "IMG_7945.MOV", "video (video/quicktime)", "90.0 MB", "722", "20 MB"):
+            self.assertIn(part, note)
+
+    def test_cloud_too_big_without_size_falls_to_local_server(self):
+        bot = DlBot(TgError("getFile", 400, "Bad Request: file is too big"))
+        big = DlBot()
+        files, _, skipped = self.fetch(self.video(None), bot, big)
+        self.assertEqual((len(files), skipped), (1, []))
+        self.assertEqual(big.got, [("F", 1800)])
+
+    def test_over_20mb_uses_local_server_only(self):
+        bot, big = DlBot(), DlBot()
+        files, _, skipped = self.fetch(self.video(90 * self.MB), bot, big)
+        self.assertEqual((len(files), skipped, bot.got, len(big.got)), (1, [], [], 1))
+
+    def test_local_server_down_and_other_errors(self):
+        down = DlBot(TgError("getFile", 0, "network: [Errno 111] Connection refused"))
+        _, _, sk = self.fetch(self.video(90 * self.MB), DlBot(), down)
+        self.assertEqual(sk[0].reason, "local_down")
+        _, _, sk = self.fetch(self.video(1 * self.MB), DlBot(TgError("getFile", 400, "Bad Request: wrong file_id")))
+        self.assertEqual((sk[0].reason, sk[0].detail), ("failed", "Bad Request: wrong file_id"))
+        self.assertIn("download failed (Bad Request: wrong file_id)", sk[0].note())
+
+    def test_big_voice_is_skipped_not_transcribed(self):
+        msg = {"message_id": 5, "voice": {"file_id": "V", "file_size": 30 * self.MB, "mime_type": "audio/ogg"}}
+        files, audio, skipped = self.fetch(msg, DlBot())
+        self.assertEqual((files, audio, skipped[0].kind), ([], None, "voice"))
+
+    def test_bridge_tells_owner_why_and_claude_gets_text_plus_note(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1, ui_lang="ru"), "tok")
+            self.assertIsNone(b.big)
+            b.bot = FakeBot()
+            b.bot.download = DlBot().download
+            w = bridge.Worker.__new__(bridge.Worker)
+            w.b, w.chat, w.thread = b, 1, 50
+            prompt = w.prompt([self.video(90 * self.MB)])
+            self.assertTrue(prompt.startswith("seizure"))
+            self.assertIn("[Attachment NOT downloaded: IMG_7945.MOV", prompt)
+            said = [p["text"] for m, p in b.bot.calls if m == "sendMessage"]
+            self.assertEqual(len(said), 1)
+            self.assertIn("IMG_7945.MOV (видео, 90.0 МБ)", said[0])
+            self.assertIn("больше 20 МБ, бот не может скачать его через Bot API", said[0])
+            self.assertIn("Что сделать:", said[0])
+            self.assertEqual(said and b.bot.calls[-1][1]["message_thread_id"], 50)
+
+    def test_bridge_builds_local_bot_from_config(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1, local_api_url="http://127.0.0.1:8081/"), "tok")
+            self.assertEqual((b.big.api, b.bot.api), ("http://127.0.0.1:8081", botapi.API))
+
+    def test_local_server_file_path_is_moved_not_fetched(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "srv" / "tok" / "videos" / "file_0.MOV"
+            src.parent.mkdir(parents=True)
+            src.write_bytes(b"x" * 10)
+            bot = botapi.Bot("tok", "http://127.0.0.1:8081")
+            with mock.patch.object(bot, "call", return_value={"file_path": str(src)}) as call, \
+                    mock.patch.object(botapi, "_open", side_effect=AssertionError("no HTTP for local paths")):
+                out = bot.download("F", Path(d) / "out" / "v.MOV", timeout=1800)
+            self.assertEqual(out.read_bytes(), b"x" * 10)
+            self.assertFalse(src.exists())
+            self.assertEqual(call.call_args.kwargs["_timeout"], 1800)
+            self.assertEqual(bot._url("getFile"), "http://127.0.0.1:8081/bottok/getFile")
+
+
+class LocalApiSecrets(unittest.TestCase):
+    def test_literal_values_are_refused(self):
+        from src import localapi
+        for ref in ("12345", "abcdef0123", "", None, "vault:X"):
+            with self.assertRaises(localapi.Fail):
+                localapi.resolve(ref, "local_api_id")
+
+    def test_env_cred_and_rbw_references(self):
+        from src import localapi
+        with mock.patch.dict(os.environ, {"TG_ID": "42"}):
+            self.assertEqual(localapi.resolve("env:TG_ID", "id"), "42")
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "hash").write_text("h\n")
+            with mock.patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": d}):
+                self.assertEqual(localapi.resolve("cred:hash", "hash"), "h")
+        ok = mock.Mock(returncode=0, stdout="777\n", stderr="")
+        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
+                mock.patch.object(localapi.subprocess, "run", return_value=ok) as run:
+            self.assertEqual(localapi.resolve("rbw:TELEGRAM_API_ID", "id"), "777")
+            self.assertEqual(run.call_args.args[0], ["rbw", "get", "TELEGRAM_API_ID"])
+        locked = mock.Mock(returncode=1, stdout="", stderr="failed to unlock database: agent")
+        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
+                mock.patch.object(localapi.subprocess, "run", return_value=locked):
+            with self.assertRaisesRegex(localapi.Fail, "rbw unlock"):
+                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
+        fresh = mock.Mock(returncode=1, stdout="", stderr="ERROR: Before using rbw, you must configure the email "
+                                                         "address ... rbw config set email <email>")
+        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
+                mock.patch.object(localapi.subprocess, "run", return_value=fresh):
+            with self.assertRaisesRegex(localapi.Fail, "rbw login"):
+                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
+
+    def test_server_argv_keeps_secrets_out(self):
+        from src import localapi
+        cfg = dict(config.DEFAULTS, local_api_url="http://127.0.0.1:8081", local_api_bin="/x/telegram-bot-api")
+        host, port = localapi.address(cfg)
+        a = localapi.argv(cfg, host, port)
+        self.assertEqual(a[:4], ["/x/telegram-bot-api", "--local", "--http-ip-address=127.0.0.1", "--http-port=8081"])
+        self.assertFalse(any("api-id" in x or "api-hash" in x for x in a))
+        with self.assertRaises(localapi.Fail):
+            localapi.address(dict(cfg, local_api_url="https://api.telegram.org"))

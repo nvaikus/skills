@@ -12,7 +12,7 @@ model-cli setup [backend]                     # key status (live check), what it
 model-cli doctor                              # tokens, config, OpenRouter key limits
 model-cli search <words> --task image|video|tts|asr|llm|vision|audio
 model-cli info <model>
-model-cli run <model> "<prompt>" | <file> [-o path] [--param k=v]
+model-cli run <model> "<prompt>" | <file> [--ref img]... [-o path] [--param k=v]
 model-cli image|video|tts|asr|llm <prompt|file> [-m model] [-o path]
 ```
 
@@ -24,6 +24,7 @@ Windows: `python model-cli.py ...` or `model-cli.cmd`. Everything else - flags, 
 - Result files land in `/tmp/model-cli/` (throwaway). Anything the user keeps → pass `-o <path>`; never copy from `/tmp` later.
 - Model refs: `<backend>:<id>` (`hf`, `openrouter`, `pollinations`, `groq`, `gemini`, `cloudflare`, `mistral`), a config alias, or a bare id (OpenRouter catalog first, then HF).
 - Parameters are passthrough: take names from `info`, pass `--param k=v` (JSON-typed) or `--params-json`. A rejection comes back with the provider's text verbatim - fix the param, don't guess another backend.
+- Several input images (multi-reference edit: "put the sofa from image 2 into image 1"): `--ref <img>` repeatable; input = image 1, refs follow in order. Works on openrouter image/chat models and gemini/groq/mistral/cloudflare/hf chat; anything else exits 2 before sending.
 - Exit `2` + signup URL = missing token: run `model-cli setup <backend>` and walk the user through its steps (the user pastes the key into the env file, never into chat); do not retry before `setup` shows `ok`. Exit `3` = paid model refused under `free_only`: pick a free one from `search`, or `--paid` only when the user approved spending.
 
 ## Tokens and config

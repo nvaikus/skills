@@ -9,7 +9,7 @@ import os
 import sqlite3
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE TABLE IF NOT EXISTS messages (
   rowid INTEGER PRIMARY KEY, chat_jid TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER, sender_jid TEXT,
   sender_name TEXT, from_me INTEGER, kind TEXT, text TEXT, server_id INTEGER, views INTEGER,
-  UNIQUE (chat_jid, id));
+  file TEXT, mime TEXT, media BLOB, UNIQUE (chat_jid, id));
 CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (chat_jid, ts);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5 (
   text, content='messages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
@@ -35,7 +35,10 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
   INSERT INTO messages_fts (rowid, text) VALUES (new.rowid, new.text); END;
 """
 
-MSG_COLS = ("chat_jid", "id", "ts", "sender_jid", "sender_name", "from_me", "kind", "text", "server_id", "views")
+MSG_COLS = ("chat_jid", "id", "ts", "sender_jid", "sender_name", "from_me", "kind", "text", "server_id", "views", "file",
+            "mime", "media")
+# v1 stores lack these: rows stored before v2 have no download keys (media NULL).
+ADDED = (("file", "TEXT"), ("mime", "TEXT"), ("media", "BLOB"))
 
 
 def fts_query(words):
@@ -51,7 +54,12 @@ class Store:
         self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
-        self.db.execute("INSERT OR IGNORE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(messages)")}
+        for col, typ in ADDED:
+            if col not in have:
+                self.db.execute(f"ALTER TABLE messages ADD COLUMN {col} {typ}")
+        self.db.execute("INSERT INTO meta VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (str(SCHEMA_VERSION),))
         os.chmod(path, 0o600)  # message history
 
     def close(self):
@@ -96,7 +104,8 @@ class Store:
             f"INSERT INTO messages ({', '.join(MSG_COLS)}) VALUES ({', '.join('?' * len(MSG_COLS))}) "
             "ON CONFLICT(chat_jid, id) DO UPDATE SET text=COALESCE(excluded.text, text), "
             "ts=COALESCE(excluded.ts, ts), sender_name=COALESCE(excluded.sender_name, sender_name), "
-            "views=COALESCE(excluded.views, views)", vals)
+            "views=COALESCE(excluded.views, views), file=COALESCE(excluded.file, file), "
+            "mime=COALESCE(excluded.mime, mime), media=COALESCE(excluded.media, media)", vals)
         if m.get("ts"):
             self.upsert_chat(m["chat_jid"], last_ts=m["ts"])
         return new
@@ -124,13 +133,18 @@ class Store:
         r = self.db.execute("SELECT * FROM contacts WHERE jid=?", (jid,)).fetchone()
         return dict(r) if r else None
 
-    def messages(self, chat_jids=None, query=None, sender_jids=None, since=None, until=None, limit=50):
-        """Newest first. chat_jids/sender_jids: lists (a chat may be known under its phone and its lid jid)."""
+    def message(self, chat_jids, msg_id):
+        q = f"SELECT * FROM messages WHERE id=? AND chat_jid IN ({', '.join('?' * len(chat_jids))})"
+        r = self.db.execute(q, [msg_id] + list(chat_jids)).fetchone()
+        return dict(r) if r else None
+
+    def messages(self, chat_jids=None, query=None, sender_jids=None, since=None, until=None, limit=50, kinds=None):
+        """Newest first. chat_jids/sender_jids/kinds: lists (a chat may be known under its phone and its lid jid)."""
         where, args = [], []
         if query:
             where.append("m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)")
             args.append(fts_query(query))
-        for col, vals in (("m.chat_jid", chat_jids), ("m.sender_jid", sender_jids)):
+        for col, vals in (("m.chat_jid", chat_jids), ("m.sender_jid", sender_jids), ("m.kind", kinds)):
             if vals:
                 where.append(f"{col} IN ({', '.join('?' * len(vals))})")
                 args += list(vals)

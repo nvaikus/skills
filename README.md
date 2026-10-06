@@ -10,7 +10,7 @@ Every skill is a top-level folder `<name>/`: `SKILL.md`, plus for CLI skills the
 |---|---|
 | [model-cli](model-cli/SKILL.md) | Find, call and fetch results from non-Claude models (image, video, TTS, ASR, LLM) via Hugging Face, OpenRouter and Pollinations, free tiers first |
 | [telegram-cli](telegram-cli/SKILL.md) | Search, read and send Telegram messages as your own account (MTProto via Telethon): search across chats, find people and channels, send |
-| [whatsapp-cli](whatsapp-cli/SKILL.md) | Search, read and send WhatsApp messages as your own account (linked device via neonize/whatsmeow): local full-text store, group invite links, channel posts |
+| [whatsapp-cli](whatsapp-cli/SKILL.md) | Search, read and send WhatsApp messages as your own account (linked device via neonize/whatsmeow): local full-text store, media download, group invite links, channel posts |
 | [gmail-cli](gmail-cli/SKILL.md) | Gmail for agents: search all accounts with Gmail query syntax, threads as compact markdown, labels and bulk organizing, drafts, replies and send |
 | [icloud-calendar-cli](icloud-calendar-cli/SKILL.md) | iCloud Calendar over CalDAV from any OS: calendars with kind and access (own, shared, subscribed), events in a range with recurrences expanded, add, edit, delete |
 | [ebay-cli](ebay-cli/SKILL.md) | Buyer-side eBay search via the official Browse API: listings with shipping priced for your country, item cards, category ids, saved searches reporting new listings and price drops |

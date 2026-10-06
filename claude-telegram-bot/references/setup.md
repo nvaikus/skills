@@ -37,10 +37,29 @@
 | `permission_mode` | `bypass` | `bypass` = `--dangerously-skip-permissions`; `auto` \| `default` \| `acceptEdits` → `--permission-mode <v>`. `auto` = classifier-gated tools, works headless on Sonnet/Opus; Haiku silently falls back to `default` (`doctor` WARN). A denied call → one "🚫 not allowed" line per tool per turn, logged; claude goes on |
 | `protected_paths` | `[]` | leak filter: dirs/files/globs (`~`, `$VAR` expanded) whose text must never go out verbatim. Any answer, draft, status, notify text or file quoting ≥ `protect_min_words` consecutive words of them → replaced by a "hidden" notice, logged as `leak blocked topic … quotes <file>`; files under these paths are never sent. Paraphrase passes. Index rebuilt on change (checked at run start); `doctor` shows its size. An unlistable dir (`--x`) indexes nothing: list its readable files explicitly |
 | `protect_min_words` | 12 | words in a row that count as a quote (words = letters/digits, case and markup ignored) |
+| `local_api_url` | null | local Bot API server for attachments > 20 MB (section below) |
+| `local_api_id` / `local_api_hash` | `rbw:TELEGRAM_API_ID` / `rbw:TELEGRAM_API_HASH` | secret references for that server |
+| `local_api_bin` | PATH, then `~/.local/bin/telegram-bot-api` | server binary |
 | `notify_topics` | `{}` | `notify --topic KEY` registry: `{"mail": {"name": "Mail", "icon": "📝"}, "ci": "CI"}`. `icon` = an emoji from `getForumTopicIconStickers` (fixed set, e.g. 💬 💻 🤖 📣 📝 🔥 ❗) or its custom_emoji_id; anything else → no icon, warning. Keep emoji out of `name`: the client shows the icon beside it. Editing name/icon renames the cached topic on the next send (no new topic). Key `Notifications` = the default topic |
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 
 Restart after edits or skill updates: `claude-tg restart` (waits until no run is active).
+
+## Files over 20 MB (optional local Bot API server)
+
+- Cloud Bot API downloads ≤ 20 MB. Bigger attachment, no local server: skipped. The owner gets what/why/workaround; claude gets a note (name, type, size, message id, reason). The rest of the message still runs.
+- A local `telegram-bot-api --local` (unit `claude-tg-botapi`, `systemctl --user`) raises the limit to 2 GB. Downloads only: polling and sending stay on the cloud, no `logOut`. A stopped server only affects big files (owner sees "server does not respond").
+
+| step | who | what |
+|---|---|---|
+| 1 | user | api_id + api_hash: my.telegram.org → API development tools (an existing app such as tg-cli's works). Into the secret store, never chat: `rbw add --folder env TELEGRAM_API_ID`, then `... TELEGRAM_API_HASH` (value = first line in the editor) |
+| 2 | agent | build: `sudo apt-get install -y make git zlib1g-dev libssl-dev gperf cmake g++`; `git clone --recursive https://github.com/tdlib/telegram-bot-api`; in it `mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=$HOME/.local .. && cmake --build . --target install -j4` → `~/.local/bin/telegram-bot-api` (15-30 min, ~1 GB RAM per job; one binary per host, any user may point `local_api_bin` at it) |
+| 3 | agent | config `"local_api_url": "http://127.0.0.1:8081"` (one free port per bot on the host) |
+| 4 | agent | `claude-tg local-api install` → `claude-tg local-api status` ok → `claude-tg restart` |
+
+- Secrets: `local_api_id` / `local_api_hash` are references, resolved by `local-api serve` at start and passed to the binary via env: `rbw:NAME` (default `rbw:TELEGRAM_API_ID` / `rbw:TELEGRAM_API_HASH`), `env:NAME` (process env or `env_files`), `cred:NAME` (systemd credential). A literal value is refused.
+- Locked vault (after reboot or `lock_timeout`) → the server can't start, the unit retries every 60 s: the owner runs `rbw unlock`.
+- Server files: `~/.local/share/claude-tg/botapi/` (700); each download is copied to the topic's files dir and removed there.
 
 ## Voice
 

@@ -143,6 +143,11 @@ def info(model_id):
     return meta
 
 
+def takes_refs(task):
+    """--ref images ride along as extra image_url parts in the one chat message."""
+    return task not in ("text-to-audio", "text-to-speech")
+
+
 def run(model_id, task, inp, params, out, cfg):
     if not available():
         raise MissingToken(ENV, SIGNUP)
@@ -156,6 +161,9 @@ def run(model_id, task, inp, params, out, cfg):
                                  "(groq/gemini/cloudflare/mistral) which chunks it")
             path = parts[0]
         content = [{"type": "text", "text": inp["text"]}, file_part(path)]
+    if inp.get("refs"):
+        content = (content if isinstance(content, list) else [{"type": "text", "text": content}]) \
+            + [file_part(r) for r in inp["refs"]]
     payload = {"model": model_id, "messages": [{"role": "user", "content": content}], **params}
     if task in ("text-to-image", "image-to-image"):
         payload.setdefault("modalities", ["image", "text"])

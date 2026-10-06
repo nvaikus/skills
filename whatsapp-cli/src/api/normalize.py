@@ -1,6 +1,7 @@
 """Protos -> store rows. Duck-typed (HasField/getattr), so tests feed plain fakes and neonize stays out.
 
 One message proto -> content(): ("msg", kind, text) | ("edit", target_id, text) | ("revoke", target_id) | None.
+media_of(): the download keys of image/video/audio/sticker/document content, kept in the store for `download`.
 """
 from ..core.wa import jid_str, norm_ts
 
@@ -12,6 +13,9 @@ NOISE = {"messageContextInfo", "senderKeyDistributionMessage"}
 SKIP = {"reactionMessage", "encReactionMessage", "pollUpdateMessage", "keepInChatMessage", "pinInChatMessage",
         "encEventResponseMessage", "secretEncryptedMessage", "protocolMessage", "botInvokeMessage"}
 REVOKE, MESSAGE_EDIT = 0, 14  # waE2E.ProtocolMessage.Type
+# Downloadable content: proto fields and the kinds content() gives them.
+MEDIA = ("imageMessage", "videoMessage", "ptvMessage", "stickerMessage", "audioMessage", "documentMessage")
+MEDIA_KINDS = ("image", "video", "sticker", "audio", "voice", "document")
 
 
 def has(m, field):
@@ -60,7 +64,7 @@ def content(m):
         return ("msg", "text", m.conversation)
     if has(m, "extendedTextMessage"):
         return ("msg", "text", m.extendedTextMessage.text)
-    media = (("imageMessage", "image"), ("videoMessage", "video"), ("stickerMessage", "sticker"))
+    media = (("imageMessage", "image"), ("videoMessage", "video"), ("ptvMessage", "video"), ("stickerMessage", "sticker"))
     for field, kind in media:
         if has(m, field):
             return ("msg", kind, _join(f"[{kind}]", getattr(getattr(m, field), "caption", "")))
@@ -87,6 +91,42 @@ def content(m):
     if not rest or any(f in SKIP for f in rest):
         return None
     return ("msg", "other", f"[{rest[0].replace('Message', '')}]")
+
+
+def _blob(m, field):
+    """Only the media part of m, serialized: what DownloadAny needs (url, direct path, key, hashes, mime, name).
+    Thumbnail and quote context dropped (size). Real protos only; fakes -> None."""
+    try:
+        out = type(m)()
+        part = getattr(out, field)
+        part.CopyFrom(getattr(m, field))
+        for f in ("JPEGThumbnail", "contextInfo"):
+            try:
+                part.ClearField(f)
+            except ValueError:
+                pass
+        return out.SerializeToString()
+    except (AttributeError, TypeError):
+        return None
+
+
+def media_of(m):
+    """Message proto -> {"file": original file name|None, "mime", "media": bytes|None} for downloadable content."""
+    if m is None:
+        return None
+    m = unwrap(m)
+    for field in MEDIA:
+        if has(m, field):
+            part = getattr(m, field)
+            return {"file": getattr(part, "fileName", "") or None, "mime": getattr(part, "mimetype", "") or None,
+                    "media": _blob(m, field)}
+    return None
+
+
+def _with_media(row, message):
+    got = media_of(message) or {}
+    row["file"], row["mime"], row["media"] = got.get("file"), got.get("mime"), got.get("media")
+    return row
 
 
 def chat_kind(jid):
@@ -140,6 +180,7 @@ def live(ev):
         row["id"] = f"s{row['server_id']}"  # same key as channel-fetch posts
     if got[0] == "msg":
         row["kind"], row["text"] = got[1], got[2]
+        _with_media(row, ev.Message)
     return row, got
 
 
@@ -170,9 +211,10 @@ def history(data, me_jid=None):
                 sender = w.key.participant or w.participant or None
             else:
                 sender = jid
-            msgs.append({"chat_jid": jid, "id": w.key.ID, "ts": norm_ts(w.messageTimestamp), "sender_jid": sender,
-                         "sender_name": None if from_me else (w.pushName or None), "from_me": int(from_me),
-                         "kind": got[1], "text": got[2], "server_id": None, "views": None})
+            msgs.append(_with_media({"chat_jid": jid, "id": w.key.ID, "ts": norm_ts(w.messageTimestamp),
+                                     "sender_jid": sender, "sender_name": None if from_me else (w.pushName or None),
+                                     "from_me": int(from_me), "kind": got[1], "text": got[2], "server_id": None,
+                                     "views": None}, w.message))
     pushnames = [(p.ID, p.pushname) for p in data.pushnames if p.ID and p.pushname]
     return chats, msgs, pushnames
 
@@ -183,5 +225,6 @@ def post(channel_jid, server_id, views, message):
     got = content(message)
     if not got or got[0] != "msg":
         return None
-    return {"chat_jid": channel_jid, "id": f"s{server_id}", "ts": None, "sender_jid": channel_jid, "sender_name": None,
-            "from_me": 0, "kind": got[1], "text": got[2], "server_id": server_id, "views": views or None}
+    return _with_media({"chat_jid": channel_jid, "id": f"s{server_id}", "ts": None, "sender_jid": channel_jid,
+                        "sender_name": None, "from_me": 0, "kind": got[1], "text": got[2], "server_id": server_id,
+                        "views": views or None}, message)

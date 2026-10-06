@@ -38,6 +38,7 @@ class Bridge:
     def __init__(self, cfg: dict, token: str):
         self.cfg = cfg
         self.bot = Bot(token)
+        self.big = Bot(token, cfg["local_api_url"]) if cfg.get("local_api_url") else None  # files > 20 MB
         self.store = Store(config.STATE_DIR / "state.json", cfg["default_cwd"])
         extra = {}
         for f in cfg["env_files"]:
@@ -56,6 +57,15 @@ class Bridge:
 
     def s(self, key, **kw):
         return ui.t(self.lang, key, **kw)
+
+    def skip_text(self, sk) -> str:
+        """Owner-facing line for an attachment media.fetch could not download: what, why, what to do."""
+        size = self.s("mb", n=f"{sk.size / (1 << 20):.1f}") if sk.size else self.s("mb.unknown")
+        reason = sk.reason if sk.reason in ("too_big", "local_down") else "failed"
+        why = self.s("skip.why." + reason, e=ui.reason(self.bot.redact(sk.detail), 120)) if reason == "failed" \
+            else self.s("skip.why." + reason)
+        return self.s("skip", name=sk.name, kind=self.s("kind." + sk.kind), size=size, why=why,
+                      fix=self.s("skip.fix." + reason))
 
     def leak(self, text, thread) -> bool:
         """Model text quoting a protected file (config protected_paths): never sent, logged with the source."""
@@ -511,9 +521,13 @@ class Worker:
     def prompt(self, msgs):
         b, parts, files = self.b, [], []
         folder = config.STATE_DIR / "files" / str(self.thread)
+        notes = []
         for m in msgs:
-            got, audio = media.fetch(b.bot, m, folder)
+            got, audio, skipped = media.fetch(b.bot, m, folder, b.big)
             files += got
+            for sk in skipped:  # the batch still runs: claude gets the text + a note, the owner gets why + a fix
+                notes.append(sk.note())
+                b.say(self.chat, self.thread, b.skip_text(sk))
             if audio:
                 b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread, action="typing")
                 text = media.transcribe(audio, b.cfg, b.env)
@@ -530,6 +544,8 @@ class Worker:
             prompt = RESTARTED + prompt
         if files:
             prompt += "\n\nUser attached:\n" + "\n".join(str(Path(f).resolve()) for f in files)
+        if notes:
+            prompt += "\n\n" + "\n".join(notes)
         return prompt.strip()
 
     def build(self, msgs):

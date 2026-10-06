@@ -27,6 +27,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 - `result` carries only the last text block; drafts die in 30 s. An ended text block followed by more events (or 3 s of silence, e.g. waiting for a background Agent) is posted as a real message by `Worker.post_interim`; the final answer is skipped if identical to the last posted one.
 - New bot-facing text → a key in both `ui.S` tables (a test checks key/placeholder parity).
 - `setMyProfilePhoto` takes `photo` = InputProfilePhoto JSON `{"type":"static","photo":"attach://p"}` + the jpg as multipart field `p` (jpg only: `botprofile` converts via ffmpeg).
+- Cloud `getFile` refuses > 20 MB (`file is too big`). `media.fetch` never raises per attachment: > 20 MB goes to `Bridge.big` (local `telegram-bot-api --local`, downloads only - no `logOut`, polling stays on the cloud); its getFile blocks until the whole file is on its disk and returns an absolute path (contains the token: never log it) → copied, then unlinked. Failures → `Skipped`: owner line `skip_text`, note appended to the prompt.
 - `getUpdates` 409 = another poller with the same token; the file lock in `STATE_DIR/lock` only guards one host.
 
 ## Layers
@@ -40,7 +41,8 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `ui.py` | every bot-facing string (`S[lang][key]`, en + ru, same keys), tool → phase, status line |
 | `runner.py` | claude argv, env scrub, process group kill, one-shot titles |
 | `streamjson.py` / `fmt.py` | pure parsers: stream-json → events; markdown → Telegram HTML + splitter |
-| `media.py` | attachment download, model-cli STT |
+| `media.py` | attachment download (cloud ≤ 20 MB, local server above, `Skipped`), model-cli STT |
+| `localapi.py` | `claude-tg local-api`: user unit `claude-tg-botapi`, `serve` resolves secret refs (rbw/env/cred) into env and execs the server, probe for doctor |
 | `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
 | `notify.py` | `claude-tg notify`: owner chat, topic registry (`notify_topics` key → name/icon), thread id + applied name/icon cached per key (`notify.json`, not state.json - the bot owns that); `--file` uploads (video/photo/document, fallback document); default target = `$CLAUDE_TG_RUN_TOPIC` inside a run |
 | `botprofile.py` | `claude-tg profile`: getMy*/setMy* name, descriptions, profile photo |

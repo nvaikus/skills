@@ -314,6 +314,82 @@ class DefectFixTests(unittest.TestCase):
         self.assertIn("ignored on hf", err)
 
 
+def _png(name):
+    p = Path(tempfile.mkdtemp(), name)
+    p.write_bytes(PNG)
+    return p
+
+
+class RefTests(unittest.TestCase):
+    def test_openrouter_image_edit_sends_input_then_refs_in_order(self):
+        url = "data:image/png;base64," + base64.b64encode(PNG).decode()
+        resp = {"choices": [{"message": {"content": "", "images": [{"image_url": {"url": url}}]}}]}
+        a, b, c = _png("room2.png"), _png("room1.png"), _png("sofa.png")
+        b.write_bytes(PNG + b"b")
+        c.write_bytes(PNG + b"c")
+        code, out, _, net = run_cli(["image", str(a), "--ref", str(b), "--ref", str(c), "--prompt", "furnish",
+                                     "-m", "or:google/img-gen"],
+                                    [("api/v1/models", OR_MODELS), ("chat/completions", resp)],
+                                    env={"OPENROUTER_API_KEY": "k"})
+        self.assertEqual(code, 0)
+        content = [x for x in net.calls if x[0] == "POST"][0][2]["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "furnish"})
+        sent = [base64.b64decode(p["image_url"]["url"].split(",", 1)[1]) for p in content[1:]]
+        self.assertEqual(sent, [PNG, PNG + b"b", PNG + b"c"])
+
+    def test_refs_with_text_input(self):
+        resp = {"choices": [{"message": {"content": "same"}}]}
+        code, out, _, net = run_cli(["run", "z-ai/glm-5.2:free", "compare", "--ref", str(_png("x.png"))],
+                                    [("api/v1/models", OR_MODELS), ("chat/completions", resp)],
+                                    env={"OPENROUTER_API_KEY": "k"})
+        self.assertEqual(code, 0)
+        content = [x for x in net.calls if x[0] == "POST"][0][2]["messages"][0]["content"]
+        self.assertEqual([p["type"] for p in content], ["text", "image_url"])
+
+    def test_gemini_chat_appends_refs(self):
+        resp = {"steps": [{"type": "model_output", "content": [{"type": "text", "text": "ok"}]}]}
+        code, _, _, net = run_cli(["run", "gemini:gemini-3.5-flash", str(_png("a.png")), "--prompt", "diff?",
+                                   "--ref", str(_png("b.png"))],
+                                  [("v1beta/interactions", resp)], env={"GEMINI_API_KEY": "k"})
+        self.assertEqual(code, 0)
+        self.assertEqual([p["type"] for p in net.calls[0][2]["input"]], ["text", "image", "image"])
+
+    def test_groq_chat_appends_refs(self):
+        resp = {"choices": [{"message": {"content": "ok"}}]}
+        code, _, _, net = run_cli(["llm", "compare", "-m", "groq:llama-3.3-70b-versatile",
+                                   "--ref", str(_png("a.png")), "--ref", str(_png("b.png"))],
+                                  [("chat/completions", resp)], env=GROQ)
+        self.assertEqual(code, 0)
+        content = net.calls[-1][2]["messages"][0]["content"]
+        self.assertEqual([p["type"] for p in content], ["text", "image_url", "image_url"])
+
+    def test_unsupported_backend_fails_nothing_sent(self):
+        code, _, err, net = run_cli(["run", "pollinations:default", "a fox", "--task", "image",
+                                     "--ref", str(_png("a.png"))], [])
+        self.assertEqual(code, 2)
+        self.assertIn("--ref", err)
+        self.assertEqual(net.calls, [])
+
+    def test_unsupported_task_on_compat_fails(self):
+        code, _, err, net = run_cli(["image", "fox", "-m", "cloudflare:@cf/black-forest-labs/flux-1-schnell",
+                                     "--ref", str(_png("a.png"))], [], env=CF)
+        self.assertEqual(code, 2)
+        self.assertIn("takes one input", err)
+        self.assertEqual(net.calls, [])
+
+    def test_ref_must_be_existing_image(self):
+        routes = [("api/v1/models", OR_MODELS)]
+        code, _, err, _ = run_cli(["run", "or:google/img-gen", "x", "--ref", "/nope/missing.png"], routes,
+                                  env={"OPENROUTER_API_KEY": "k"})
+        self.assertEqual((code, "no such file" in err), (2, True))
+        txt = Path(tempfile.mkdtemp(), "n.txt")
+        txt.write_text("hi")
+        code, _, err, net = run_cli(["run", "or:google/img-gen", "x", "--ref", str(txt)], routes,
+                                    env={"OPENROUTER_API_KEY": "k"})
+        self.assertEqual((code, "takes images" in err), (2, True))
+        self.assertFalse([c for c in net.calls if c[0] == "POST"])
+
+
 GROQ = {"GROQ_API_KEY": "g"}
 CF = {"CLOUDFLARE_API_TOKEN": "c", "CLOUDFLARE_ACCOUNT_ID": "acc1"}
 

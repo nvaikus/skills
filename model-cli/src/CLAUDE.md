@@ -10,7 +10,7 @@ Entry `model-cli.py` → `src/model_cli/cli.py:main`. Python 3.9+, stdlib only e
 | `audio.py` | ffmpeg transcode/chunk to a backend's format+size cap (`prepare`, `transcribe`), PCM -> WAV |
 | `onboarding.py` | `setup` verb data: per-backend unlocks/limits/steps (`GUIDE`), live key probe, env-file advice |
 | `backends/compat.py` | `Compat` class: OpenAI-compatible backend (curated free catalog + live /models, chat, multipart asr, tts); instances `groq`, `mistral`; `cloudflare.py`/`gemini.py` subclass it |
-| `backends/<name>.py` | `NAME ENV SIGNUP`, `available(task)`, `search(query, task, free, limit)`, `lookup(id)`, `info(id)`, `run(id, task, inp, params, out, cfg)` |
+| `backends/<name>.py` | `NAME ENV SIGNUP`, `available(task)`, `search(query, task, free, limit)`, `lookup(id)`, `info(id)`, `run(id, task, inp, params, out, cfg)`; optional `takes_refs(task)` (absent/False → `--ref` exits 2, `inp["refs"]` = image paths after `inp["file"]`) |
 | `cli.py` | argparse + `--help` epilogs (the documented surface), model resolution, guard, output |
 
 ## Invariants

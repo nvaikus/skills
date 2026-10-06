@@ -3,6 +3,8 @@ URLs are built here and never logged; errors carry only Telegram's description."
 import http.client
 import json
 import mimetypes
+import os
+import shutil
 import socket
 import time
 import urllib.error
@@ -63,11 +65,12 @@ class TgError(Exception):
 
 
 class Bot:
-    def __init__(self, token: str):
+    def __init__(self, token: str, api: str = API):
         self._token = token
+        self.api = (api or API).rstrip("/")  # a local Bot API server (--local) for files > 20 MB
 
     def _url(self, method):
-        return f"{API}/bot{self._token}/{method}"
+        return f"{self.api}/bot{self._token}/{method}"
 
     def _post(self, method, data: bytes, ctype: str, timeout: float):
         req = urllib.request.Request(self._url(method), data=data, headers={"Content-Type": ctype})
@@ -114,12 +117,26 @@ class Bot:
         parts.append(f"--{boundary}--\r\n".encode())
         return self._post(method, b"".join(parts), f"multipart/form-data; boundary={boundary}", _timeout)
 
-    def download(self, file_id: str, dest: Path) -> Path:
-        info = self.call("getFile", file_id=file_id)
-        url = f"{API}/file/bot{self._token}/{info['file_path']}"
+    def download(self, file_id: str, dest: Path, timeout: float = 120) -> Path:
+        """getFile + fetch. A local server (--local) fetches the whole file inside getFile and returns an
+        absolute path on its disk (same host, same user): the file is moved out, never served over HTTP.
+        That path contains the token - never log it."""
+        info = self.call("getFile", file_id=file_id, _timeout=timeout, _retries=0 if timeout > 120 else 3)
+        path = info.get("file_path") or ""
         dest.parent.mkdir(parents=True, exist_ok=True)
+        if os.path.isabs(path):
+            try:
+                shutil.copyfile(path, dest)
+            except OSError as e:
+                raise TgError("download", 0, f"local Bot API file not readable ({e.strerror})") from None
+            try:
+                os.unlink(path)  # the server re-fetches on the next getFile; don't keep a second copy
+            except OSError:
+                pass
+            return dest
+        url = f"{self.api}/file/bot{self._token}/{path}"
         try:
-            with _open(url, timeout=120) as r, open(dest, "wb") as f:
+            with _open(url, timeout=timeout) as r, open(dest, "wb") as f:
                 while chunk := r.read(1 << 16):
                     f.write(chunk)
         except urllib.error.URLError:

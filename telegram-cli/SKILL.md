@@ -1,6 +1,6 @@
 ---
 name: telegram-cli
-description: Reads, searches and sends Telegram messages as the user's own Telegram account (MTProto via Telethon, not a bot) - search across all chats or inside one chat, public channel post search, find people/groups/channels by name or @username, chat history, send a message or a file. Several accounts per machine. Use when a task needs something from the user's Telegram - "find in Telegram", "what did X write", "search the chats for", "who is @x", "message X in Telegram", "send a file to X", "send to the group", "tg-cli". NOT for building Telegram bots or the Bot API.
+description: Reads, searches and sends Telegram messages as the user's own Telegram account (MTProto via Telethon, not a bot) - search across all chats or inside one chat, public channel post search, find people/groups/channels by name or @username, chat history, download files/photos/voice from messages (one or all in a chat), send a message or a file. Several accounts per machine. Use when a task needs something from the user's Telegram - "find in Telegram", "what did X write", "search the chats for", "who is @x", "download the file/PDF/photo from Telegram", "message X in Telegram", "send a file to X", "send to the group", "tg-cli". NOT for building Telegram bots or the Bot API.
 ---
 
 # telegram-cli
@@ -9,7 +9,8 @@ description: Reads, searches and sends Telegram messages as the user's own Teleg
 tg-cli [--account NAME] <command> ...     # python3 ~/.claude/skills/telegram-cli/tg-cli.py
 tg-cli chats [FILTER] | user-find <q>     # who/where: ids for everything below
 tg-cli search <words> [--chat C] [--from U] [--since 7d] | search --public <words|#tag>
-tg-cli history <chat> [-n N]
+tg-cli history <chat> [-n N]                  # media shows in text as [document: name.pdf]
+tg-cli media-get <chat> <msg_id...|all> [-o DIR] [--type document,photo] [--since --until] [--list]
 tg-cli send <to> [text|-] [--file PATH]...   # text = caption with --file
 ```
 

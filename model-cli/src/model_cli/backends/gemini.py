@@ -83,8 +83,8 @@ class Gemini(Compat):
 
     def chat(self, model_id, inp, params):
         parts = [{"type": "text", "text": inp["text"]}]
-        if inp.get("file"):
-            parts.append(self._part(inp["file"]))
+        files = ([inp["file"]] if inp.get("file") else []) + (inp.get("refs") or [])
+        parts += [self._part(f) for f in files]
         return {"text": self._text(self._call(self._body(model_id, parts, params))), "cost": 0}
 
     def asr(self, model_id, path, params, prompt=None):

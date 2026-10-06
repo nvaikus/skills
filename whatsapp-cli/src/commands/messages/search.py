@@ -10,7 +10,7 @@ EPILOG = """examples:
 traps:
   local only (SQLite FTS5): WhatsApp has no server search, so only messages that reached this device.
   every word must match, each as a word prefix ("отпуск" finds "отпуска"); case/diacritics ignored.
-  newest first.
+  newest first. media rows read [document] name.pdf etc.: wa-cli download CHAT MSG_ID saves the file.
 """
 
 

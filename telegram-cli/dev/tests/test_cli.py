@@ -51,9 +51,23 @@ QA = Channel(id=500, title="Команда QA", megagroup=True, username=None)
 NEWS = Channel(id=600, title="News", megagroup=False, username="news")
 
 
-def msg(id, chat, sender, text, minutes_ago=0, media=None):
+class MessageMediaDocument:
+    pass
+
+
+class MessageMediaGeo:
+    pass
+
+
+def msg(id, chat, sender, text, minutes_ago=0, media=None, **kw):
     return SimpleNamespace(id=id, chat=chat, sender=sender, message=text, media=media,
-                           date=NOW - timedelta(minutes=minutes_ago))
+                           date=NOW - timedelta(minutes=minutes_ago), **kw)
+
+
+def doc(id, chat, name, minutes_ago=0, kind="document", ext=".pdf", text=""):
+    """A file message the way Telethon exposes it: media + kind property + .file."""
+    return msg(id, chat, IVAN, text, minutes_ago, MessageMediaDocument(), **{"document": True, kind: True},
+               file=SimpleNamespace(name=name, size=1000 + id, ext=ext))
 
 
 class FakeClient:
@@ -62,7 +76,7 @@ class FakeClient:
                         enumerate([QA, SASHA1, SASHA2, IVAN, NEWS])]
         self.msgs = [msg(3, QA, IVAN, "релиз завтра", 1), msg(2, QA, SASHA1, "x" * 300, 60),
                      msg(1, NEWS, NEWS, "", 60 * 48, MessageMediaPhoto())]
-        self.sent, self.calls = [], []
+        self.sent, self.calls, self.downloads = [], [], []
 
     def is_user_authorized(self):
         return True
@@ -80,9 +94,19 @@ class FakeClient:
     def iter_dialogs(self, limit=None):
         return iter(self.dialogs[:limit] if limit else self.dialogs)
 
-    def iter_messages(self, chat, search=None, from_user=None, offset_date=None):
-        self.calls.append(("iter_messages", chat, search, from_user, offset_date))
+    def iter_messages(self, chat, search=None, from_user=None, offset_date=None, filter=None):
+        self.calls.append(("iter_messages", chat, search, from_user, offset_date, filter))
         return iter([m for m in self.msgs if chat is None or m.chat is chat])
+
+    def get_messages(self, chat, ids):
+        by_id = {m.id: m for m in self.msgs if m.chat is chat}
+        return [by_id.get(i) for i in ids]
+
+    def download_media(self, m, file):
+        with open(file, "wb") as f:
+            f.write(b"%PDF-" + str(m.id).encode())
+        self.downloads.append((m.id, file))
+        return file
 
     def send_message(self, chat, text, parse_mode=None, reply_to=None):
         self.sent.append((chat, text, parse_mode))
@@ -108,6 +132,7 @@ def cli(*argv, client=None, stdin=None):
             mock.patch.object(tg, "contacts", lambda c: [SASHA1, SASHA2]), \
             mock.patch.object(tg, "resolve_username", lambda c, n: usernames.get(n.lower())), \
             mock.patch.object(tg, "search_peers", lambda c, q, limit: found), \
+            mock.patch.object(tg, "media_filter", lambda k: f"F:{k}"), \
             mock.patch("sys.stdin", io.StringIO(stdin or "")), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -316,6 +341,87 @@ class Commands(unittest.TestCase):
     def test_send_no_text_no_file(self):
         code, _, _, client = cli("send", "@ivan")
         self.assertEqual((code, client.sent), (2, []))
+
+
+class Media(unittest.TestCase):
+    def setUp(self):
+        self.out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.out)
+        self.c = FakeClient()
+        self.c.msgs = [doc(9, IVAN, "a.pdf", 1, text="scan"), doc(8, IVAN, "../../etc/a.pdf", 60),
+                       doc(7, IVAN, None, 60 * 24, "voice", ".oga"), msg(6, IVAN, IVAN, "hi", 60 * 30),
+                       msg(5, IVAN, IVAN, "", 60 * 30, MessageMediaGeo()),
+                       doc(4, IVAN, "old.pdf", 60 * 24 * 10)]
+
+    def get(self, *argv):
+        return cli("media-get", "@ivan", *argv, "-o", self.out, client=self.c)
+
+    def test_history_shows_type_and_file_name(self):
+        _, out, _, _ = cli("history", "@ivan", "-j", client=self.c)
+        rows = {r["msg_id"]: r for r in json.loads(out)}
+        self.assertEqual(rows[9]["text"], "[document: a.pdf] scan")
+        self.assertEqual((rows[9]["media"], rows[9]["file"]), ("document", "a.pdf"))
+        self.assertEqual(rows[7]["text"], "[voice]")
+        self.assertEqual(rows[5]["text"], "[geo]")
+        self.assertIsNone(rows[6]["media"])
+
+    def test_service_message_is_labelled(self):
+        class MessageActionPhoneCall:
+            pass
+        self.c.msgs = [msg(3, IVAN, IVAN, None, 0, action=MessageActionPhoneCall())]
+        _, out, _, _ = cli("history", "@ivan", "--fields", "text", "--no-header", client=self.c)
+        self.assertEqual(out, "[phonecall]\n")
+
+    def test_get_by_id_keeps_original_name(self):
+        code, out, _, c = self.get("9", "--fields", "msg_id,path", "--no-header")
+        self.assertEqual(code, 0)
+        path = os.path.join(self.out, "a.pdf")
+        self.assertEqual(out, f"9\t{path}\n")
+        with open(path, "rb") as f:
+            self.assertTrue(f.read().startswith(b"%PDF-"))
+        self.assertEqual(c.sent, [])
+
+    def test_hostile_name_stays_inside_out_dir_and_repeat_gets_msg_id(self):
+        _, out, _, _ = self.get("9", "8", "-j")
+        paths = [r["path"] for r in json.loads(out)]
+        self.assertEqual(paths, [os.path.join(self.out, "a.pdf"), os.path.join(self.out, "_.._etc_a.pdf")])
+        self.assertTrue(all(os.path.dirname(p) == self.out for p in paths))
+
+    def test_nameless_media_gets_type_and_msg_id(self):
+        _, out, _, _ = self.get("7", "--fields", "type,path", "--no-header")
+        self.assertEqual(out, f"voice\t{os.path.join(self.out, 'voice_7.oga')}\n")
+
+    def test_missing_or_text_only_id_downloads_nothing(self):
+        for ids in (["9", "6"], ["9", "999"], ["5"]):
+            code, _, err, c = self.get(*ids)
+            self.assertEqual((code, c.downloads), (2, []), ids)
+            self.assertIn("nothing downloaded", err)
+
+    def test_all_filters_type_and_since(self):
+        code, out, _, c = self.get("all", "--type", "document", "--since", "2026-09-28", "--fields", "msg_id", "--no-header")
+        self.assertEqual((code, out.split()), (0, ["9", "8"]))
+        self.assertEqual(c.calls[0][5], "F:document")  # server-side filter for one type
+
+    def test_all_multi_type_filters_client_side(self):
+        _, out, _, c = self.get("all", "--type", "voice,photo", "--fields", "msg_id", "--no-header")
+        self.assertEqual(out.split(), ["7"])
+        self.assertIsNone(c.calls[0][5])
+
+    def test_all_limit_notes_more(self):
+        _, out, err, _ = self.get("all", "-n", "2", "--fields", "msg_id", "--no-header")
+        self.assertEqual(out.split(), ["9", "8"])
+        self.assertIn("more exist", err)
+
+    def test_list_downloads_nothing(self):
+        code, out, _, c = self.get("all", "--list")
+        self.assertEqual((code, c.downloads), (0, []))
+        self.assertEqual(out.splitlines()[0], "msg_id\tdate\ttype\tsize\tname")
+        self.assertEqual(len(out.splitlines()), 5)
+
+    def test_usage_errors(self):
+        for argv in (["abc"], ["9", "--type", "photo"], ["all", "--type", "pdf"]):
+            code, _, _, c = self.get(*argv)
+            self.assertEqual((code, c.downloads), (2, []), argv)
 
 
 class Public(unittest.TestCase):

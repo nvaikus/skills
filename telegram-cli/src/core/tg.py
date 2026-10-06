@@ -80,6 +80,20 @@ def search_posts(client, query, hashtag, limit):
                                      hashtag=hashtag, query=query))
 
 
+_FILTERS = {"document": "InputMessagesFilterDocument", "photo": "InputMessagesFilterPhotos",
+            "video": "InputMessagesFilterVideo", "voice": "InputMessagesFilterVoice",
+            "audio": "InputMessagesFilterMusic", "round": "InputMessagesFilterRoundVideo",
+            "gif": "InputMessagesFilterGif"}
+
+
+def media_filter(kind):
+    """Server-side messages.search filter class for one media kind, or None (sticker: no such filter)."""
+    if kind not in _FILTERS:
+        return None
+    from telethon.tl import types
+    return getattr(types, _FILTERS[kind])
+
+
 # ---- errors -----------------------------------------------------------------
 
 def translate(exc):
@@ -95,6 +109,9 @@ def translate(exc):
         if "PREMIUM" in msg.upper():
             return Cannot(f"Telegram: {msg} - this needs a Telegram Premium account")
         return CliError(f"Telegram: {msg} ({type(exc).__name__})")
+    if type(exc).__name__ == "OperationalError" and "locked" in str(exc):  # sqlite3: session file in use
+        return CliError("this account's session is in use by another tg-cli/Telethon process (one at a time per "
+                        "account) - wait for it to finish, then retry")
     if isinstance(exc, ConnectionError):
         return CliError(f"cannot reach Telegram: {exc}")
     return None

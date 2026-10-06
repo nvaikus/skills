@@ -19,6 +19,7 @@ examples:
   echo done | claude-tg notify       # bot -> owner, topic "Notifications" (scripts, scheduled jobs)
   claude-tg notify --file out.mp4 "demo"   # file -> owner; inside a bot run: into that run's topic
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
+  claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
 """
 
 
@@ -112,6 +113,13 @@ def main(argv=None):
     s.add_argument("--photo", metavar="FILE", help="profile photo; jpg, other images converted via ffmpeg")
     s.add_argument("--photo-remove", action="store_true", help="remove the bot's profile photo")
     s.add_argument("--lang", metavar="CODE", help="two-letter language code for name / descriptions (default: all)")
+    s = sub.add_parser("local-api", help="local Bot API server for attachments > 20 MB (install | serve | status)",
+                       description="Downloads only: polling and sending stay on api.telegram.org. Config: "
+                                   "local_api_url (http://127.0.0.1:PORT), local_api_id / local_api_hash = secret "
+                                   "references rbw:NAME | env:NAME | cred:NAME (default rbw:TELEGRAM_API_ID / "
+                                   "rbw:TELEGRAM_API_HASH), local_api_bin. Setup: references/setup.md.")
+    s.add_argument("action", choices=["install", "uninstall", "serve", "status"],
+                   help="install = systemd --user unit claude-tg-botapi; serve = its ExecStart; status = unit + probe")
     a = p.parse_args(argv)
     try:
         cfg = config.load()
@@ -126,6 +134,13 @@ def main(argv=None):
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)
+        if a.cmd == "local-api":
+            from . import localapi
+            try:
+                return getattr(localapi, a.action)(cfg) or 0
+            except localapi.Fail as e:
+                print(f"claude-tg local-api: {e}", file=sys.stderr)
+                return 2
         if a.cmd == "run":
             return run(cfg) or 0
         if a.cmd == "setup":

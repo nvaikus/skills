@@ -112,6 +112,27 @@ class Systemd(base.Case):
         self.assertFalse((self.units / "clockmaster.a.timer").exists())
         self.assertIn("unreachable", systemd.notes()[0])
 
+    def test_bus_env_filled_from_run_user(self):
+        # no XDG_RUNTIME_DIR/DBUS (system unit, cron): the user manager is still found
+        # through /run/user/<uid>/bus; the fake fails without those vars
+        self.fake_bin("systemctl", 'echo "$XDG_RUNTIME_DIR|$DBUS_SESSION_BUS_ADDRESS" >> "$FAKE_LOG"\n'
+                      '[ -n "$XDG_RUNTIME_DIR" ] || { echo "not defined" >&2; exit 1; }\n'
+                      '[ "$2" = is-enabled ] && echo enabled; [ "$2" = is-active ] && echo active\nexit 0\n')
+        old = systemd.RUN_USER
+        systemd.RUN_USER = str(self.tmp / "run")
+        try:
+            self.assertIn("unreachable", systemd.notes()[0])  # no socket: warning stays
+            rt = self.tmp / "run" / str(os.getuid())
+            rt.mkdir(parents=True)
+            (rt / "bus").write_text("")
+            self.assertFalse([n for n in systemd.notes() if "unreachable" in n])
+            self.assertIn(f"{rt}|unix:path={rt}/bus", self.calls())
+            self.write_task("a", 'schedule: "0 9 * * *"\ncommand: x\n')
+            self.assertTrue(ops.sync()[0])
+            self.assertEqual(systemd.state(taskdef.load("a")), "ok")
+        finally:
+            systemd.RUN_USER = old
+
     def test_unregister_keeps_running_service(self):
         self.write_task("a", 'schedule: "0 9 * * *"\ncommand: x\n')
         ops.sync()

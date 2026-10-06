@@ -26,7 +26,7 @@ Keep this file one screen. Entry `wa-cli.py` → `src/main.py:main`; re-execs un
 | `api/normalize.py` | proto → rows, duck-typed (`HasField`/getattr): content kinds, edits/revokes, history sync, channel posts |
 | `api/sync.py` | the only store writer: `apply`/`drain`/`absorb`, hourly contacts+groups refresh. `sync --follow` = connect once + `apply` in a loop |
 | `api/peers.py` | display names, chat/contact rows, `find`, `resolve` (the ref grammar: me, +phone, jid, name) |
-| `api/messages.py`, `groups.py`, `channels.py` | rows and actions per noun |
+| `api/messages.py`, `groups.py`, `channels.py`, `media.py` | rows and actions per noun (`media`: download keys from the store → files) |
 | `api/auth.py` | QR / pairing-code link flow, `me_row` |
 | `commands/<area>/<cmd>.py` | argparse + orchestration, one command per file, <~150 lines |
 
@@ -38,7 +38,7 @@ Keep this file one screen. Entry `wa-cli.py` → `src/main.py:main`; re-execs un
 
 ## Route discovery
 
-neonize client methods (`neonize/client.py` in the venv) first; their protos: `neonize/proto/` (`Neonize_pb2`, `waE2E`, `waHistorySync`). Go side = whatsmeow (pkg.go.dev/go.mau.fi/whatsmeow). Not available there (checked 0.5.2): channel directory search, newsletter post timestamps (not in the raw reply either), a follow flag in newsletter info (`ViewerMeta.Role` reads subscriber when not following - use `get_subscribed_newletters`), post views for non-admins (ViewsCount 0), group size in an invite-link preview (partial participant list).
+neonize client methods (`neonize/client.py` in the venv) first; their protos: `neonize/proto/` (`Neonize_pb2`, `waE2E`, `waHistorySync`). Go side = whatsmeow (pkg.go.dev/go.mau.fi/whatsmeow). Not available there (checked 0.5.2): channel directory search, newsletter post timestamps (not in the raw reply either), a follow flag in newsletter info (`ViewerMeta.Role` reads subscriber when not following - use `get_subscribed_newletters`), post views for non-admins (ViewsCount 0), group size in an invite-link preview (partial participant list), media retry (phone re-upload of expired media), on-demand history sync (no SendPeerMessage) - so media keys exist only if stored when the message arrived (`messages.media`, store v2).
 
 ## Test
 

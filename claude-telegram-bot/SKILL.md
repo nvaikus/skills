@@ -15,6 +15,7 @@ claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after eve
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat]   # bot -> owner; stdin if no TEXT
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
+claude-tg local-api install|status|uninstall   # optional local Bot API server: attachments up to 2 GB (setup.md)
 ```
 
 `python3 ~/.claude/skills/claude-telegram-bot/claude-tg.py ...` when no wrapper is on PATH. Flags: `claude-tg <cmd> -h`.
@@ -35,7 +36,7 @@ claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo
 - Status (config `status_style`): `friendly` (default) = one edited line by activity ("🧠 Thinking…", "📖 Reading files…", "⚙️ Working… · 15 s"), no tool names/paths, not sent if the answer starts within 2 s; `detailed` = tool calls list. `/verbose [on|off]` switches one topic. Errors = one "😕 …" line; full detail in logs and in verbose mode.
 - Bot language: `ui_lang` `en` | `ru` (status, commands, /help, errors).
 - Auto-named topics get a ≤5-word title after the first answer (`title_model`, default haiku).
-- Photos/files → `~/.local/share/claude-tg/files/<thread>/`, paths passed to claude. Voice/audio/video notes → model-cli `asr` (config `stt_models`, free first) → "🎙 transcript" → claude.
+- Photos/files → `~/.local/share/claude-tg/files/<thread>/`, paths passed to claude. Over 20 MB: needs the local Bot API server (`local_api_url`), else skipped: owner gets why + workaround, claude a note; rest of the message runs. Voice/audio/video notes → model-cli `asr` (config `stt_models`, free first) → "🎙 transcript" → claude.
 - In-topic commands: `/cd <path>` (validates; starts a new session - sessions are tied to their cwd), `/new`, `/stop`, `/status` (incl. background tasks), `/verbose`, `/rename <title>` (auto-title never overrides it), `/icon <emoji>|off` (only `getForumTopicIconStickers` emojis; no arg lists them), `/delete` (topic + mapping + saved files; the Claude session file stays), `/help`.
 - A command typed in All messages is answered there; the topic the client wraps it in is deleted.
 - Restart-safe: accepted requests are kept in `state.json` until answered; after a restart queued ones run, cut ones re-run with a "↻" note (older than 1 h: 💔 + "resend").
@@ -63,7 +64,7 @@ claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo
 
 | when | read |
 |---|---|
-| first setup, BotFather, config keys, voice setup, changing the token | `references/setup.md` |
+| first setup, BotFather, config keys, voice setup, changing the token, files over 20 MB / local Bot API server | `references/setup.md` |
 
 ## Memory
 

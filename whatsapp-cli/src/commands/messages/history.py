@@ -9,7 +9,8 @@ EPILOG = """examples:
 
 CHAT: me | +phone | jid | exact or unique chat/contact name (ambiguous -> exit 2 with candidates).
 Only what reached this device exists: messages since login + the phone's history sync. Text is cut
-to text_limit (config, 200) - --full for whole messages. Media shows as [image] caption etc.
+to text_limit (config, 200) - --full for whole messages. Media shows as [image] caption,
+[document] name.pdf etc. (fields kind, file); save it: wa-cli download CHAT MSG_ID.
 """
 
 

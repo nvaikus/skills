@@ -193,6 +193,8 @@ def cmd_run(args, cfg, task_hint=None):
                            f"set \"free_only\": false in {CONFIG_PATH}")
     _chat_flags(args, be, mid, params)
     inp = read_input(args.input, args.prompt)
+    if args.ref:
+        inp["refs"] = _refs(args.ref, be, mid, task)
     t0 = time.monotonic()
     res = BACKENDS[be].run(mid, task, inp, params, args.output, cfg)
     if args.output and "text" in res and "path" not in res:
@@ -208,6 +210,23 @@ def cmd_run(args, cfg, task_hint=None):
     if args.fields:
         out = {f: out.get(f) for f in args.fields.split(",")}
     print(json.dumps(out, ensure_ascii=False))
+
+
+def _refs(paths, be, mid, task):
+    """--ref: extra input images, sent after the main input. Unsupported backend/task -> usage error, never dropped."""
+    takes = getattr(BACKENDS[be], "takes_refs", None)
+    if not (takes and takes(task)):
+        raise UsageError(f"{be}:{mid} ({short_task(task)}) takes one input, not --ref images; multi-image input: "
+                         "openrouter chat/image models, gemini/groq/mistral/cloudflare/hf chat models")
+    out = []
+    for r in paths:
+        p = Path(r).expanduser()
+        if not _is_file(r):
+            raise UsageError(f"--ref: no such file: {r}")
+        if _kind(p) != "image":
+            raise UsageError(f"--ref takes images, not {_kind(p)}: {r}")
+        out.append(str(p))
+    return out
 
 
 def _chat_flags(args, be, mid, params):
@@ -346,6 +365,8 @@ examples:
     "run": """Task comes from model metadata; --task overrides (needed for pollinations:default).
 input: prompt text, '-' for stdin, or a file path (asr audio; image to a vision model; audio/pdf to openrouter
   or gemini; with --prompt).
+--ref IMAGE (repeatable): more images in the same message, input = image 1, refs = image 2, 3, ... - multi-reference
+  editing on openrouter image models, comparison on chat/vision models. Other backends/tasks: exit 2, nothing sent.
 asr audio: any format; ffmpeg transcodes to Opus and splits into chunks when a backend's format/size cap needs it
   (groq/mistral 24 MB, cloudflare 15 MB, gemini 14 MB); chunk texts are joined.
 --no-reasoning: openrouter reasoning off; groq gpt-oss effort low / qwen none; gemini thinking_level low.
@@ -357,6 +378,8 @@ stdout: {"path"|"text", "model", "backend", "task", "cost", "duration_ms"}; cost
 examples:
   model-cli run hf:black-forest-labs/FLUX.1-schnell "isometric castle" --param num_inference_steps=4 --param width=512
   model-cli run openrouter:google/gemma-4-31b-it:free photo.jpg --prompt "what breed is this dog?"
+  model-cli run or:google/gemini-3-pro-image room2.jpg --ref room1.jpg --prompt "furnish image 1 with the same
+    sofa and rug as image 2" --paid -o room2-furnished.png
   model-cli run dots-studio/dots-3-note-preview:free thumb.jpg --prompt "classify" --no-reasoning --max-tokens 300
   model-cli run whisper ./meeting.mp3 -o ./meeting.txt
   model-cli run groq:whisper-large-v3 ./memo.ogg --param language=ru
@@ -380,6 +403,8 @@ def _run_opts(p, model_positional):
     p.add_argument("input", help="prompt text, '-' for stdin, or an input file path")
     p.add_argument("-o", "--output", help="save result here (file or dir); default throwaway /tmp/model-cli/")
     p.add_argument("--prompt", help="instruction text sent with a file input")
+    p.add_argument("--ref", action="append", metavar="IMAGE",
+                   help="extra reference image, repeatable; sent after the input in order (image 2, 3, ...)")
     p.add_argument("--param", action="append", metavar="K=V", help="model parameter, repeatable, JSON-typed")
     p.add_argument("--params-json", metavar="JSON", help="parameters as one JSON object")
     p.add_argument("--backend", help="force backend for a bare model id")
@@ -413,7 +438,9 @@ def build_parser():
         s = sub.add_parser(short, help=f"{TASKS[short]} with the configured default model",
                            epilog=f"Default model: first usable entry of config defaults.{short}. "
                                   f"Same output as run.\n\nexample:\n  model-cli {short} "
-                                  + {"image": '"a red fox" -o fox.png', "video": '"waves at sunset"',
+                                  + {"image": '"a red fox" -o fox.png\n  model-cli image room2.jpg --ref room1.jpg '
+                                              '--prompt "same furniture as image 2" -m or:google/gemini-3-pro-image',
+                                     "video": '"waves at sunset"',
                                      "tts": '"Hello there" -o hi.wav', "asr": "./talk.mp3",
                                      "llm": '"explain RAID 5 in two lines"'}[short],
                            formatter_class=fmt)

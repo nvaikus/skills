@@ -58,6 +58,19 @@ S = {
         "why.bridge": "internal bot error.", "why.download": "could not download the attachment.",
         "why.stt_missing": "voice notes need the model-cli skill (github.com/nvaikus/skills/tree/main/model-cli).",
         "why.stt_failed": "could not transcribe the voice note.",
+        "skip": "📎 Attachment not downloaded: {name} ({kind}, {size}) - {why}\n{fix}",
+        "skip.why.too_big": "the file is larger than 20 MB, the bot cannot download it via the Bot API.",
+        "skip.why.local_down": "the file is larger than 20 MB and the local Bot API server does not respond.",
+        "skip.why.failed": "download error: {e}.",
+        "skip.fix.too_big": "What to do: send a link to it (Google Drive, iCloud) or a compressed or split copy under "
+                            "20 MB. Bot owner: a local Bot API server raises the limit to 2 GB (claude-tg doctor, "
+                            "row local_api).",
+        "skip.fix.local_down": "What to do: start the server (claude-tg local-api status; often the secret vault is "
+                               "locked: rbw unlock), then send the file again.",
+        "skip.fix.failed": "What to do: send the file again.",
+        "mb": "{n} MB", "mb.unknown": "size unknown",
+        "kind.photo": "photo", "kind.document": "file", "kind.video": "video", "kind.animation": "GIF",
+        "kind.voice": "voice note", "kind.audio": "audio", "kind.video_note": "video note",
     },
     "ru": {
         "ph.think": "🧠 Думаю…", "ph.read": "📖 Изучаю файлы…", "ph.search": "🔎 Ищу…",
@@ -105,6 +118,19 @@ S = {
         "why.bridge": "внутренняя ошибка бота.", "why.download": "не удалось скачать вложение.",
         "why.stt_missing": "для голосовых нужен скилл model-cli (github.com/nvaikus/skills/tree/main/model-cli).",
         "why.stt_failed": "не удалось распознать голосовое.",
+        "skip": "📎 Вложение не скачано: {name} ({kind}, {size}) - {why}\n{fix}",
+        "skip.why.too_big": "файл больше 20 МБ, бот не может скачать его через Bot API.",
+        "skip.why.local_down": "файл больше 20 МБ, а локальный Bot API сервер не отвечает.",
+        "skip.why.failed": "ошибка скачивания: {e}.",
+        "skip.fix.too_big": "Что сделать: пришлите ссылку на файл (Google Drive, iCloud) или сжатую либо разрезанную "
+                            "копию меньше 20 МБ. Владельцу бота: локальный Bot API сервер поднимает лимит до 2 ГБ "
+                            "(claude-tg doctor, строка local_api).",
+        "skip.fix.local_down": "Что сделать: запустите сервер (claude-tg local-api status; часто заперто хранилище "
+                               "секретов: rbw unlock), потом пришлите файл ещё раз.",
+        "skip.fix.failed": "Что сделать: пришлите файл ещё раз.",
+        "mb": "{n} МБ", "mb.unknown": "размер неизвестен",
+        "kind.photo": "фото", "kind.document": "файл", "kind.video": "видео", "kind.animation": "GIF",
+        "kind.voice": "голосовое", "kind.audio": "аудио", "kind.video_note": "видеокружок",
     },
 }
 

@@ -13,6 +13,7 @@ COMMANDS = {
     "user-find": ("src.commands.chats.user_find", "find users, bots, groups, channels: contacts, @username, global"),
     "history": ("src.commands.messages.history", "recent messages of one chat"),
     "search": ("src.commands.messages.search", "search messages: all your chats, one --chat, or --public posts"),
+    "media-get": ("src.commands.messages.media_get", "download media/files of messages: by id, or all in a chat"),
     "send": ("src.commands.messages.send", "send a message or file(s) - immediately, no preview"),
 }
 

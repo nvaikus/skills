@@ -9,6 +9,7 @@ import tempfile
 import time
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -84,6 +85,15 @@ def default_events():
             live(QA, SASHA1, "q5", P(conversation="oops"), T0 - 4),
             live(QA, SASHA1, "q6", P(protocolMessage=P(type=normalize.REVOKE, key=P(ID="q5"))), T0 - 3),
             live(QA, SASHA1, "q7", P(reactionMessage=P(text="👍")), T0 - 2)]
+
+
+def fake_blob(m, field):
+    """normalize._blob needs real protos: a fake media part carries its 'serialized' bytes in blob=."""
+    return getattr(m, field).__dict__.get("blob", field.encode())
+
+
+def doc(name, blob=None, mime="application/pdf"):
+    return P(documentMessage=P(fileName=name, mimetype=mime, **({"blob": blob} if blob else {})))
 
 
 class FakeSession:
@@ -176,6 +186,14 @@ class FakeSession:
         self.sent.append((jid, path, caption))
         return r
 
+    def download(self, blob, path):
+        self.calls.append(("download", blob))
+        if blob == b"gone":
+            raise wa.download_error(Exception("download failed with status code 404"))
+        if blob == b"broken":
+            raise wa.download_error(Exception("invalid media hmac"))
+        Path(path).write_bytes(b"%PDF-1.4 " + blob)
+
     def logout(self):
         self.calls.append(("logout",))
 
@@ -187,6 +205,9 @@ class Base(unittest.TestCase):
             p = mock.patch.object(config, name, val)
             p.start()
             self.addCleanup(p.stop)
+        p = mock.patch.object(normalize, "_blob", fake_blob)
+        p.start()
+        self.addCleanup(p.stop)
         self.session = FakeSession()
 
     def cli(self, *argv, session=None, stdin=None, tty=False, connect=None):
@@ -578,6 +599,98 @@ class GroupsChannels(Base):
         self.assertEqual(st.chat(other)["info"], "following")
 
 
+class Download(Base):
+    def setUp(self):
+        super().setUp()
+        self.out = Path(tempfile.mkdtemp(prefix="wa-dl-", dir=TMP))
+        self.session.queue = default_events() + [
+            live(IVAN, IVAN, "d1", doc("bolt.pdf"), T0 - 86400 * 400),
+            live(IVAN, IVAN, "d2", doc("bolt.pdf"), T0 - 86400 * 399),
+            live(IVAN, IVAN, "d3", P(audioMessage=P(PTT=True, mimetype="audio/ogg; codecs=opus")), T0 - 100),
+            live(IVAN, IVAN, "d4", doc("old.pdf", blob=b"gone"), T0 - 90),
+            live(IVAN, IVAN, "d5", P(conversation="text only"), T0 - 80)]
+
+    def dl(self, *argv):
+        return self.cli("download", *argv, "-o", str(self.out))
+
+    def test_by_id_keeps_original_name(self):
+        code, out, _ = self.dl("Ivan", "d1", "-j")
+        self.assertEqual(code, 0)
+        r = json.loads(out)[0]
+        self.assertEqual((r["status"], r["kind"], Path(r["path"]).name), ("ok", "document", "bolt.pdf"))
+        self.assertTrue((self.out / "bolt.pdf").read_bytes().startswith(b"%PDF"))
+        self.assertEqual(list(self.out.glob("*.part")), [])
+
+    def test_history_shows_id_kind_and_file(self):
+        self.cli("whoami")
+        _, out, _ = self.offline("history", "Ivan", "--fields", "msg_id,kind,file,text", "--no-header")
+        self.assertIn("d1\tdocument\tbolt.pdf\t[document] bolt.pdf", out)
+        self.assertIn("i2\timage\t\t[image] photo cap", out)  # media through a wrapper keeps its keys
+
+    def test_all_with_kind_filter_and_name_dedupe(self):
+        code, out, _ = self.dl("Ivan", "all", "--kind", "document", "--until", "60d", "--fields", "msg_id,path", "--no-header")
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(Path(line.split("\t")[1]).name for line in out.splitlines()),
+                         ["bolt (2).pdf", "bolt.pdf"])  # same name twice in one run: no overwrite
+
+    def test_all_since_and_generated_name(self):
+        code, out, err = self.dl("Ivan", "all", "--since", "1d", "--kind", "voice,image", "-j")
+        self.assertEqual(code, 0, err)
+        names = {r["msg_id"]: Path(r["path"]).name for r in json.loads(out)}
+        day = datetime.fromtimestamp(T0 - 100).date().isoformat()
+        self.assertEqual(names["d3"], f"{day}_d3.ogg")
+        self.assertEqual(set(names), {"d3", "i2"})
+
+    def test_expired_is_exit_2_others_still_saved(self):
+        code, out, err = self.dl("Ivan", "d4", "d1", "--fields", "msg_id,status", "--no-header")
+        self.assertEqual((code, out), (2, "d4\texpired\nd1\tok\n"))
+        self.assertIn("1 expired: media expired on WhatsApp's servers", err)
+        self.assertFalse(list(self.out.glob("*.part")))
+
+    def test_other_failure_is_exit_1(self):
+        self.session.queue.append(live(IVAN, IVAN, "d6", doc("x.pdf", blob=b"broken"), T0 - 70))
+        code, _, err = self.dl("Ivan", "d6")
+        self.assertEqual(code, 1)
+        self.assertIn("failed: download failed: invalid media hmac", err)
+
+    def test_stored_without_keys_is_no_keys(self):
+        self.cli("whoami")
+        st = __import__("src.core.store", fromlist=["Store"]).Store(config.store_path("default"))
+        st.db.execute("UPDATE messages SET media=NULL WHERE id='d1'")
+        st.close()
+        code, out, err = self.dl("Ivan", "d1", "--fields", "status", "--no-header")
+        self.assertEqual((code, out), (2, "no-keys\n"))
+        self.assertIn("logout + login", err)
+        self.assertNotIn(("download", None), self.session.calls)
+
+    def test_usage_errors(self):
+        self.assertEqual(self.dl("Ivan", "nope")[0], 2)
+        code, _, err = self.dl("Ivan", "d5")
+        self.assertEqual(code, 2)
+        self.assertIn("is text, not media", err)
+        code, _, err = self.dl("Ivan", "d1", "--since", "1d")
+        self.assertEqual(code, 2)
+        self.assertIn("go with all", err)
+        code, _, err = self.dl("Ivan", "all", "--kind", "gif")
+        self.assertEqual(code, 2)
+        self.assertNotIn(("download",), [c[:1] for c in self.session.calls])
+
+    def test_v1_store_gets_media_columns(self):
+        import sqlite3
+        path = config.store_path("default")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(str(path))
+        db.execute("CREATE TABLE messages (rowid INTEGER PRIMARY KEY, chat_jid TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER, "
+                   "sender_jid TEXT, sender_name TEXT, from_me INTEGER, kind TEXT, text TEXT, server_id INTEGER, "
+                   "views INTEGER, UNIQUE (chat_jid, id))")
+        db.execute("INSERT INTO messages (chat_jid, id, ts, kind, text) VALUES (?, 'old', ?, 'document', '[document] a.pdf')",
+                   (IVAN, T0 - 50))
+        db.commit()
+        db.close()
+        code, out, err = self.dl("Ivan", "old", "--fields", "status", "--no-header")
+        self.assertEqual((code, out), (2, "no-keys\n"), err)
+
+
 class Normalize(unittest.TestCase):
     def test_nested_wrappers_and_document(self):
         m = P(viewOnceMessageV2=P(message=P(documentWithCaptionMessage=P(message=P(documentMessage=P(fileName="a.pdf", caption="see"))))))
@@ -589,6 +702,19 @@ class Normalize(unittest.TestCase):
         self.assertEqual(normalize.content(poll), ("msg", "poll", "[poll] Q? (a / b)"))
         self.assertEqual(normalize.content(P(eventMessage=P(name="x"))), ("msg", "other", "[event]"))
         self.assertIsNone(normalize.content(P(senderKeyDistributionMessage=P(x=1))))
+
+    def test_media_of_kinds_and_non_media(self):
+        with mock.patch.object(normalize, "_blob", fake_blob):
+            got = normalize.media_of(P(ephemeralMessage=P(message=doc("a.pdf"))))
+            self.assertEqual((got["file"], got["mime"], got["media"]), ("a.pdf", "application/pdf", b"documentMessage"))
+            self.assertEqual(normalize.media_of(P(ptvMessage=P()))["media"], b"ptvMessage")
+            self.assertIsNone(normalize.media_of(P(conversation="hi")))
+        self.assertIsNone(normalize.media_of(doc("a.pdf"))["media"])  # fakes are not protos: no blob, no crash
+
+    def test_download_error_classes(self):
+        self.assertEqual((wa.download_error(Exception("download failed with status code 410")).code,
+                          wa.download_error(Exception("download failed with status code 410")).status), (2, "expired"))
+        self.assertEqual(wa.download_error(Exception("context deadline exceeded")).status, "failed")
 
     def test_timestamps_ms_and_s(self):
         self.assertEqual(wa.norm_ts(T0 * 1000), T0)

@@ -128,6 +128,9 @@ class Compat:
     def chat_url(self):
         return f"{self.base}/chat/completions"
 
+    def takes_refs(self, task):
+        return task in (LLM, VISION)
+
     def run(self, model_id, task, inp, params, out, cfg):
         self.need_token()
         try:
@@ -156,8 +159,9 @@ class Compat:
 
     def chat(self, model_id, inp, params):
         content = inp["text"]
-        if inp.get("file"):
-            content = [{"type": "text", "text": inp["text"]}, file_part(inp["file"])]
+        files = ([inp["file"]] if inp.get("file") else []) + (inp.get("refs") or [])
+        if files:
+            content = [{"type": "text", "text": inp["text"]}] + [file_part(f) for f in files]
         payload = {"model": model_id, "messages": [{"role": "user", "content": content}], **params}
         r = http.with_retry(lambda: http.post_json(self.chat_url(), payload, headers=self.headers()),
                             retries=2, wait=4, backoff=2)

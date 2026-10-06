@@ -361,6 +361,16 @@ class Session:
         msg = self.client.build_document_message(path, caption=caption or None, filename=os.path.basename(path))
         return _sent(self.client.send_message(to_jid(jid), msg))
 
+    def download(self, blob, path):
+        """Stored media part (normalize.media_of) -> decrypted file at path. Read-only: no receipt, no retry request
+        (whatsmeow's media retry / on-demand history sync are not exported by neonize 0.5.2).
+        Fails with CliError whose .status is "expired" (gone from the media servers) or "failed"."""
+        from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import Message
+        try:
+            self.client.download_any(Message.FromString(blob), path)
+        except Exception as e:  # noqa: BLE001
+            raise download_error(e) from None
+
     def pair_phone(self, phone):
         from neonize.utils.enum import ClientName
         return self.client.PairPhone(phone, True, ClientName.LINUX)
@@ -391,6 +401,22 @@ def _sent(r):
 
 RATE = ("429", "rate-overlimit", "rate limit", "too many")
 NOT_FOUND = ("not valid", "invalid", "revoked", "item-not-found", "404", "not-found", "410", "gone")
+
+
+EXPIRED = ("status code 404", "status code 410", "status code 403", "media not available", "no url present")
+
+
+def download_error(exc):
+    """whatsmeow download failure -> CliError with .status: expired (exit 2) | failed (exit 1)."""
+    msg = str(exc).strip() or type(exc).__name__
+    if any(k in msg.lower() for k in EXPIRED):
+        err = UsageError(f"media expired on WhatsApp's servers ({msg}); only the phone can re-upload it - "
+                         "save it from the phone")
+        err.status = "expired"
+    else:
+        err = CliError(f"download failed: {msg}")
+        err.status = "failed"
+    return err
 
 
 def translate(exc):

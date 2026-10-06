@@ -369,6 +369,8 @@ def doctor(cfg) -> int:
     mc = config.model_cli_bin()
     row("model-cli (voice, optional)", True, " ".join(mc) if mc else "missing: voice notes get an install hint")
     row("ffmpeg (voice, optional)", True, shutil.which("ffmpeg") or "missing: ogg sent as-is")
+    from . import localapi
+    row("local_api (files > 20 MB)", *localapi.doctor_row(cfg))
     for f in cfg["env_files"]:
         row("env_file", Path(f).expanduser().exists(), f)
     pm = cfg.get("permission_mode") or "bypass"
