@@ -17,6 +17,7 @@ UNIT_NAME = "claude-tg-botapi"
 UNIT_PATH = Path(f"~/.config/systemd/user/{UNIT_NAME}.service").expanduser()
 FILES_DIR = config.STATE_DIR / "botapi"
 TEMP_DIR = config.STATE_DIR / "botapi-tmp"
+USER_CREDSTORE = Path("~/.config/credstore.encrypted").expanduser()
 
 UNIT = """[Unit]
 Description=claude-tg: local Telegram Bot API server (attachments > 20 MB)
@@ -52,9 +53,23 @@ def resolve(ref: str, what: str) -> str:
     if kind == "cred":
         d = os.environ.get("CREDENTIALS_DIRECTORY")
         p = Path(d) / name if d else None
-        if not p or not p.exists():
-            raise Fail(f"{what}: systemd credential {name} missing (LoadCredential={name}:<file> in the unit)")
-        return p.read_text().strip()
+        if p and p.exists():
+            return p.read_text().strip()
+        # user units: systemd < 258 can't LoadCredentialEncrypted= in the user manager ("Failed to determine
+        # local credential key"), but the user can decrypt a user-scoped credential via the system varlink
+        # service -> encrypted file at rest, plaintext only in this process's env
+        enc = USER_CREDSTORE / name
+        if enc.exists():
+            try:
+                r = subprocess.run(["systemd-creds", "decrypt", "--user", f"--name={name}", str(enc), "-"],
+                                   capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({e})") from None
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+            raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({r.stderr.strip()[:200]})")
+        raise Fail(f"{what}: systemd credential {name} missing (LoadCredential={name}:<file> in a system unit, "
+                   f"or {enc} from: <secret> | systemd-creds encrypt --user --name={name} - {enc})")
     if not shutil.which("rbw"):
         raise Fail(f"{what}: rbw not found on PATH")
     try:
@@ -63,6 +78,14 @@ def resolve(ref: str, what: str) -> str:
     except subprocess.TimeoutExpired:
         raise Fail(f"{what}: rbw get {name} timed out (vault locked? run: rbw unlock)") from None
     val = r.stdout.strip() if r.returncode == 0 else ""
+    if not val and r.returncode == 0:
+        # value typed on a later editor line lands in notes (`rbw add` keeps line 1 as the password): take
+        # the first non-empty line of the full entry
+        full = subprocess.run(["rbw", "get", "--full", name], capture_output=True, text=True, timeout=30,
+                              stdin=subprocess.DEVNULL)
+        val = next((ln.strip() for ln in full.stdout.splitlines() if ln.strip()), "") if full.returncode == 0 else ""
+        if not val:
+            raise Fail(f"{what}: rbw entry {name} is empty -> rbw edit {name}, put the value on line 1")
     if not val:
         err = r.stderr.lower()
         hint = ("rbw not set up -> rbw config set email <you>; rbw login" if "config set email" in err or "login" in err

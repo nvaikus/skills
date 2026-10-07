@@ -28,6 +28,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 - New bot-facing text → a key in both `ui.S` tables (a test checks key/placeholder parity).
 - `setMyProfilePhoto` takes `photo` = InputProfilePhoto JSON `{"type":"static","photo":"attach://p"}` + the jpg as multipart field `p` (jpg only: `botprofile` converts via ffmpeg).
 - Cloud `getFile` refuses > 20 MB (`file is too big`). `media.fetch` never raises per attachment: > 20 MB goes to `Bridge.big` (local `telegram-bot-api --local`, downloads only - no `logOut`, polling stays on the cloud); its getFile blocks until the whole file is on its disk and returns an absolute path (contains the token: never log it) → copied, then unlinked. Failures → `Skipped`: owner line `skip_text`, note appended to the prompt.
+- `cred:NAME` in a user unit: systemd 257's user manager fails `LoadCredentialEncrypted=` ("Failed to determine local credential key"), but `systemd-creds decrypt --user` (system varlink) works from inside the unit → `localapi.resolve` falls back to `~/.config/credstore.encrypted/NAME`.
 - `getUpdates` 409 = another poller with the same token; the file lock in `STATE_DIR/lock` only guards one host.
 
 ## Layers

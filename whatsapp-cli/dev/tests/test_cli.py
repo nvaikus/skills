@@ -824,5 +824,21 @@ def tearDownModule():
     shutil.rmtree(TMP, ignore_errors=True)
 
 
+
+class LinkedJids(unittest.TestCase):
+    """A phone chat and a lid chat of one person (the lid row carries the phone jid in alt_jid): +phone, the phone
+    jid and the lid all resolve to both; the name is one chat, not ambiguous."""
+
+    def test_phone_and_lid_chat_fold(self):
+        from src.api import peers
+        from src.core.store import Store
+        st = Store(Path(tempfile.mkdtemp(prefix="wa-store-", dir=TMP)) / "s.db")
+        st.upsert_chat("351900000001@s.whatsapp.net", "user", "Vet", last_ts=T0)
+        st.upsert_chat("777@lid", "user", "Vet", alt_jid="351900000001@s.whatsapp.net", last_ts=T0)
+        for ref in ("+351900000001", "351900000001@s.whatsapp.net", "777@lid", "Vet"):
+            _, jids, _ = peers.resolve(st, ref)
+            self.assertEqual(set(jids), {"351900000001@s.whatsapp.net", "777@lid"}, ref)
+
+
 if __name__ == "__main__":
     unittest.main()

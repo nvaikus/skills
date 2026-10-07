@@ -1207,6 +1207,24 @@ class LocalApiSecrets(unittest.TestCase):
             (Path(d) / "hash").write_text("h\n")
             with mock.patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": d}):
                 self.assertEqual(localapi.resolve("cred:hash", "hash"), "h")
+            # user unit: no $CREDENTIALS_DIRECTORY -> user-scoped encrypted file, decrypted via systemd-creds
+            (Path(d) / "TELEGRAM_API_HASH").write_bytes(b"ciphertext")
+            dec = mock.Mock(returncode=0, stdout="abc\n", stderr="")
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch.object(localapi, "USER_CREDSTORE", Path(d)), \
+                    mock.patch.object(localapi.subprocess, "run", return_value=dec) as run:
+                os.environ.pop("CREDENTIALS_DIRECTORY", None)
+                self.assertEqual(localapi.resolve("cred:TELEGRAM_API_HASH", "hash"), "abc")
+                self.assertEqual(run.call_args.args[0][:3], ["systemd-creds", "decrypt", "--user"])
+                with self.assertRaisesRegex(localapi.Fail, "systemd-creds encrypt --user"):
+                    localapi.resolve("cred:MISSING", "hash")
+            bad = mock.Mock(returncode=1, stdout="", stderr="Permission denied")
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch.object(localapi, "USER_CREDSTORE", Path(d)), \
+                    mock.patch.object(localapi.subprocess, "run", return_value=bad):
+                os.environ.pop("CREDENTIALS_DIRECTORY", None)
+                with self.assertRaisesRegex(localapi.Fail, "Permission denied"):
+                    localapi.resolve("cred:TELEGRAM_API_HASH", "hash")
         ok = mock.Mock(returncode=0, stdout="777\n", stderr="")
         with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
                 mock.patch.object(localapi.subprocess, "run", return_value=ok) as run:
@@ -1222,6 +1240,15 @@ class LocalApiSecrets(unittest.TestCase):
         with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
                 mock.patch.object(localapi.subprocess, "run", return_value=fresh):
             with self.assertRaisesRegex(localapi.Fail, "rbw login"):
+                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
+        empty_pw = mock.Mock(returncode=0, stdout="\n", stderr="")
+        in_notes = mock.Mock(returncode=0, stdout="\n\n777\n", stderr="")
+        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
+                mock.patch.object(localapi.subprocess, "run", side_effect=[empty_pw, in_notes]):
+            self.assertEqual(localapi.resolve("rbw:TELEGRAM_API_ID", "id"), "777")
+        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
+                mock.patch.object(localapi.subprocess, "run", side_effect=[empty_pw, empty_pw]):
+            with self.assertRaisesRegex(localapi.Fail, "put the value on line 1"):
                 localapi.resolve("rbw:TELEGRAM_API_ID", "id")
 
     def test_server_argv_keeps_secrets_out(self):

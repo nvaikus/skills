@@ -57,7 +57,8 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 3 | agent | config `"local_api_url": "http://127.0.0.1:8081"` (one free port per bot on the host) |
 | 4 | agent | `claude-tg local-api install` → `claude-tg local-api status` ok → `claude-tg restart` |
 
-- Secrets: `local_api_id` / `local_api_hash` are references, resolved by `local-api serve` at start and passed to the binary via env: `rbw:NAME` (default `rbw:TELEGRAM_API_ID` / `rbw:TELEGRAM_API_HASH`), `env:NAME` (process env or `env_files`), `cred:NAME` (systemd credential). A literal value is refused.
+- Secrets: `local_api_id` / `local_api_hash` are references, resolved by `local-api serve` at start and passed to the binary via env: `rbw:NAME` (default `rbw:TELEGRAM_API_ID` / `rbw:TELEGRAM_API_HASH`), `env:NAME` (process env or `env_files`), `cred:NAME` (systemd credential: `$CREDENTIALS_DIRECTORY/NAME`, else `~/.config/credstore.encrypted/NAME` decrypted with `systemd-creds decrypt --user` - the user manager of systemd < 258 can't `LoadCredentialEncrypted=`). A literal value is refused.
+- Several bots on one host, one admin's app: per bot user `rbw get NAME | sudo -u <user> systemd-creds encrypt --user --name=NAME - ~<user>/.config/credstore.encrypted/NAME` (value never on screen or in a plain file), config `cred:NAME`; binary in a path every bot user can execute (`/usr/local/bin`); one port each.
 - Locked vault (after reboot or `lock_timeout`) → the server can't start, the unit retries every 60 s: the owner runs `rbw unlock`.
 - Server files: `~/.local/share/claude-tg/botapi/` (700); each download is copied to the topic's files dir and removed there.
 

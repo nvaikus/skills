@@ -31,9 +31,12 @@ class Names:
         self.store = store
         self.chats = {c["jid"]: c for c in store.chats()}
         self.contacts = {c["jid"]: c for c in store.contacts()}
+        self.linked = {}  # jid -> other jids of the same person (a phone chat and a lid chat may both exist)
         for c in list(self.chats.values()):
             if c["alt_jid"]:
                 self.chats.setdefault(c["alt_jid"], c)
+                self.linked.setdefault(c["jid"], set()).add(c["alt_jid"])
+                self.linked.setdefault(c["alt_jid"], set()).add(c["jid"])
         self.me = store.get_meta("me_jid")
         self.me_lid = store.get_meta("me_lid")
 
@@ -70,7 +73,7 @@ class Names:
         for jid, c in self.chats.items():
             if c["jid"] in seen:
                 continue
-            seen.update(filter(None, (c["jid"], c["alt_jid"])))
+            seen.update(self.jids(c["jid"]))
             out.append(c["jid"])
         for jid in self.contacts:
             if jid not in seen:
@@ -86,7 +89,8 @@ class Names:
 
     def jids(self, jid):
         c = self.chats.get(jid)
-        return [j for j in dict.fromkeys((jid, c and c["jid"], c and c["alt_jid"])) if j]
+        return [j for j in dict.fromkeys((jid, c and c["jid"], c and c["alt_jid"], *sorted(self.linked.get(jid, ()))))
+                if j]
 
 
 # ---- listings -----------------------------------------------------------------
