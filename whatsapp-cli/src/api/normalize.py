@@ -1,6 +1,7 @@
 """Protos -> store rows. Duck-typed (HasField/getattr), so tests feed plain fakes and neonize stays out.
 
-One message proto -> content(): ("msg", kind, text) | ("edit", target_id, text) | ("revoke", target_id) | None.
+One message proto -> content(): ("msg", kind, text) | ("edit", target_id, text) | ("revoke", target_id) | None;
+reaction(): ("react", target_id, emoji, ts) for a reactionMessage (content() skips it; emoji "" = removed).
 media_of(): the download keys of image/video/audio/sticker/document content, kept in the store for `download`.
 """
 from ..core.wa import jid_str, norm_ts
@@ -91,6 +92,18 @@ def content(m):
     if not rest or any(f in SKIP for f in rest):
         return None
     return ("msg", "other", f"[{rest[0].replace('Message', '')}]")
+
+
+def reaction(m):
+    if m is None:
+        return None
+    m = unwrap(m)
+    if not has(m, "reactionMessage"):
+        return None
+    r = m.reactionMessage
+    target = getattr(r.key, "ID", "") if has(r, "key") else ""
+    ms = getattr(r, "senderTimestampMS", 0) or 0
+    return ("react", target, getattr(r, "text", "") or "", int(ms) // 1000 or None) if target else None
 
 
 def _blob(m, field):
@@ -188,7 +201,7 @@ def live(ev):
     alt jids for the chat/sender (WhatsApp addresses one person by phone jid and by lid jid)."""
     info = ev.Info
     src = info.MessageSource
-    got = content(ev.Message)
+    got = content(ev.Message) or reaction(ev.Message)
     chat = jid_str(src.Chat)
     if got is None or not chat or chat == "status@broadcast":
         return None, None
@@ -210,9 +223,10 @@ def live(ev):
 # ---- HistorySync ----------------------------------------------------------------------
 
 def history(data, me_jid=None):
-    """waHistorySync.HistorySync -> (chats, messages, pushnames). Rows only; ops (edit/revoke) in
-    history are already applied by the phone, so they are dropped."""
-    chats, msgs = [], []
+    """waHistorySync.HistorySync -> (chats, messages, pushnames, reactions). Rows only; ops (edit/revoke) in
+    history are already applied by the phone, so they are dropped. reactions: (chat, target_id, sender, emoji, ts)
+    from each message's attached `reactions` and standalone reactionMessages; sender 'me' for own."""
+    chats, msgs, reacts = [], [], []
     for conv in data.conversations:
         jid = conv.ID
         if not jid or jid == "status@broadcast":
@@ -224,6 +238,15 @@ def history(data, me_jid=None):
         group = chat_kind(jid) == "group"
         for hm in conv.messages:
             w = hm.message
+            for r in getattr(w, "reactions", None) or ():
+                k = r.key
+                who = "me" if getattr(k, "fromMe", False) else (getattr(k, "participant", "") or getattr(k, "remoteJID", ""))
+                ms = int(getattr(r, "senderTimestampMS", 0) or 0)
+                reacts.append((jid, w.key.ID, who, getattr(r, "text", "") or "", ms // 1000 or None))
+            rx = reaction(w.message) if has(w, "message") else None
+            if rx:
+                who = "me" if w.key.fromMe else (w.key.participant or w.participant or jid)
+                reacts.append((jid, rx[1], who, rx[2], rx[3] or norm_ts(w.messageTimestamp)))
             got = content(w.message) if has(w, "message") else None
             if not got or got[0] != "msg":
                 continue
@@ -239,7 +262,7 @@ def history(data, me_jid=None):
                                      "from_me": int(from_me), "kind": got[1], "text": got[2], "server_id": None,
                                      "views": None}, w.message))
     pushnames = [(p.ID, p.pushname) for p in data.pushnames if p.ID and p.pushname]
-    return chats, msgs, pushnames
+    return chats, msgs, pushnames, reacts
 
 
 # ---- channel posts ----------------------------------------------------------------------

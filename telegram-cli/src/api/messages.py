@@ -34,7 +34,28 @@ def row(m, chat, sender, text_limit=None):
             "media": k, "file": media.file_info(m)[0] if k in media.KINDS else None,
             "link": peers.link(chat, m.id), "out": bool(getattr(m, "out", False)),
             "reply_to_msg_id": reply_id(m), "reply_to_me": None,
-            "mentions_me": bool(getattr(m, "mentioned", False))}
+            "mentions_me": bool(getattr(m, "mentioned", False)), "my_reaction": my_reaction(m)}
+
+
+def _reaction_label(r):
+    emo = getattr(r, "emoticon", None)
+    if emo:
+        return emo
+    name = type(r).__name__
+    return "[custom]" if "Custom" in name else "[paid]" if "Paid" in name else "[reaction]"
+
+
+def my_reaction(m):
+    """This account's own reaction(s) on the message, in the order chosen ('👍', '👍 🔥', '[custom]'); None if none.
+    Source: reactions.results[].chosen_order, falling back to recent_reactions[].my."""
+    rs = getattr(m, "reactions", None)
+    if rs is None:
+        return None
+    mine = sorted((c.chosen_order, _reaction_label(c.reaction)) for c in getattr(rs, "results", None) or []
+                  if getattr(c, "chosen_order", None) is not None)
+    labels = [lab for _, lab in mine] or [_reaction_label(p.reaction) for p in
+                                          getattr(rs, "recent_reactions", None) or [] if getattr(p, "my", False)]
+    return " ".join(labels) or None
 
 
 def reply_id(m):
@@ -74,7 +95,12 @@ def _collect(it, since, limit, text_limit):
     return out
 
 
-def history(client, chat, limit=20, since=None, sender=None, text_limit=None):
+def history(client, chat, limit=20, since=None, sender=None, text_limit=None, ids=None):
+    """ids -> exactly those messages (one get_messages call, newest first, missing/deleted skipped)."""
+    if ids:
+        got = [m for m in client.get_messages(chat, ids=list(ids)) or [] if m is not None]
+        rows = [row(m, m.chat or chat, m.sender, text_limit) for m in sorted(got, key=lambda m: -m.id)]
+        return _mark_reply_to_me(client, chat, rows)
     rows = _collect(client.iter_messages(chat, from_user=sender), since, limit, text_limit)
     return _mark_reply_to_me(client, chat, rows)
 

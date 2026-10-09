@@ -299,6 +299,30 @@ class Commands(unittest.TestCase):
         _, out, _, _ = cli("history", "-100500", "-n", "4", client=c)
         self.assertEqual(out.splitlines()[0], "date\tchat_id\tchat\tmsg_id\tsender\ttext")
 
+    def test_history_my_reaction_and_ids(self):
+        c = FakeClient()
+        RE = type("ReactionEmoji", (SimpleNamespace,), {})
+        RC = type("ReactionCustomEmoji", (SimpleNamespace,), {})
+        rc = lambda r, order=None: SimpleNamespace(reaction=r, count=2, chosen_order=order)
+        c.msgs = [msg(7, QA, IVAN, "two mine", 0, reactions=SimpleNamespace(
+                      results=[rc(RE(emoticon="🔥"), 1), rc(RE(emoticon="👍"), 0), rc(RE(emoticon="😂"))])),
+                  msg(6, QA, IVAN, "recent only", 1, reactions=SimpleNamespace(results=[], recent_reactions=[
+                      SimpleNamespace(my=False, reaction=RE(emoticon="👎")),
+                      SimpleNamespace(my=True, reaction=RC(document_id=5))])),
+                  msg(5, QA, IVAN, "others only", 2, reactions=SimpleNamespace(results=[rc(RE(emoticon="❤"))])),
+                  msg(4, QA, IVAN, "none", 3)]
+        _, out, _, _ = cli("history", "-100500", "-j", client=c)
+        got = {r["msg_id"]: r["my_reaction"] for r in json.loads(out)}
+        self.assertEqual(got, {7: "👍 🔥", 6: "[custom]", 5: None, 4: None})
+        asked = []
+        real = c.get_messages
+        c.get_messages = lambda chat, ids: asked.append(ids) or real(chat, ids)
+        _, out, _, _ = cli("history", "-100500", "--ids", "4,7,99", "--fields", "msg_id,my_reaction", "-j", client=c)
+        self.assertEqual(json.loads(out), [{"msg_id": 7, "my_reaction": "👍 🔥"}, {"msg_id": 4, "my_reaction": None}])
+        self.assertEqual(asked, [[4, 7, 99]])
+        code, _, err, _ = cli("history", "-100500", "--ids", "4,x", client=c)
+        self.assertEqual(code, 2)
+
     def test_search_rows_skip_reply_lookup(self):
         _, out, _, _ = cli("search", "релиз", "-j")
         self.assertIsNone(json.loads(out)[0]["reply_to_me"])

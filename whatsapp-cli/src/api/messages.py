@@ -38,20 +38,32 @@ def row(m, names, text_limit=None):
             "sender": sender, "sender_jid": m["sender_jid"], "kind": m["kind"], "file": m.get("file"),
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
             "server_id": m["server_id"], "views": m["views"], "out": bool(m["from_me"]),
-            "reply_to_msg_id": m.get("reply_to"), "reply_to_me": reply_to_me, "mentions_me": mentions_me}
+            "reply_to_msg_id": m.get("reply_to"), "reply_to_me": reply_to_me, "mentions_me": mentions_me,
+            "my_reaction": None}
 
 
-def history(store, chat_jids, limit=20, since=None, sender_jids=None, text_limit=None):
+def _with_reactions(store, rows):
+    """my_reaction for all rows: one store query."""
+    mine = store.my_reactions({r["msg_id"] for r in rows})
+    for r in rows:
+        r["my_reaction"] = mine.get(r["msg_id"])
+    return rows
+
+
+def history(store, chat_jids, limit=20, since=None, sender_jids=None, text_limit=None, ids=None):
+    """ids -> exactly those stored messages of the chat (newest first; unknown ids skipped)."""
     names = Names(store)
-    return [row(m, names, text_limit) for m in store.messages(chat_jids, None, sender_jids, _epoch(since), None, limit)]
+    got = (store.messages_by_id(chat_jids, ids) if ids
+           else store.messages(chat_jids, None, sender_jids, _epoch(since), None, limit))
+    return _with_reactions(store, [row(m, names, text_limit) for m in got])
 
 
 def search(store, query, chat_jids=None, sender_jids=None, since=None, until=None, limit=50, text_limit=None):
     if not query and not chat_jids:
         raise UsageError("a query is required unless --chat is given")
     names = Names(store)
-    return [row(m, names, text_limit)
-            for m in store.messages(chat_jids, query or None, sender_jids, _epoch(since), _epoch(until), limit)]
+    return _with_reactions(store, [row(m, names, text_limit) for m in
+                                   store.messages(chat_jids, query or None, sender_jids, _epoch(since), _epoch(until), limit)])
 
 
 def check_target(session, store, jid):

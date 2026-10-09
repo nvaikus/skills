@@ -32,6 +32,9 @@ def apply(kind, ev, store, me=None, stats=None):
             store.edit_message(row["chat_jid"], op[1], op[2])
         elif op[0] == "revoke":
             store.delete_message(row["chat_jid"], op[1])
+        elif op[0] == "react":
+            store.set_reaction(row["chat_jid"], op[1], "me" if row["from_me"] else row["sender_jid"], op[2],
+                               op[3] or row["ts"])
         else:
             store.upsert_chat(row["chat_jid"], kind=normalize.chat_kind(row["chat_jid"]), alt_jid=row["chat_alt"])
             if row["sender_jid"] and not row["from_me"]:
@@ -45,7 +48,9 @@ def apply(kind, ev, store, me=None, stats=None):
             store.upsert_chat(c["jid"], kind="group", name=c["name"], last_ts=c["last_ts"], members=c.get("members"))
             stats["groups"] = stats.get("groups", 0) + 1
     elif kind == "history":
-        chats, msgs, pushnames = normalize.history(ev.Data, me)
+        chats, msgs, pushnames, reacts = normalize.history(ev.Data, me)
+        for r in reacts:
+            store.set_reaction(*r)
         for c in chats:
             store.upsert_chat(**c)
         for jid, name in pushnames:

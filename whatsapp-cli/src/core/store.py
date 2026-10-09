@@ -9,7 +9,7 @@ import os
 import sqlite3
 import time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_name TEXT, from_me INTEGER, kind TEXT, text TEXT, server_id INTEGER, views INTEGER,
   file TEXT, mime TEXT, media BLOB, reply_to TEXT, reply_to_jid TEXT, mentions TEXT, UNIQUE (chat_jid, id));
 CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (chat_jid, ts);
+CREATE TABLE IF NOT EXISTS reactions (
+  chat_jid TEXT NOT NULL, msg_id TEXT NOT NULL, sender TEXT NOT NULL, emoji TEXT, ts INTEGER,
+  PRIMARY KEY (chat_jid, msg_id, sender));
+CREATE INDEX IF NOT EXISTS reactions_msg ON reactions (msg_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5 (
   text, content='messages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
@@ -124,6 +128,18 @@ class Store:
         self.db.execute("UPDATE messages SET text='[deleted]', kind='deleted' WHERE chat_jid=? AND id=?",
                         (chat_jid, msg_id))
 
+    def set_reaction(self, chat_jid, msg_id, sender, emoji, ts):
+        """sender: 'me' for own reactions, else the reactor's jid. emoji '' = reaction removed. An older event
+        (history sync arriving after a live one) never overwrites a newer state."""
+        ts = ts or 0
+        if not emoji:
+            self.db.execute("DELETE FROM reactions WHERE chat_jid=? AND msg_id=? AND sender=? AND COALESCE(ts, 0) <= ?",
+                            (chat_jid, msg_id, sender, ts))
+            return
+        self.db.execute("INSERT INTO reactions VALUES (?,?,?,?,?) ON CONFLICT(chat_jid, msg_id, sender) DO UPDATE SET "
+                        "emoji=excluded.emoji, ts=excluded.ts WHERE excluded.ts >= COALESCE(reactions.ts, 0)",
+                        (chat_jid, msg_id, sender, emoji, ts))
+
     # ---- reads ----------------------------------------------------------------
     def chats(self):
         return [dict(r) for r in self.db.execute("SELECT * FROM chats ORDER BY COALESCE(last_ts, 0) DESC")]
@@ -163,6 +179,20 @@ class Store:
         sql = ("SELECT m.* FROM messages m" + (" WHERE " + " AND ".join(where) if where else "")
                + " ORDER BY COALESCE(m.ts, 0) DESC, COALESCE(m.server_id, 0) DESC, m.rowid DESC LIMIT ?")
         return [dict(r) for r in self.db.execute(sql, args + [limit])]
+
+    def my_reactions(self, msg_ids):
+        """{msg_id: emoji} of own reactions. Matched by message id alone: a chat is known under its phone and
+        its lid jid, and WhatsApp message ids are random per message."""
+        ids = list(msg_ids)
+        if not ids:
+            return {}
+        q = f"SELECT msg_id, emoji FROM reactions WHERE sender='me' AND msg_id IN ({', '.join('?' * len(ids))})"
+        return {r[0]: r[1] for r in self.db.execute(q, ids)}
+
+    def messages_by_id(self, chat_jids, msg_ids):
+        q = (f"SELECT * FROM messages WHERE chat_jid IN ({', '.join('?' * len(chat_jids))}) "
+             f"AND id IN ({', '.join('?' * len(msg_ids))}) ORDER BY COALESCE(ts, 0) DESC, rowid DESC")
+        return [dict(r) for r in self.db.execute(q, list(chat_jids) + list(msg_ids))]
 
     def counts(self):
         one = lambda t: self.db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: E731

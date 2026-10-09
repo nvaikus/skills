@@ -721,6 +721,28 @@ class Quotes(Base):
         _, out, _ = self.offline("history", QA, "--fields", "msg_id,sender,text", "-n", "1", "--no-header")
         self.assertEqual(out.count("\t"), 2)  # default columns untouched
 
+    def test_my_reaction_live_history_sync_and_ids(self):
+        rx = lambda target, emoji, ms: P(reactionMessage=P(key=P(ID=target), text=emoji, senderTimestampMS=ms))  # noqa: E731
+        ev = history_event()
+        q = ev[1].Data.conversations[0].messages
+        q[1].message.reactions = [P(key=P(fromMe=True, participant=""), text="🙏", senderTimestampMS=(T0 - 50) * 1000)]
+        q[2].message.reactions = [P(key=P(fromMe=False, participant=IVAN), text="😂", senderTimestampMS=0)]
+        self.session.queue = [ev, live(QA, ME, "x1", rx("q1", "👍", (T0 - 9) * 1000), T0 - 9, from_me=True),
+                              live(QA, IVAN, "x2", rx("q1", "❤", 0), T0 - 8),  # someone else's reaction
+                              live(QA, ME, "x3", rx("q1", "🔥", (T0 - 7) * 1000), T0 - 7, from_me=True),  # replaces mine
+                              live(QA, ME, "x4", rx("q2", "", (T0 - 6) * 1000), T0 - 6, from_me=True)]  # removed
+        qa = self.rows(QA)
+        self.assertEqual({k: qa[k]["my_reaction"] for k in ("q1", "q2", "q3")}, {"q1": "🔥", "q2": None, "q3": None})
+        self.assertNotIn("x1", qa)
+        _, out, _ = self.offline("history", QA, "--ids", "q3,q1,nope", "--fields", "msg_id,my_reaction", "-j")
+        self.assertEqual(json.loads(out), [{"msg_id": "q1", "my_reaction": "🔥"}, {"msg_id": "q3", "my_reaction": None}])
+        self.session.queue = [history_event()]  # an older history sync never resurrects/overwrites a newer state
+        ev2 = history_event()
+        ev2[1].Data.conversations[0].messages[0].message.reactions = [
+            P(key=P(fromMe=True), text="👎", senderTimestampMS=(T0 - 100) * 1000)]
+        self.session.queue = [ev2]
+        self.assertEqual(self.rows(QA)["q1"]["my_reaction"], "🔥")
+
     def test_history_sync_reply_and_search_rows(self):
         ev = history_event()
         ev[1].Data.conversations[0].messages.append(P(message=P(
