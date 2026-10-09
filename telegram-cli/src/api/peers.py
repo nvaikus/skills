@@ -1,5 +1,7 @@
 """Peer vocabulary: entity kind/name/id, dialogs, people search, resolving a chat reference."""
 import re
+import time
+from datetime import datetime, timezone
 
 from ..core import tg
 from ..core.errors import UsageError
@@ -82,9 +84,45 @@ def _text(e):
 
 # ---- dialogs ------------------------------------------------------------------
 
+def folders(client):
+    """Marked peer id -> [chat-folder titles] it is explicitly included/pinned in (flag rules ignored)."""
+    out = {}
+    for f in tg.dialog_filters(client):
+        title = getattr(f, "title", None)
+        if title is None:  # DialogFilterDefault ("All chats")
+            continue
+        title = getattr(title, "text", title)  # layer >=193: TextWithEntities
+        seen = set()
+        for p in list(getattr(f, "pinned_peers", None) or []) + list(getattr(f, "include_peers", None) or []):
+            if any(hasattr(p, a) for a in ("channel_id", "chat_id", "user_id")):
+                pid = peer_key(p)
+                if pid not in seen:
+                    seen.add(pid)
+                    out.setdefault(pid, []).append(title)
+    return out
+
+
+def _notify_scope(e):
+    k = kind(e)
+    return "users" if k in ("user", "bot") else "broadcasts" if k == "channel" else "chats"
+
+
+def _muted(d, defaults):
+    """Own mute_until, else the account default for the peer type."""
+    until = getattr(getattr(getattr(d, "dialog", None), "notify_settings", None), "mute_until", None)
+    if until is None:
+        until = defaults.get(_notify_scope(d.entity))
+    if until is None:
+        return False
+    if isinstance(until, datetime):
+        return until > datetime.now(timezone.utc)
+    return until > time.time()
+
+
 def dialogs(client, flt=None, kinds=None, limit=50):
     """Dialog rows, newest first. Filtering scans every dialog; unfiltered stops at limit."""
     scan = None if (flt or kinds) else limit
+    in_folders, defaults = folders(client), tg.notify_defaults(client)
     out = []
     for d in client.iter_dialogs(limit=scan):
         e = d.entity
@@ -92,7 +130,11 @@ def dialogs(client, flt=None, kinds=None, limit=50):
             continue
         if flt and flt.casefold() not in _text(e):
             continue
-        out.append(row(e, unread=d.unread_count, last=iso(d.date)))
+        pid = peer_id(e)
+        out.append(row(e, unread=d.unread_count, last=iso(d.date), muted=_muted(d, defaults),
+                       archived=bool(getattr(d, "archived", False)), pinned=bool(getattr(d, "pinned", False)),
+                       folders=in_folders.get(pid, []), members=getattr(e, "participants_count", None),
+                       unread_mentions=getattr(d, "unread_mentions_count", 0) or 0))
         if len(out) >= limit:
             break
     return out

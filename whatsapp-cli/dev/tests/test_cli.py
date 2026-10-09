@@ -691,6 +691,89 @@ class Download(Base):
         self.assertEqual((code, out), (2, "no-keys\n"), err)
 
 
+class Quotes(Base):
+    """out / reply_to_msg_id / reply_to_me / mentions_me on message rows; members on chat rows."""
+
+    def ext(self, text, stanza="", participant="", mentions=()):
+        return P(extendedTextMessage=P(text=text, contextInfo=P(stanzaID=stanza, participant=participant,
+                                                                 mentionedJID=list(mentions))))
+
+    def rows(self, chat, *argv):
+        _, out, _ = self.cli("history", chat, "-j", "-n", "50", *argv)
+        return {r["msg_id"]: r for r in json.loads(out)}
+
+    def test_reply_and_mention_fields(self):
+        self.session.queue = default_events() + [
+            live(QA, IVAN, "r1", self.ext("to you", "q2", "111@lid", ["111@lid"]), T0 - 1),  # lid jid = me
+            live(QA, IVAN, "r2", self.ext("to sasha", "q3", SASHA2, [SASHA1]), T0),
+            live(IVAN, IVAN, "r3", self.ext("re hello", "i1"), T0),  # no participant: quoted from_me in the store
+            live(QA, SASHA1, "r4", P(ephemeralMessage=P(message=P(imageMessage=P(
+                caption="look", contextInfo=P(mentionedJID=[ME, IVAN]))))), T0),
+            live(QA, ME, "r5", P(conversation="mine"), T0, from_me=True)]
+        qa = self.rows(QA)
+        pick = lambda r: (r["reply_to_msg_id"], r["reply_to_me"], r["mentions_me"])  # noqa: E731
+        self.assertEqual(pick(qa["r1"]), ("q2", True, True))
+        self.assertEqual(pick(qa["r2"]), ("q3", False, False))
+        self.assertEqual(pick(qa["r4"]), (None, False, True))
+        self.assertEqual(pick(self.rows(IVAN)["r3"]), ("i1", True, False))
+        self.assertEqual((qa["r5"]["out"], qa["r4"]["out"]), (True, False))
+        self.assertEqual(pick(qa["q1"]), (None, False, False))  # history-sync row, plain text
+        _, out, _ = self.offline("history", QA, "--fields", "msg_id,sender,text", "-n", "1", "--no-header")
+        self.assertEqual(out.count("\t"), 2)  # default columns untouched
+
+    def test_history_sync_reply_and_search_rows(self):
+        ev = history_event()
+        ev[1].Data.conversations[0].messages.append(P(message=P(
+            key=P(remoteJID=QA, fromMe=False, ID="h9", participant=IVAN),
+            message=self.ext("ответ мне", "q2", ME, [ME]), messageTimestamp=T0 - 20, participant="", pushName="")))
+        self.session.queue = [ev]
+        _, out, _ = self.cli("search", "ответ", "-j")
+        r = json.loads(out)[0]
+        self.assertEqual((r["msg_id"], r["reply_to_msg_id"], r["reply_to_me"], r["mentions_me"]), ("h9", "q2", True, True))
+
+    def test_rows_stored_before_v3_are_none(self):
+        self.cli("sync")
+        from src.core import store as store_mod
+        st = store_mod.Store(config.store_path("default"))
+        st.db.execute("UPDATE messages SET mentions=NULL WHERE id='q1'")
+        st.close()
+        r = self.offline("history", QA, "-j")[1]
+        q1 = {x["msg_id"]: x for x in json.loads(r)}["q1"]
+        self.assertEqual((q1["reply_to_msg_id"], q1["reply_to_me"], q1["mentions_me"], q1["out"]), (None, None, None, False))
+
+    def test_sent_rows_are_out(self):
+        self.cli("send", "Ivan", "hi")
+        r = json.loads(self.offline("history", "Ivan", "-j", "-n", "1")[1])[0]
+        self.assertEqual((r["out"], r["reply_to_me"], r["mentions_me"]), (True, False, False))
+
+    def test_chats_members_from_refresh_and_joined_event(self):
+        new = "120363431303927976@g.us"
+        self.session.joined = [{"jid": QA, "name": "Команда QA", "created": T0 - 999999, "participants": 7}]
+        self.session.queue = default_events() + [("joined_group", P(GroupInfo=P(
+            JID=J(new), GroupName=P(Name="Added"), GroupCreated=T0, Participants=[P(), P(), P()])))]
+        rows = {r["jid"]: r for r in json.loads(self.cli("chats", "-j")[1])}
+        self.assertEqual((rows[QA]["members"], rows[new]["members"], rows[IVAN]["members"]), (7, 3, None))
+        _, out, _ = self.offline("chats", "--no-header", "-n", "1")
+        self.assertEqual(out.count("\t"), 5)  # default columns untouched
+
+    def test_v2_store_gets_v3_columns(self):
+        import sqlite3
+        path = config.store_path("default")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(str(path))
+        db.execute("CREATE TABLE chats (jid TEXT PRIMARY KEY, kind TEXT, name TEXT, alt_jid TEXT, last_ts INTEGER, "
+                   "unread INTEGER, info TEXT, updated INTEGER)")
+        db.execute("CREATE TABLE messages (rowid INTEGER PRIMARY KEY, chat_jid TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER, "
+                   "sender_jid TEXT, sender_name TEXT, from_me INTEGER, kind TEXT, text TEXT, server_id INTEGER, "
+                   "views INTEGER, file TEXT, mime TEXT, media BLOB, UNIQUE (chat_jid, id))")
+        db.execute("INSERT INTO messages (chat_jid, id, ts, kind, text) VALUES (?, 'old', ?, 'text', 'x')", (IVAN, T0 - 50))
+        db.commit()
+        db.close()
+        r = {x["msg_id"]: x for x in json.loads(self.cli("history", IVAN, "-j")[1])}
+        self.assertIsNone(r["old"]["mentions_me"])
+        self.assertIs(r["i1"]["mentions_me"], False)
+
+
 class Normalize(unittest.TestCase):
     def test_nested_wrappers_and_document(self):
         m = P(viewOnceMessageV2=P(message=P(documentWithCaptionMessage=P(message=P(documentMessage=P(fileName="a.pdf", caption="see"))))))
@@ -833,6 +916,7 @@ class LinkedJids(unittest.TestCase):
         from src.api import peers
         from src.core.store import Store
         st = Store(Path(tempfile.mkdtemp(prefix="wa-store-", dir=TMP)) / "s.db")
+        self.addCleanup(st.close)
         st.upsert_chat("351900000001@s.whatsapp.net", "user", "Vet", last_ts=T0)
         st.upsert_chat("777@lid", "user", "Vet", alt_jid="351900000001@s.whatsapp.net", last_ts=T0)
         for ref in ("+351900000001", "351900000001@s.whatsapp.net", "777@lid", "Vet"):

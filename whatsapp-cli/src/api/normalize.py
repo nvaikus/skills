@@ -123,9 +123,32 @@ def media_of(m):
     return None
 
 
+def quote_of(m):
+    """The contextInfo of m's content part (text, media captions, ...) -> {"reply_to": quoted stanza id|None,
+    "reply_to_jid": quoted sender|None, "mentions": space-joined mentioned jids, "" = none}. "" (not NULL)
+    marks a row parsed by a version that knows these columns; older rows keep NULL."""
+    out = {"reply_to": None, "reply_to_jid": None, "mentions": ""}
+    if m is None:
+        return out
+    m = unwrap(m)
+    for f in _set_fields(m):
+        if f in NOISE:
+            continue
+        part = getattr(m, f, None)
+        if not has(part, "contextInfo"):
+            continue
+        ci = part.contextInfo
+        out["reply_to"] = getattr(ci, "stanzaID", "") or None
+        out["reply_to_jid"] = (getattr(ci, "participant", "") or None) if out["reply_to"] else None
+        out["mentions"] = " ".join(j for j in getattr(ci, "mentionedJID", None) or () if j)
+        break
+    return out
+
+
 def _with_media(row, message):
     got = media_of(message) or {}
     row["file"], row["mime"], row["media"] = got.get("file"), got.get("mime"), got.get("media")
+    row.update(quote_of(message))
     return row
 
 
@@ -149,8 +172,8 @@ def group_update(kind, ev):
     if kind == "joined_group":
         g = ev.GroupInfo
         jid = jid_str(g.JID)
-        return {"jid": jid, "kind": "group", "name": g.GroupName.Name or None,
-                "last_ts": norm_ts(g.GroupCreated)} if jid else None
+        return {"jid": jid, "kind": "group", "name": g.GroupName.Name or None, "last_ts": norm_ts(g.GroupCreated),
+                "members": len(getattr(g, "Participants", None) or ()) or None} if jid else None
     jid = jid_str(ev.JID)
     if not jid:
         return None

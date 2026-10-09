@@ -38,7 +38,7 @@ Keep this file one screen. Entry `wa-cli.py` → `src/main.py:main`; re-execs un
 
 ## Route discovery
 
-neonize client methods (`neonize/client.py` in the venv) first; their protos: `neonize/proto/` (`Neonize_pb2`, `waE2E`, `waHistorySync`). Go side = whatsmeow (pkg.go.dev/go.mau.fi/whatsmeow). Not available there (checked 0.5.2): channel directory search, newsletter post timestamps (not in the raw reply either), a follow flag in newsletter info (`ViewerMeta.Role` reads subscriber when not following - use `get_subscribed_newletters`), post views for non-admins (ViewsCount 0), group size in an invite-link preview (partial participant list), media retry (phone re-upload of expired media), on-demand history sync (no SendPeerMessage) - so media keys exist only if stored when the message arrived (`messages.media`, store v2).
+neonize client methods (`neonize/client.py` in the venv) first; their protos: `neonize/proto/` (`Neonize_pb2`, `waE2E`, `waHistorySync`). Go side = whatsmeow (pkg.go.dev/go.mau.fi/whatsmeow). Not available there (checked 0.5.2): channel directory search, newsletter post timestamps (not in the raw reply either), a follow flag in newsletter info (`ViewerMeta.Role` reads subscriber when not following - use `get_subscribed_newletters`), post views for non-admins (ViewsCount 0), Mute/Archive app-state events (only `NewsletterMuteChange`; history-sync `archived`/`muteEndTime` is a login-time snapshot), group size in an invite-link preview (partial participant list), media retry (phone re-upload of expired media), on-demand history sync (no SendPeerMessage) - so media keys exist only if stored when the message arrived (`messages.media`, store v2).
 
 ## Test
 

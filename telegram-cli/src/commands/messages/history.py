@@ -9,6 +9,7 @@ EPILOG = """examples:
 
 CHAT: me | id | @username | t.me link | exact or unique dialog/contact name (ambiguous -> exit 2
 with the candidates). Text is cut to text_limit (config, 200) - --full for whole messages.
+More keys via -j/--fields: out, reply_to_msg_id, reply_to_me (one extra lookup for older targets), mentions_me.
 """
 
 

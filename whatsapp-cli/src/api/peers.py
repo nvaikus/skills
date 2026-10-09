@@ -111,7 +111,7 @@ def chat_rows(store, flt=None, kinds=None, limit=50, unfollowed=False):
             if c["info"] == NOT_FOLLOWING and not unfollowed:
                 continue
             extra["following"] = {FOLLOWING: True, NOT_FOLLOWING: False}.get(c["info"])
-        r = names.row(c["jid"], unread=c["unread"], last=iso_ts(c["last_ts"]), **extra)
+        r = names.row(c["jid"], unread=c["unread"], last=iso_ts(c["last_ts"]), members=c.get("members"), **extra)
         if flt and flt.casefold() not in names.text(c["jid"]):
             continue
         out.append(r)

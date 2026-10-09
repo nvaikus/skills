@@ -11,7 +11,12 @@ An unknown --topic is a literal name (key == name), as before.
 
 Target order: --thread ID > --main-chat > --topic KEY > $CLAUDE_TG_RUN_TOPIC (a bot-spawned claude: its own topic)
 > "Notifications". Files (--file): video -> sendVideo (streams inline), image -> sendPhoto, else / on error ->
-sendDocument; text becomes the caption when it fits, else a message before the files."""
+sendDocument; text becomes the caption when it fits, else a message before the files.
+
+--replace KEY: after a successful send, the messages stored under KEY (notify.json "replace") are deleted and the
+new ids take their place - send first, so a failed send never leaves the topic empty. A refused delete (400: too
+old, already gone) is a warning and is forgotten; a transient one (network, 5xx) keeps its id under KEY for the
+next try. `notify-delete KEY` deletes and forgets without sending."""
 import json
 import os
 import sys
@@ -275,6 +280,69 @@ def send_files(bot, cfg: dict, paths, text="", mode="plain", silent=False, topic
     return dest.result(sent, **({"blocked": blocked} if blocked else {}))
 
 
+def delete_ids(bot, chat: int, ids, who="notify") -> tuple:
+    """deleteMessage each id, warnings on stderr. -> (failed ids, ids worth retrying = transient failures)."""
+    failed, keep = [], []
+    for i in ids:
+        try:
+            bot.call("deleteMessage", chat_id=chat, message_id=i)
+        except TgError as e:
+            print(f"claude-tg {who}: message {i} not deleted ({e.description})", file=sys.stderr)
+            failed.append(i)
+            if e.code != 400:  # 400 = too old / already gone: never deletable
+                keep.append(i)
+    return failed, keep
+
+
+def replace(bot, key: str, r: dict):
+    """After a successful send: delete what KEY held, store the new ids (+ transient leftovers) under KEY."""
+    data = _load()
+    reps = data.setdefault("replace", {})
+    old = reps.get(key) or {}
+    keep = []
+    if old.get("chat"):
+        keep = delete_ids(bot, old["chat"], [i for i in old.get("message_ids", []) if i not in r["message_ids"]])[1]
+        if keep and old["chat"] != r["chat"]:
+            print(f"claude-tg notify: dropping undeleted {keep} of {key} (owner chat changed)", file=sys.stderr)
+            keep = []
+    reps[key] = {"chat": r["chat"], "message_ids": keep + r["message_ids"]}
+    _save(data)
+
+
+def forget(bot, cfg: dict, keys, ids) -> int:
+    """`claude-tg notify-delete`: delete the messages stored under KEYs and/or explicit ids in the owner chat.
+    0 = all gone (unknown KEY = nothing to do), 1 = some not deleted (transient ones stay under their KEY)."""
+    data = _load()
+    reps = data.setdefault("replace", {})
+    failed = []
+    for key in keys:
+        old = reps.get(key)
+        if not old:
+            print(f"claude-tg notify-delete: nothing stored under {key!r}", file=sys.stderr)
+            continue
+        bad, keep = delete_ids(bot, old["chat"], old.get("message_ids", []), "notify-delete")
+        failed += bad
+        if keep:
+            reps[key] = dict(old, message_ids=keep)
+        else:
+            reps.pop(key)
+    if ids:
+        failed += delete_ids(bot, owner_chat(cfg), ids, "notify-delete")[0]
+    _save(data)
+    return 1 if failed else 0
+
+
+def delete_main(cfg: dict, a) -> int:
+    if not (a.key or a.id):
+        print("claude-tg notify-delete: give a KEY or --id", file=sys.stderr)
+        return 2
+    try:
+        return forget(Bot(config.read_token(cfg)), cfg, a.key, a.id or [])
+    except NotifyError as e:
+        print(f"claude-tg notify-delete: {e}", file=sys.stderr)
+        return 2
+
+
 def main(cfg: dict, a) -> int:
     files = getattr(a, "file", None) or []
     text = " ".join(a.text) if a.text else "" if files else sys.stdin.read()  # with files: text from args only
@@ -297,5 +365,7 @@ def main(cfg: dict, a) -> int:
     except TgError as e:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 1
+    if getattr(a, "replace", None):
+        replace(Bot(token), a.replace, r)
     print(json.dumps(r))
     return 3 if r.get("blocked") else 0

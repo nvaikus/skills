@@ -9,20 +9,20 @@ import os
 import sqlite3
 import time
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS chats (
   jid TEXT PRIMARY KEY, kind TEXT, name TEXT, alt_jid TEXT, last_ts INTEGER, unread INTEGER,
-  info TEXT, updated INTEGER);
+  info TEXT, updated INTEGER, members INTEGER);
 CREATE TABLE IF NOT EXISTS contacts (
   jid TEXT PRIMARY KEY, phone TEXT, full_name TEXT, first_name TEXT, push_name TEXT, business_name TEXT,
   updated INTEGER);
 CREATE TABLE IF NOT EXISTS messages (
   rowid INTEGER PRIMARY KEY, chat_jid TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER, sender_jid TEXT,
   sender_name TEXT, from_me INTEGER, kind TEXT, text TEXT, server_id INTEGER, views INTEGER,
-  file TEXT, mime TEXT, media BLOB, UNIQUE (chat_jid, id));
+  file TEXT, mime TEXT, media BLOB, reply_to TEXT, reply_to_jid TEXT, mentions TEXT, UNIQUE (chat_jid, id));
 CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages (chat_jid, ts);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5 (
   text, content='messages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
@@ -36,9 +36,12 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
 """
 
 MSG_COLS = ("chat_jid", "id", "ts", "sender_jid", "sender_name", "from_me", "kind", "text", "server_id", "views", "file",
-            "mime", "media")
-# v1 stores lack these: rows stored before v2 have no download keys (media NULL).
-ADDED = (("file", "TEXT"), ("mime", "TEXT"), ("media", "BLOB"))
+            "mime", "media", "reply_to", "reply_to_jid", "mentions")
+# Columns older stores lack, added on open: v2 download keys (rows before it: media NULL); v3 quote/mentions
+# (rows before it: mentions NULL, ""= parsed, none) and chats.members (group size from the hourly refresh).
+ADDED = (("messages", "file", "TEXT"), ("messages", "mime", "TEXT"), ("messages", "media", "BLOB"),
+         ("messages", "reply_to", "TEXT"), ("messages", "reply_to_jid", "TEXT"), ("messages", "mentions", "TEXT"),
+         ("chats", "members", "INTEGER"))
 
 
 def fts_query(words):
@@ -54,10 +57,9 @@ class Store:
         self.db = sqlite3.connect(str(path))
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
-        have = {r[1] for r in self.db.execute("PRAGMA table_info(messages)")}
-        for col, typ in ADDED:
-            if col not in have:
-                self.db.execute(f"ALTER TABLE messages ADD COLUMN {col} {typ}")
+        for table, col, typ in ADDED:
+            if col not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         self.db.execute("INSERT INTO meta VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (str(SCHEMA_VERSION),))
         os.chmod(path, 0o600)  # message history
@@ -79,13 +81,15 @@ class Store:
                         (key, str(value)))
 
     # ---- writes (non-empty values win; an event never blanks a known name) ---
-    def upsert_chat(self, jid, kind=None, name=None, alt_jid=None, last_ts=None, unread=None, info=None):
+    def upsert_chat(self, jid, kind=None, name=None, alt_jid=None, last_ts=None, unread=None, info=None, members=None):
         self.db.execute(
-            "INSERT INTO chats (jid, kind, name, alt_jid, last_ts, unread, info, updated) VALUES (?,?,?,?,?,?,?,?) "
+            "INSERT INTO chats (jid, kind, name, alt_jid, last_ts, unread, info, updated, members) "
+            "VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(jid) DO UPDATE SET kind=COALESCE(excluded.kind, kind), name=COALESCE(excluded.name, name), "
             "alt_jid=COALESCE(excluded.alt_jid, alt_jid), last_ts=MAX(COALESCE(excluded.last_ts, 0), COALESCE(last_ts, 0)), "
-            "unread=COALESCE(excluded.unread, unread), info=COALESCE(excluded.info, info), updated=excluded.updated",
-            (jid, kind, name or None, alt_jid or None, last_ts, unread, info, int(time.time())))
+            "unread=COALESCE(excluded.unread, unread), info=COALESCE(excluded.info, info), updated=excluded.updated, "
+            "members=COALESCE(excluded.members, members)",
+            (jid, kind, name or None, alt_jid or None, last_ts, unread, info, int(time.time()), members))
 
     def upsert_contact(self, jid, phone=None, full_name=None, first_name=None, push_name=None, business_name=None):
         self.db.execute(
@@ -105,7 +109,9 @@ class Store:
             "ON CONFLICT(chat_jid, id) DO UPDATE SET text=COALESCE(excluded.text, text), "
             "ts=COALESCE(excluded.ts, ts), sender_name=COALESCE(excluded.sender_name, sender_name), "
             "views=COALESCE(excluded.views, views), file=COALESCE(excluded.file, file), "
-            "mime=COALESCE(excluded.mime, mime), media=COALESCE(excluded.media, media)", vals)
+            "mime=COALESCE(excluded.mime, mime), media=COALESCE(excluded.media, media), "
+            "reply_to=COALESCE(excluded.reply_to, reply_to), reply_to_jid=COALESCE(excluded.reply_to_jid, reply_to_jid), "
+            "mentions=COALESCE(excluded.mentions, mentions)", vals)
         if m.get("ts"):
             self.upsert_chat(m["chat_jid"], last_ts=m["ts"])
         return new

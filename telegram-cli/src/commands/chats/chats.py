@@ -7,8 +7,11 @@ EPILOG = """examples:
   tg-cli chats                         # 50 most recent dialogs
   tg-cli chats саша --type user        # name/username substring, case-insensitive
   tg-cli chats --type channel -n 200 --fields id,name
+  tg-cli chats -n 400 --fields id,name,muted,folders,unread_mentions
 
-`id` is what history/search --chat/send accept. A filter scans every dialog (slower on big accounts).
+`id` is what history/search --chat/send accept. More keys via -j/--fields: muted (own or account default
+for the type), archived, pinned, folders (explicitly listed only), members (null if not shipped), unread_mentions.
+A filter scans every dialog (slower on big accounts).
 """
 
 

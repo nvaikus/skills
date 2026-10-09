@@ -1003,6 +1003,53 @@ class Notify(unittest.TestCase):
             self.assertEqual((bot.uploads, r["blocked"]), ([], [f"{d}/s.txt"]))
             self.assertEqual(bot.calls[0][1]["text"], ui.t("en", "leak_file"))
 
+    def test_replace_sends_first_then_deletes_previous(self):
+        class Bot(FakeBot):
+            ids = iter(range(100, 200))
+
+            def call(self, method, _timeout=35, _retries=3, **p):
+                self.calls.append((method, p))
+                if method == "deleteMessage" and p["message_id"] in self.fail:
+                    raise TgError(method, *self.fail[p["message_id"]])
+                return True if method == "deleteMessage" else {"message_id": next(self.ids)}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            bot = Bot()
+            state = lambda: json.loads((Path(d) / "notify.json").read_text())["replace"]
+            self.n.replace(bot, "dg", self.n.send(bot, cfg, "one", topic=None))
+            self.assertEqual(state(), {"dg": {"chat": 7, "message_ids": [100]}})
+            bot.calls.clear()
+            self.n.replace(bot, "dg", self.n.send(bot, cfg, "x" * 5000, topic=None))
+            self.assertEqual([c[0] for c in bot.calls], ["sendMessage", "sendMessage", "deleteMessage"])
+            self.assertEqual(bot.calls[2][1], {"chat_id": 7, "message_id": 100})
+            self.assertEqual(state()["dg"]["message_ids"], [101, 102])
+            bot.fail = {101: (400, "Bad Request: message can't be deleted"), 102: (0, "network: down")}
+            with mock.patch("sys.stderr"):
+                self.n.replace(bot, "dg", self.n.send(bot, cfg, "three", topic=None))
+            self.assertEqual(state()["dg"]["message_ids"], [102, 103])  # 400 forgotten, transient kept
+            with mock.patch("sys.stderr"):
+                self.assertEqual(self.n.forget(bot, cfg, ["dg", "nope"], []), 1)
+            self.assertEqual(state()["dg"]["message_ids"], [102])
+            bot.fail = {}
+            bot.calls.clear()
+            self.assertEqual(self.n.forget(bot, cfg, ["dg"], [55]), 0)
+            self.assertEqual(state(), {})
+            self.assertEqual(bot.calls, [("deleteMessage", {"chat_id": 7, "message_id": 102}),
+                                         ("deleteMessage", {"chat_id": 7, "message_id": 55})])
+
+    def test_failed_send_keeps_previous_replace(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            (Path(d) / "notify.json").write_text('{"replace": {"dg": {"chat": 7, "message_ids": [9]}}}')
+            a = mock.Mock(file=None, text=["hi"], html=False, markdown=False, silent=False, button=None,
+                          thread=5, main_chat=False, topic=None, replace="dg")
+            bot = FakeBot(fail={"sendMessage": "Bad Request: chat not found"})
+            with mock.patch.object(self.n, "Bot", lambda *_: bot), mock.patch.object(config, "read_token",
+                                                                                     lambda c: "t"), \
+                    mock.patch("sys.stderr"):
+                self.assertEqual(self.n.main(dict(config.DEFAULTS, owner_id=7), a), 1)
+            self.assertEqual([c[0] for c in bot.calls], ["sendMessage"])
+            self.assertIn("dg", json.loads((Path(d) / "notify.json").read_text())["replace"])
+
     def test_reply_to_bot_message_is_quoted(self):
         bot_msg = {"message_id": 10, "from": {"is_bot": True}, "text": "Bill due 5 Oct"}
         self.assertIn("Bill due 5 Oct", bridge.reply_context({"reply_to_message": bot_msg}, 300))

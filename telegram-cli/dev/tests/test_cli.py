@@ -47,7 +47,7 @@ ME = user(1, "Nikita", username="nik", phone="351900")
 SASHA1 = user(10, "Саша", "Иванов", username="sasha_i")
 SASHA2 = user(11, "Саша", "Петров")
 IVAN = user(12, "Ivan", username="ivan")
-QA = Channel(id=500, title="Команда QA", megagroup=True, username=None)
+QA = Channel(id=500, title="Команда QA", megagroup=True, username=None, participants_count=42)
 NEWS = Channel(id=600, title="News", megagroup=False, username="news")
 
 
@@ -72,8 +72,14 @@ def doc(id, chat, name, minutes_ago=0, kind="document", ext=".pdf", text=""):
 
 class FakeClient:
     def __init__(self):
-        self.dialogs = [SimpleNamespace(entity=e, unread_count=i, date=NOW) for i, e in
-                        enumerate([QA, SASHA1, SASHA2, IVAN, NEWS])]
+        self.dialogs = [SimpleNamespace(entity=e, unread_count=i, date=NOW, unread_mentions_count=0, archived=False,
+                                        pinned=False, dialog=SimpleNamespace(notify_settings=SimpleNamespace(
+                                            mute_until=None))) for i, e in enumerate([QA, SASHA1, SASHA2, IVAN, NEWS])]
+        qa, news = self.dialogs[0], self.dialogs[4]
+        qa.unread_mentions_count, qa.pinned = 2, True
+        qa.dialog.notify_settings.mute_until = NOW.replace(year=2038)
+        news.archived = True
+        news.dialog.notify_settings.mute_until = NOW.replace(year=2001)  # expired mute
         self.msgs = [msg(3, QA, IVAN, "релиз завтра", 1), msg(2, QA, SASHA1, "x" * 300, 60),
                      msg(1, NEWS, NEWS, "", 60 * 48, MessageMediaPhoto())]
         self.sent, self.calls, self.downloads = [], [], []
@@ -122,6 +128,16 @@ class FakeClient:
         pass
 
 
+FILTERS = [SimpleNamespace(),  # DialogFilterDefault: no title
+           SimpleNamespace(title=SimpleNamespace(text="Work"), include_peers=[SimpleNamespace(channel_id=500, access_hash=1)],
+                           pinned_peers=[SimpleNamespace(user_id=12, access_hash=1)]),
+           SimpleNamespace(title="Friends", include_peers=[SimpleNamespace(user_id=12, access_hash=1), SimpleNamespace()],
+                           pinned_peers=[])]
+
+
+MUTE_DEFAULTS = {"users": NOW.replace(year=1970), "chats": NOW.replace(year=2038), "broadcasts": None}
+
+
 def cli(*argv, client=None, stdin=None):
     client = client or FakeClient()
     out, err = io.StringIO(), io.StringIO()
@@ -133,6 +149,8 @@ def cli(*argv, client=None, stdin=None):
             mock.patch.object(tg, "resolve_username", lambda c, n: usernames.get(n.lower())), \
             mock.patch.object(tg, "search_peers", lambda c, q, limit: found), \
             mock.patch.object(tg, "media_filter", lambda k: f"F:{k}"), \
+            mock.patch.object(tg, "dialog_filters", lambda c: FILTERS), \
+            mock.patch.object(tg, "notify_defaults", lambda c: MUTE_DEFAULTS), \
             mock.patch("sys.stdin", io.StringIO(stdin or "")), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -230,6 +248,60 @@ class Commands(unittest.TestCase):
     def test_chats_filter_and_type(self):
         _, out, _, _ = cli("chats", "саша", "--type", "user", "--fields", "id", "--no-header")
         self.assertEqual(out.split(), ["10", "11"])
+
+    def test_chats_default_columns_unchanged(self):
+        _, out, _, _ = cli("chats")
+        self.assertEqual(out.splitlines()[0], "id\ttype\tname\tusername\tunread\tlast")
+
+    def test_chats_watch_fields(self):
+        code, out, _, _ = cli("chats", "-j")
+        self.assertEqual(code, 0)
+        rows = {r["id"]: r for r in json.loads(out)}
+        qa, news, ivan, sasha = rows[-100500], rows[-100600], rows[12], rows[10]
+        self.assertEqual((qa["muted"], qa["pinned"], qa["unread_mentions"], qa["members"], qa["folders"]),
+                         (True, True, 2, 42, ["Work"]))
+        self.assertEqual((news["muted"], news["archived"], news["members"]), (False, True, None))
+        self.assertEqual(ivan["folders"], ["Work", "Friends"])
+        self.assertEqual((sasha["folders"], sasha["archived"], sasha["muted"]), ([], False, False))
+        _, out, _, _ = cli("chats", "--fields", "id,muted,folders", "--no-header")
+        self.assertEqual(out.splitlines()[0], "-100500\tyes\tWork")
+        _, out, _, _ = cli("chats", "--fields", "id,folders", "--no-header")
+        self.assertIn("12\tWork, Friends", out.splitlines())
+
+    def test_chats_mute_inherits_type_default(self):
+        c = FakeClient()
+        c.dialogs[0].dialog.notify_settings.mute_until = None  # QA group: account default for groups = muted
+        c.dialogs[3].dialog.notify_settings.mute_until = NOW.replace(year=2038)  # ivan: own mute wins
+        _, out, _, _ = cli("chats", "-j", client=c)
+        rows = {r["id"]: r["muted"] for r in json.loads(out)}
+        self.assertEqual((rows[-100500], rows[12], rows[10]), (True, True, False))
+
+    def test_history_reply_and_mention_fields(self):
+        c = FakeClient()
+        old_mine = msg(1, QA, ME, "my old post", 600, out=True)
+        c.msgs = [msg(5, QA, IVAN, "re: yours", 0, reply_to=SimpleNamespace(reply_to_msg_id=4), mentioned=True),
+                  msg(4, QA, ME, "mine", 1, out=True, reply_to=SimpleNamespace(reply_to_msg_id=3)),
+                  msg(3, QA, IVAN, "re: old", 2, reply_to=SimpleNamespace(reply_to_msg_id=1)),
+                  msg(2, QA, IVAN, "topic msg", 3, reply_to=SimpleNamespace(reply_to_msg_id=99, forum_topic=True,
+                                                                            reply_to_top_id=None)),
+                  old_mine]
+        got = []
+        real = c.get_messages
+        c.get_messages = lambda chat, ids: got.append(ids) or real(chat, ids)
+        _, out, _, _ = cli("history", "-100500", "-n", "4", "-j", client=c)
+        rows = {r["msg_id"]: r for r in json.loads(out)}
+        self.assertEqual(got[-1], [1])  # one lookup, only the out-of-batch target
+        self.assertEqual((rows[5]["reply_to_msg_id"], rows[5]["reply_to_me"], rows[5]["mentions_me"], rows[5]["out"]),
+                         (4, True, True, False))
+        self.assertEqual((rows[4]["out"], rows[4]["reply_to_me"]), (True, False))
+        self.assertTrue(rows[3]["reply_to_me"])  # target fetched
+        self.assertEqual((rows[2]["reply_to_msg_id"], rows[2]["reply_to_me"]), (None, False))  # bare topic msg
+        _, out, _, _ = cli("history", "-100500", "-n", "4", client=c)
+        self.assertEqual(out.splitlines()[0], "date\tchat_id\tchat\tmsg_id\tsender\ttext")
+
+    def test_search_rows_skip_reply_lookup(self):
+        _, out, _, _ = cli("search", "релиз", "-j")
+        self.assertIsNone(json.loads(out)[0]["reply_to_me"])
 
     def test_user_find_merges_sources_without_duplicates(self):
         _, out, _, _ = cli("user-find", "саша", "-j")

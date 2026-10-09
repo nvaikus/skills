@@ -13,8 +13,23 @@ def _epoch(dt):
     return int(dt.timestamp()) if dt else None
 
 
+def _quote(m, names):
+    """-> (reply_to_me, mentions_me): None for rows stored before v3 (mentions NULL). Own jids = phone jid + lid."""
+    if m.get("mentions") is None:
+        return None, None
+    own = {j for j in (names.me, names.me_lid) if j}
+    mentions_me = bool(own & set(m["mentions"].split()))
+    if not m.get("reply_to"):
+        return False, mentions_me
+    if m.get("reply_to_jid") in own:
+        return True, mentions_me
+    quoted = names.store.message([m["chat_jid"]], m["reply_to"])
+    return bool(quoted and quoted["from_me"]), mentions_me
+
+
 def row(m, names, text_limit=None):
     text = m["text"] or ""
+    reply_to_me, mentions_me = _quote(m, names)
     cut = bool(text_limit) and len(text) > text_limit
     sender = "me" if m["from_me"] else (names.name(m["sender_jid"]) if m["sender_jid"] else None)
     if sender and sender.startswith("+") and m["sender_name"]:
@@ -22,7 +37,8 @@ def row(m, names, text_limit=None):
     return {"date": iso_ts(m["ts"]), "chat_jid": m["chat_jid"], "chat": names.name(m["chat_jid"]), "msg_id": m["id"],
             "sender": sender, "sender_jid": m["sender_jid"], "kind": m["kind"], "file": m.get("file"),
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
-            "server_id": m["server_id"], "views": m["views"]}
+            "server_id": m["server_id"], "views": m["views"], "out": bool(m["from_me"]),
+            "reply_to_msg_id": m.get("reply_to"), "reply_to_me": reply_to_me, "mentions_me": mentions_me}
 
 
 def history(store, chat_jids, limit=20, since=None, sender_jids=None, text_limit=None):
@@ -53,7 +69,8 @@ def check_target(session, store, jid):
 def _record(store, jid, sent, me, kind, text):
     store.upsert_chat(jid, kind=normalize.chat_kind(jid))
     store.upsert_message({"chat_jid": jid, "id": sent["id"], "ts": sent["ts"], "sender_jid": me, "sender_name": None,
-                          "from_me": 1, "kind": kind, "text": text, "server_id": sent["server_id"], "views": None})
+                          "from_me": 1, "kind": kind, "text": text, "server_id": sent["server_id"], "views": None,
+                          "mentions": ""})
     store.commit()
 
 

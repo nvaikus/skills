@@ -18,6 +18,8 @@ examples:
   claude-tg run              # foreground (debugging); only one poller per token
   echo done | claude-tg notify       # bot -> owner, topic "Notifications" (scripts, scheduled jobs)
   claude-tg notify --file out.mp4 "demo"   # file -> owner; inside a bot run: into that run's topic
+  claude-tg notify --replace digest "..."  # send, then delete the previous message(s) sent with --replace digest
+  claude-tg notify-delete digest           # delete the message(s) stored under --replace digest
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
 """
@@ -87,6 +89,9 @@ def main(argv=None):
                                    "--topic KEY resolves via config notify_topics. Replying there starts a claude "
                                    "session that sees the quoted notification. Prints {chat, thread, message_ids}. "
                                    "Exit 3 = a file was withheld by the leak guard.")
+    s.add_argument("--replace", metavar="KEY",
+                   help="after a successful send, delete the message(s) last sent with this KEY and remember the new "
+                        "ones (STATE_DIR/notify.json); a delete that fails (too old, gone) only warns")
     s.add_argument("text", nargs="*", help="message text (default: stdin)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
@@ -103,6 +108,13 @@ def main(argv=None):
                         "else Notifications)")
     g.add_argument("--thread", type=int, metavar="ID", help="send into this topic (message_thread_id)")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
+    s = sub.add_parser("notify-delete", help="delete notifications sent with --replace KEY (or by message id)",
+                       description="Deletes the messages stored under each KEY and forgets the KEY; --id deletes "
+                                   "message ids in the owner chat. Exit 0 = all deleted (unknown KEY: nothing to do), "
+                                   "1 = some not deleted (too old, gone, network; a network failure keeps the id), "
+                                   "2 = usage.")
+    s.add_argument("key", nargs="*", help="--replace KEY(s)")
+    s.add_argument("--id", type=int, action="append", metavar="MSG", help="message id in the owner chat (repeatable)")
     s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
                        description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
                                    "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "
@@ -131,6 +143,9 @@ def main(argv=None):
         if a.cmd == "notify":
             from . import notify
             return notify.main(cfg, a)
+        if a.cmd == "notify-delete":
+            from . import notify
+            return notify.delete_main(cfg, a)
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)

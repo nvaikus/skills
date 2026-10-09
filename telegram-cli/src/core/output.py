@@ -10,6 +10,8 @@ def _cell(v):
         return ""
     if isinstance(v, bool):
         return "yes" if v else "no"
+    if isinstance(v, (list, tuple)):
+        return ", ".join(_cell(x) for x in v)
     return str(v).replace("\t", " ").replace("\r", "").replace("\n", " ↵ ")
 
 

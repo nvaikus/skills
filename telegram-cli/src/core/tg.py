@@ -66,6 +66,22 @@ def resolve_username(client, name):
         return None
 
 
+def dialog_filters(client):
+    """messages.getDialogFilters -> list of DialogFilter / DialogFilterChatlist / DialogFilterDefault."""
+    from telethon.tl.functions.messages import GetDialogFiltersRequest
+    res = client(GetDialogFiltersRequest())
+    return getattr(res, "filters", res)  # layer >=176 wraps them in messages.DialogFilters
+
+
+def notify_defaults(client):
+    """account.getNotifySettings per peer type -> {"users"|"chats"|"broadcasts": mute_until}. A dialog whose own
+    mute_until is unset inherits these (Telegram's default: groups and channels muted, private chats not)."""
+    from telethon.tl.functions.account import GetNotifySettingsRequest
+    from telethon.tl.types import InputNotifyBroadcasts, InputNotifyChats, InputNotifyUsers
+    return {k: client(GetNotifySettingsRequest(p)).mute_until for k, p in
+            (("users", InputNotifyUsers()), ("chats", InputNotifyChats()), ("broadcasts", InputNotifyBroadcasts()))}
+
+
 def posts_flood(client, query):
     """channels.checkSearchPostsFlood -> SearchPostsFlood(total_daily, remains, stars_amount, query_is_free, wait_till)."""
     from telethon.tl.functions.channels import CheckSearchPostsFloodRequest

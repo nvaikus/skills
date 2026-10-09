@@ -13,7 +13,8 @@ claude-tg uninstall               # removes whichever unit is installed
 claude-tg status | logs [-f] [-n N]    # status also shows runs in flight / queued
 claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after every update, never raw systemctl
 claude-tg run                     # foreground, for debugging (stop the service first)
-claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat]   # bot -> owner; stdin if no TEXT
+claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat] [--replace KEY]   # bot -> owner; stdin if no TEXT
+claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
 claude-tg local-api install|status|uninstall   # optional local Bot API server: attachments up to 2 GB (setup.md)
 ```
@@ -49,6 +50,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Default target: topic "Notifications", created on first use, id in `~/.local/share/claude-tg/notify.json`; deleted in the client → recreated on the next send.
 - One topic per domain: config `notify_topics` maps a key to a display name + optional icon (`references/setup.md`); senders pass `--topic <key>`. Unknown key = literal topic name. Cache is per key: a changed name/icon edits the same topic.
 - Files: `--file PATH` (repeatable, ≤ 50 MB): mp4/mov play inline, images as photos, rest as documents; TEXT = caption. Leak guard applies (exit 3 = withheld).
+- Recurring post (digest, status) that must not pile up: `--replace KEY` sends, then deletes the messages last sent under KEY (ids in notify.json `replace`). Delete failure (bots can't delete > 48 h old in some chats, already gone) = stderr warning, exit stays 0. `notify-delete KEY` removes it without a new post.
 - Inside a bot run (`$CLAUDE_TG_RUN_TOPIC` set) the default target is that run's own topic: send a produced file back with `claude-tg notify --file out.mp4 "caption"`.
 - A reply to a notification there starts a claude session in that topic with the notification quoted (any reply to a bot message is quoted in the prompt).
 

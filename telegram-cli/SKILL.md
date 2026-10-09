@@ -20,6 +20,7 @@ Windows: `python %USERPROFILE%\.claude\skills\telegram-cli\tg-cli.py ...`. The s
 
 - stdout TSV (`-j` JSON, `--fields a,b`, `--no-header`); stderr `# ` notes. Narrow before it reaches context: `--fields`, `-n`, `| head`.
 - Exit: `0` ok · `1` Telegram failure (FLOOD_WAIT: wait, never loop) · `2` usage / not logged in / not found / ambiguous · `3` refused, nothing sent · `4` needs Premium.
+- Extra keys beyond the default TSV columns (`-j` or `--fields`): `chats` - `muted` (own setting, else the account default for the type: groups/channels usually muted), `archived`, `pinned`, `folders` (titles of chat folders that list the chat explicitly; rule-based "all groups" folders are not resolved), `members` (only when Telegram ships it in the dialog, else null), `unread_mentions`. `history`/`search` - `out` (sent by this account), `reply_to_msg_id`, `mentions_me` (@mention or reply to me), `reply_to_me` (history only; null in search).
 - `send` sends immediately. Unsure who the target is → `chats`/`user-find` first, then send by `id` or `@username`. Exit 2 with candidates = several matches; pick one, never retry with the same name.
 - Not set up yet (exit 2 naming Telethon, API keys or login) → walk the user through `references/setup.md` step by step. The agent may run `deps`; `keys` and `login` are interactive — the user runs them in a real terminal (`!` in Claude Code has no tty).
 

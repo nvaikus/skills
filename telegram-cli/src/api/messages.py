@@ -32,7 +32,34 @@ def row(m, chat, sender, text_limit=None):
             "sender_id": peers.peer_id(sender) if sender is not None else None,
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
             "media": k, "file": media.file_info(m)[0] if k in media.KINDS else None,
-            "link": peers.link(chat, m.id)}
+            "link": peers.link(chat, m.id), "out": bool(getattr(m, "out", False)),
+            "reply_to_msg_id": reply_id(m), "reply_to_me": None,
+            "mentions_me": bool(getattr(m, "mentioned", False))}
+
+
+def reply_id(m):
+    """Id of the replied-to message in the same chat; None for no reply, a bare forum-topic message
+    (reply_to points at the topic root), a story reply or a cross-chat reply."""
+    r = getattr(m, "reply_to", None)
+    rid = getattr(r, "reply_to_msg_id", None)
+    if rid is None or getattr(r, "reply_to_peer_id", None) is not None:
+        return None
+    if getattr(r, "forum_topic", False) and getattr(r, "reply_to_top_id", None) is None:
+        return None
+    return rid
+
+
+def _mark_reply_to_me(client, chat, rows):
+    """reply_to_me for one chat: in-batch targets use their `out`, the rest cost ONE get_messages."""
+    own = {r["msg_id"]: r["out"] for r in rows}
+    missing = sorted({r["reply_to_msg_id"] for r in rows if r["reply_to_msg_id"] and r["reply_to_msg_id"] not in own})
+    if missing:
+        for m in client.get_messages(chat, ids=missing) or []:
+            if m is not None:
+                own[m.id] = bool(getattr(m, "out", False))
+    for r in rows:
+        r["reply_to_me"] = bool(r["reply_to_msg_id"]) and own.get(r["reply_to_msg_id"], False)
+    return rows
 
 
 def _collect(it, since, limit, text_limit):
@@ -48,7 +75,8 @@ def _collect(it, since, limit, text_limit):
 
 
 def history(client, chat, limit=20, since=None, sender=None, text_limit=None):
-    return _collect(client.iter_messages(chat, from_user=sender), since, limit, text_limit)
+    rows = _collect(client.iter_messages(chat, from_user=sender), since, limit, text_limit)
+    return _mark_reply_to_me(client, chat, rows)
 
 
 def search(client, query, chat=None, sender=None, since=None, until=None, limit=50, text_limit=None):

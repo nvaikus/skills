@@ -45,7 +45,7 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `media.py` | attachment download (cloud ≤ 20 MB, local server above, `Skipped`), model-cli STT |
 | `localapi.py` | `claude-tg local-api`: user unit `claude-tg-botapi`, `serve` resolves secret refs (rbw/env/cred) into env and execs the server, probe for doctor |
 | `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
-| `notify.py` | `claude-tg notify`: owner chat, topic registry (`notify_topics` key → name/icon), thread id + applied name/icon cached per key (`notify.json`, not state.json - the bot owns that); `--file` uploads (video/photo/document, fallback document); default target = `$CLAUDE_TG_RUN_TOPIC` inside a run |
+| `notify.py` | `claude-tg notify`: owner chat, topic registry (`notify_topics` key → name/icon), thread id + applied name/icon cached per key (`notify.json`, not state.json - the bot owns that); `--file` uploads (video/photo/document, fallback document); default target = `$CLAUDE_TG_RUN_TOPIC` inside a run; `--replace KEY` / `notify-delete`: ids per key in `notify.json` `replace`, send before delete, 400 delete = forget, transient = keep for retry |
 | `botprofile.py` | `claude-tg profile`: getMy*/setMy* name, descriptions, profile photo |
 | `service.py` | systemd unit (system / user mode: user unit file present → user), doctor, setup |
 

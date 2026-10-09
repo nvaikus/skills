@@ -42,7 +42,7 @@ def apply(kind, ev, store, me=None, stats=None):
     elif kind in ("group_info", "joined_group"):
         c = normalize.group_update(kind, ev)
         if c:
-            store.upsert_chat(c["jid"], kind="group", name=c["name"], last_ts=c["last_ts"])
+            store.upsert_chat(c["jid"], kind="group", name=c["name"], last_ts=c["last_ts"], members=c.get("members"))
             stats["groups"] = stats.get("groups", 0) + 1
     elif kind == "history":
         chats, msgs, pushnames = normalize.history(ev.Data, me)
@@ -75,7 +75,7 @@ def refresh(session, store, force=False):
         store.upsert_contact(c["jid"], phone=normalize.phone_of(c["jid"]), full_name=c["full_name"],
                              first_name=c["first_name"], push_name=c["push_name"], business_name=c["business_name"])
     for g in session.groups():
-        store.upsert_chat(g["jid"], kind="group", name=g["name"], last_ts=g["created"])
+        store.upsert_chat(g["jid"], kind="group", name=g["name"], last_ts=g["created"], members=g.get("participants"))
     mark_followed(session, store)
     store.set_meta("nameless_tried", ",".join(nameless_groups(store)))
     store.set_meta("refreshed", int(time.time()))
