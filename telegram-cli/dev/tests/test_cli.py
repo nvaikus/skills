@@ -82,7 +82,7 @@ class FakeClient:
         news.dialog.notify_settings.mute_until = NOW.replace(year=2001)  # expired mute
         self.msgs = [msg(3, QA, IVAN, "релиз завтра", 1), msg(2, QA, SASHA1, "x" * 300, 60),
                      msg(1, NEWS, NEWS, "", 60 * 48, MessageMediaPhoto())]
-        self.sent, self.calls, self.downloads = [], [], []
+        self.sent, self.calls, self.downloads, self.edited = [], [], [], []
 
     def is_user_authorized(self):
         return True
@@ -117,6 +117,10 @@ class FakeClient:
     def send_message(self, chat, text, parse_mode=None, reply_to=None):
         self.sent.append((chat, text, parse_mode))
         return SimpleNamespace(id=77, date=NOW)
+
+    def edit_message(self, chat, m, text, parse_mode=None):
+        self.edited.append((chat, m.id, text, parse_mode))
+        return SimpleNamespace(id=m.id, date=m.date)
 
     def send_file(self, chat, file, caption=None, force_document=False, parse_mode=None, reply_to=None):
         self.sent.append((chat, file, caption, force_document))
@@ -437,6 +441,50 @@ class Commands(unittest.TestCase):
     def test_send_no_text_no_file(self):
         code, _, _, client = cli("send", "@ivan")
         self.assertEqual((code, client.sent), (2, []))
+
+
+class Edit(unittest.TestCase):
+    def client(self):
+        c = FakeClient()
+        c.msgs.append(msg(9, IVAN, ME, "old memo", 5, out=True))
+        c.msgs.append(msg(8, IVAN, IVAN, "his text", 6, out=False))
+        return c
+
+    def test_edit_own_message_receipt_verbatim(self):
+        code, out, _, c = cli("edit", "@ivan", "9", "**new**", "--fields", "id,chat", "--no-header", client=self.client())
+        self.assertEqual((code, out), (0, "9\tIvan\n"))
+        self.assertEqual(c.edited, [(IVAN, 9, "**new**", None)])
+
+    def test_edit_stdin_and_markdown(self):
+        _, _, _, c = cli("edit", "@ivan", "9", "-", "--markdown", stdin="from stdin\n", client=self.client())
+        self.assertEqual(c.edited, [(IVAN, 9, "from stdin\n", "md")])
+
+    def test_edit_json_parses(self):
+        code, out, _, _ = cli("edit", "@ivan", "9", "new", "-j", client=self.client())
+        self.assertEqual((code, json.loads(out)["id"]), (0, 9))
+
+    def test_edit_missing_message_is_exit_2(self):
+        code, out, err, c = cli("edit", "@ivan", "404", "new", client=self.client())
+        self.assertEqual((code, out, c.edited), (2, "", []))
+        self.assertIn("not found", err)
+
+    def test_edit_foreign_message_is_exit_3(self):
+        code, _, err, c = cli("edit", "@ivan", "8", "new", client=self.client())
+        self.assertEqual((code, c.edited), (3, []))
+        self.assertIn("not sent by this account", err)
+
+    def test_edit_same_text_is_exit_3(self):
+        code, _, _, c = cli("edit", "@ivan", "9", "old memo", client=self.client())
+        self.assertEqual((code, c.edited), (3, []))
+
+    def test_edit_empty_text_and_bad_id(self):
+        for argv in (("edit", "@ivan", "9", "  "), ("edit", "@ivan", "9"), ("edit", "@ivan", "x", "t")):
+            code, _, _, c = cli(*argv, client=self.client())
+            self.assertEqual((code, c.edited), (2, []), argv)
+
+    def test_edit_ambiguous_chat_edits_nothing(self):
+        code, _, _, c = cli("edit", "Саша", "9", "new", client=self.client())
+        self.assertEqual((code, c.edited), (2, []))
 
 
 class Media(unittest.TestCase):

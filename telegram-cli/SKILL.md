@@ -12,6 +12,7 @@ tg-cli search <words> [--chat C] [--from U] [--since 7d] | search --public <word
 tg-cli history <chat> [-n N]                  # media shows in text as [document: name.pdf]
 tg-cli media-get <chat> <msg_id...|all> [-o DIR] [--type document,photo] [--since --until] [--list]
 tg-cli send <to> [text|-] [--file PATH]...   # text = caption with --file
+tg-cli edit <chat> <msg_id> [text|-]         # replace text of own message; foreign = exit 3
 ```
 
 Windows: `python %USERPROFILE%\.claude\skills\telegram-cli\tg-cli.py ...`. The surface is `tg-cli --help` / `tg-cli <cmd> -h` - grep it, don't guess flags.

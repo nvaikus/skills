@@ -26,7 +26,11 @@ def keys():
     cid, sec, _ = secrets.client()
     if not cid or not sec:
         miss = " and ".join(k for k, v in zip(secrets.KEYS, (cid, sec)) if not v)
-        raise UsageError(f"no eBay keys ({miss} missing): run `ebay setup` (it walks the user through it)")
+        raise UsageError(f"no eBay keys ({miss} missing): run `ebay setup` (it walks the user through it)"
+                         + secrets.hint())
+    if "-SBX-" in cid or sec.startswith("SBX-"):
+        raise UsageError("these are Sandbox keys (App ID has -SBX-, Cert ID starts with SBX-): store the keys from "
+                         "the Production column at developer.ebay.com/my/keys (-PRD- / PRD-). Run `ebay setup`.")
     return cid, sec
 
 

@@ -12,8 +12,8 @@ from .core import config
 from .core.errors import CliError, UsageError
 from .core.output import Writer
 
-EXITS = ("exit: 0 ok · 1 eBay/runtime failure (incl. rate limit) · 2 usage, config, no keys, item not found"
-         " · 5 setup waits on the user (relay the step, rerun) · 130 interrupt")
+EXITS = ("exit: 0 ok · 1 eBay/runtime/browser failure (incl. rate limit) · 2 usage, config, no keys, item not found"
+         " · 5 waits on the user: setup step or eBay sign-in (relay, rerun) · 130 interrupt")
 GLOBALS = "global: -j/--json · --fields A,B · --no-header (on every command)"
 
 
@@ -23,7 +23,8 @@ def top_help():
              "Buyer-side eBay search via the official Browse API: listings with shipping priced for your",
              "country, item cards, category ids, saved searches that report only new items and price drops.",
              "First run: `ebay setup`. Output: TSV (-j JSON); data on stdout, notes on stderr as '# ...'.",
-             "No bidding/buying, no sold-price history, no seller tools (eBay keeps those APIs partner-only)."]
+             "Cart and seller messages run in the user's logged-in browser (playwright-cli, `ebay login`).",
+             "Never checkout, pay, bid or offer; no sold-price history, no seller tools."]
     width = max(map(len, registry.COMMANDS))
     for key, heading in registry.AREAS.items():
         lines += ["", f"{heading}:"]

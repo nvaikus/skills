@@ -318,6 +318,32 @@ class TestShowEditDelete(Base):
         self.assertEqual(rc, 2)
         self.assertIn("no event", err)
 
+    def test_prefix_when_server_refuses_uid_filter(self):
+        """iCloud answers 412 to any UID text-match: full uid, prefix (by resource name or by a
+        calendar-data scan) and ambiguity must still work for show/edit/delete."""
+        self.dav.refuse_uid_filter = True
+        self.dav.add(P + "work/EC0C7F6C-0D70-4BE3.ics", SINGLE.replace("SINGLE-ABCDEF", "EC0C7F6C-0D70-4BE3"), '"n1"')
+        rc, out, err = self.cli("show", "EC0C7F6C-0D70-4BE3", "-j")  # full uid: GET <uid>.ics
+        self.assertEqual((rc, json.loads(out)["uid"]), (0, "EC0C7F6C-0D70-4BE3"), err)
+        rc, out, err = self.cli("show", "ec0c7f", "-j")  # prefix of the resource name, any case
+        self.assertEqual((rc, json.loads(out)["uid"]), (0, "EC0C7F6C-0D70-4BE3"), err)
+        rc, out, err = self.cli("show", "SINGLE-AB", "-j")  # resource name != uid: calendar-data scan
+        self.assertEqual((rc, json.loads(out)["uid"]), (0, "SINGLE-ABCDEF"), err)
+        rc, out, err = self.cli("edit", "EC0C7F", "--title", "moved")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.dav.puts()[0]["url"], HOME + "work/EC0C7F6C-0D70-4BE3.ics")
+        self.dav.add(P + "work/EC0C7F6C-FFFF.ics", SINGLE.replace("SINGLE-ABCDEF", "EC0C7F6C-FFFF"), '"n2"')
+        rc, out, err = self.cli("delete", "EC0C7F")
+        self.assertEqual(rc, 2)
+        self.assertIn("matches several", err)
+        self.assertIn("EC0C7F6C-FFFF", err)
+        self.assertEqual(len(self.dav.puts()), 1)
+        rc, out, err = self.cli("delete", "EC0C7F6C-FFFF")
+        self.assertEqual(rc, 0, err)
+        rc, out, err = self.cli("show", "NOPE-NOPE")
+        self.assertEqual(rc, 2)
+        self.assertIn("no event", err)
+
     def test_edit_keeps_unknown_and_duration(self):
         rc, out, err = self.cli("edit", "SINGLE-ABCDEF", "--start", "2026-10-07 15:00", "--title", "Lunch moved")
         self.assertEqual(rc, 0, err)

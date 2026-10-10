@@ -20,7 +20,7 @@ def apply(cfg, done, market, ship_to, zip_code):
 
 
 def read_keys():
-    """--keys-stdin: App ID then Cert ID from the terminal (hidden) or two piped lines."""
+    """--keys-stdin: App ID then Cert ID from the terminal (hidden) or two piped lines. -> where stored."""
     if sys.stdin.isatty():
         cid = input("App ID (Client ID): ").strip()
         sec = getpass.getpass("Cert ID (Client Secret, hidden): ").strip()
@@ -33,8 +33,7 @@ def read_keys():
         raise UsageError("both App ID and Cert ID are needed")
     if cid == sec:
         raise UsageError("App ID and Cert ID are the same value: copy each from its own field")
-    secrets.store_file(cid, sec)
-    return cid, sec
+    return secrets.store(cid, sec)
 
 
 def verify(cfg):

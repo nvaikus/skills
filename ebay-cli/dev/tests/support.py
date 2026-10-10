@@ -1,4 +1,4 @@
-"""Shared test environment: temp EBAY_ROOT, fake keys in env, Keychain off. Import before src."""
+"""Shared test environment: temp EBAY_ROOT, fake keys in env, Keychain and rbw off. Import before src."""
 import contextlib
 import io
 import json
@@ -11,7 +11,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 FIX = Path(__file__).resolve().parent / "fixtures"
 TMP = tempfile.mkdtemp(prefix="ebay-test-")
-os.environ.update(EBAY_ROOT=f"{TMP}/root", EBAY_NO_KEYCHAIN="1", EBAY_CLIENT_ID="app-id-123",
+os.environ.update(EBAY_ROOT=f"{TMP}/root", EBAY_NO_KEYCHAIN="1", EBAY_NO_RBW="1", EBAY_CLIENT_ID="app-id-123",
                   EBAY_CLIENT_SECRET="cert-secret-456")
 for k in ("EBAY_MARKET", "EBAY_SHIP_TO", "EBAY_ZIP"):
     os.environ.pop(k, None)

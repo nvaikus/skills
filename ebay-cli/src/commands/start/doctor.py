@@ -25,7 +25,7 @@ def run(ctx, args):
     keys_ok = bool(cid and sec)
     rows.append({"check": "keys", "ok": keys_ok,
                  "detail": f"{src}: App ID {secrets.mask(cid)}, Cert ID {secrets.mask(sec)}" if keys_ok
-                 else "missing: run `ebay setup`"})
+                 else "missing: run `ebay setup`" + secrets.hint()})
     cfg = ctx.cfg
     rows.append({"check": "defaults", "ok": bool(cfg.get("market") and cfg.get("ship_to")),
                  "detail": f"market {cfg.get('market') or '-'}, ship-to {cfg.get('ship_to') or '-'}, zip {cfg.get('zip') or '-'}"

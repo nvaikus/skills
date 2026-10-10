@@ -1,4 +1,4 @@
-# Traps (search, item, watch)
+# Traps (search, item, watch, account)
 
 ## Search
 - One market per call: `EBAY_DE` lists sellers worldwide who offer delivery there, but not every listing of other sites. Missing a known item → retry with its own `--market`.
@@ -20,3 +20,16 @@
 - Each run looks at the newest `--limit` (default 50) matches only; a broad query with many new listings per run can miss some - narrow it or raise `--limit` (max 200).
 - An item unseen for 60 days is forgotten (would be reported `new` again if relisted).
 - One API call per watch per run; eBay's default quota is ~5000 Browse calls/day per app (exit 1 "rate limit" when hit).
+
+## Account (cart, msg, login)
+- Needs `playwright-cli` (npm `@playwright/cli`) and Chrome. Session `ebay` (config `browser_session` / env `EBAY_BROWSER_SESSION`); a separate session = separate profile = separate login.
+- One action at a time per session: two parallel `ebay cart`/`msg` calls drive the same tab.
+- Exit 5 "captcha": eBay challenges after bursts of automated page loads; the user solves it in the Chrome window. Space out calls; don't loop.
+- Signed-in check = cookie `ebay` with `sin=in`; an expired login that keeps the cookie shows up as a redirect to `signin.*` - also exit 5.
+- Cart `price`/`shipping` are display strings in the site's language and the listing's currency; `seller` is the store label, not the user id.
+- `cart add` on a listing already in the cart (no `--variation`) does nothing. Multi-variation listing needs `--variation` (id from `ebay item`, or aspects `Size=L,Colour=Black` matched via the Browse API = needs keys).
+- `cart rm ID` removes every line of that id, all variations.
+- Seller user id comes from the Browse API (listing pages show store slugs, not ids); without keys the CLI clicks "contact seller" to read it. `--seller` skips both.
+- Message times are the site's local strings (`Heute 18:41`, `Gestern`); `from` = `me` or the seller id. A seller reply shows in `msg list` as `last_by=them`. eBay auto-translates the seller's messages into the site language: `msg list --item` text = translation, `-j` field `original` = what the seller wrote.
+- `msg send` does not retry. After exit 1 the message may still have gone out: `ebay msg list --item ID` before resending.
+- Failures leave `~/.claude/ebay/browser/dumps/<step>-<ts>.png` + `.txt` (URL, title, ARIA snapshot).

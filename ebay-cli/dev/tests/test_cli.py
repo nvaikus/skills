@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -15,7 +16,7 @@ from unittest import mock
 
 from support import ROOT, TMP, fixture, run, write_config  # noqa: E402  (sets the test environment first)
 
-from src.core import http  # noqa: E402
+from src.core import http, secrets  # noqa: E402
 from src.core.errors import CliError  # noqa: E402
 
 
@@ -220,6 +221,13 @@ class TestAuth(Base):
         self.assertEqual(rc, 2)
         self.assertIn("Sandbox", err)
 
+    def test_sandbox_keys_named_before_network(self):
+        with mock.patch.dict(os.environ, {"EBAY_CLIENT_ID": "Me-app-SBX-1a2b", "EBAY_CLIENT_SECRET": "SBX-1a2b"}):
+            rc, _, err = run("search", "a")
+        self.assertEqual(rc, 2)
+        self.assertIn("Sandbox keys", err)
+        self.assertEqual(self.fake.tokens, 0)
+
 
 class TestItem(Base):
     def test_card(self):
@@ -337,7 +345,7 @@ class TestSetup(Base):
         run("setup", "--done", "account")
         rc, out, _ = run("setup", "--done", "keyset")
         self.assertIn("WAITING deletion", out)
-        self.assertIn("Not persisting eBay data", out)
+        self.assertIn("Exempted from Marketplace Account Deletion", out)
         with mock.patch.dict(os.environ, {"EBAY_CLIENT_ID": "", "EBAY_CLIENT_SECRET": ""}):
             rc, out, _ = run("setup", "--done", "deletion")
             self.assertIn("WAITING keys", out)
@@ -368,6 +376,74 @@ class TestSetup(Base):
     def test_bad_keys_stdin(self):
         self.assertEqual(run("setup", "--keys-stdin", stdin="only-one\n")[0], 2)
         self.assertEqual(run("setup", "--keys-stdin", stdin="same\nsame\n")[0], 2)
+
+
+FAKE_RBW = """#!/usr/bin/env python3
+import json, os, sys
+db_p, a = os.environ["FAKE_RBW_DB"], sys.argv[1:]
+open(db_p + ".argv", "a").write(" ".join(a) + "\\n")
+db = json.load(open(db_p)) if os.path.exists(db_p) else {}
+if a[0] == "unlocked":
+    sys.exit(1 if os.environ.get("FAKE_RBW_LOCKED") else 0)
+if a[0] == "list":
+    print("\\n".join("env\\t" + k for k in db)); sys.exit(0)
+name = a[-1]
+if a[0] == "get":
+    sys.exit(print(db[name]) if name in db else 1)
+if a[0] in ("add", "edit"):
+    assert (a[0] == "edit") == (name in db)
+    db[name] = sys.stdin.read().splitlines()[0]
+    json.dump(db, open(db_p, "w"))
+"""
+
+
+@unittest.skipIf(os.name != "posix", "fake rbw is a shebang script")
+class TestRbw(Base):
+    def setUp(self):
+        super().setUp()
+        d = Path(tempfile.mkdtemp(prefix="rbw-", dir=TMP))
+        self.bin, self.db = d / "rbw", d / "db.json"
+        self.bin.write_text(FAKE_RBW)
+        self.bin.chmod(0o755)
+        for p in (mock.patch.object(secrets, "rbw_bin", lambda: str(self.bin)),
+                  mock.patch.dict(os.environ, {"FAKE_RBW_DB": str(self.db), "EBAY_CLIENT_ID": "",
+                                               "EBAY_CLIENT_SECRET": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+        write_config(market="EBAY_DE", ship_to="PT", done_steps=["account", "deletion", "keyset"])
+
+    def test_keys_stdin_goes_to_rbw_and_drops_plain_file(self):
+        plain = Path(f"{TMP}/root/credentials.json")
+        plain.write_text(json.dumps({"EBAY_CLIENT_ID": "old", "EBAY_CLIENT_SECRET": "old2"}))
+        for _ in range(2):  # second run edits, never duplicates
+            rc, _, err = run("setup", "--keys-stdin", stdin="app-id-123\ncert-secret-456\n")
+            self.assertIn("keys stored in rbw", err)
+        self.assertFalse(plain.exists())
+        self.assertEqual(json.loads(self.db.read_text()), {"EBAY_CLIENT_ID": "app-id-123",
+                                                          "EBAY_CLIENT_SECRET": "cert-secret-456"})
+        self.assertNotIn("cert-secret", Path(str(self.db) + ".argv").read_text())
+        rc, out, err = run("doctor")
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("rbw: App ID app-i...", out)
+        self.assertNotIn("plain file", err)
+
+    def test_locked(self):
+        with mock.patch.dict(os.environ, {"FAKE_RBW_LOCKED": "1"}):
+            rc, _, err = run("setup", "--keys-stdin", stdin="app-id-123\ncert-secret-456\n")
+            self.assertEqual(rc, 2)
+            self.assertIn("rbw unlock", err)
+            rc, out, _ = run("doctor")
+            self.assertEqual(rc, 1)
+            self.assertIn("rbw is locked", out)
+
+    def test_plain_file_fallback_warns(self):
+        Path(f"{TMP}/root/credentials.json").write_text(json.dumps({"EBAY_CLIENT_ID": "app-id-123",
+                                                                    "EBAY_CLIENT_SECRET": "cert-secret-456"}))
+        secrets._warned.clear()
+        with mock.patch.object(secrets, "rbw_bin", lambda: None), mock.patch.object(secrets.sys, "platform", "linux"):
+            rc, out, err = run("doctor")
+        self.assertIn("file: App ID", out)
+        self.assertIn("# eBay keys read from plain file", err)
 
 
 class TestHttp(unittest.TestCase):

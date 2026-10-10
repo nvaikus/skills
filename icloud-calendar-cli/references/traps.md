@@ -14,6 +14,9 @@ Marked (unverified) = expected from protocol/other clients, not yet checked live
 - Subscribed calendars are read from their public feed URL each time; a dead feed is a `# ` note, the rest of the list still prints.
 - Range bounds are midnight in the output zone; all-day `end` in output is the last day, inclusive.
 
+## Lookup by uid
+- iCloud answers 412 to any `UID` prop-filter REPORT (verified live 2026-10-10, even the full uid). `find` then GETs `<uid>.ics`, else matches resource names by prefix, else scans calendar-data (~1 s per 150 events; only when nothing matched by name).
+
 ## Writing
 - Events are stored in the zone they were given (TZID + VTIMEZONE): a 10:00 Lisbon event shows 11:00 to a viewer in Paris. `edit --start` rewrites the event in the output zone; moving only the end keeps its zone.
 - Unknown properties (Apple travel time, structured location, attachments) survive `edit`; `--no-alarms` removes alarms on the series, not per device.

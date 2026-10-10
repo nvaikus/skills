@@ -1,4 +1,4 @@
-"""Message vocabulary: rows, history, search (dialogs / one chat / public posts), send."""
+"""Message vocabulary: rows, history, search (dialogs / one chat / public posts), send, edit."""
 from datetime import datetime, timezone
 
 from ..core import tg
@@ -146,6 +146,23 @@ def send(client, chat, text, markdown=False, reply_to=None):
     if not text.strip():
         raise UsageError("empty message - nothing sent")
     m = client.send_message(chat, text, parse_mode="md" if markdown else None, reply_to=reply_to)
+    return _receipt(chat, m)
+
+
+def edit(client, chat, msg_id, text, markdown=False):
+    """Replace the text (caption for media) of this account's own message. One get_messages to check it first."""
+    if not text.strip():
+        raise UsageError("empty text - nothing edited")
+    got = (client.get_messages(chat, ids=[msg_id]) or [None])[0]
+    if got is None:
+        raise UsageError(f"message {msg_id} not found in {peers.name(chat)} - nothing edited "
+                         f"(check: tg-cli history <chat> --ids {msg_id})")
+    if not getattr(got, "out", False):
+        raise Refused(f"message {msg_id} in {peers.name(chat)} was not sent by this account - "
+                      f"Telegram lets you edit only your own messages; nothing edited")
+    if not markdown and (getattr(got, "message", None) or "") == text:
+        raise Refused(f"message {msg_id} already has exactly this text - nothing edited")
+    m = client.edit_message(chat, got, text, parse_mode="md" if markdown else None)
     return _receipt(chat, m)
 
 

@@ -3,6 +3,7 @@ VEVENTs, PUT/DELETE with ETag preconditions."""
 import datetime as dt
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import unquote
 from xml.sax.saxutils import escape as xesc
 
 from ..core import http
@@ -195,12 +196,35 @@ def _uid_query(uid):
             '</c:prop-filter></c:comp-filter></c:comp-filter></c:filter>')
 
 
+_ALL_EVENTS = '<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"/></c:comp-filter></c:filter>'
+
+
+def _res_name(href):
+    return unquote(href.rstrip("/").rsplit("/", 1)[-1]).removesuffix(".ics")
+
+
+def _uid_hit(u, uid):
+    return bool(u) and (u == uid or u.upper().startswith(uid.upper()))
+
+
 def find(session, cals, uid):
-    """UID (or a unique prefix of one) -> {cal, href, etag, ics, vcal, uid}. Searches every CalDAV
-    event calendar given, in parallel; exit 2 when missing or ambiguous."""
+    """UID (or a unique prefix of one, case-insensitive) -> {cal, href, etag, ics, vcal, uid}.
+    Searches every CalDAV event calendar given, in parallel; exit 2 when missing or ambiguous.
+    iCloud refuses any UID prop-filter (412), so there: GET <uid>.ics, else resource names that
+    start with the prefix (etag-only listing), else - nothing anywhere - a full calendar-data scan."""
     uid = uid.strip()
     if len(uid) < 6:
         raise UsageError("uid too short: pass the full uid (or at least 6 leading characters) from `list`")
+    refused = []
+
+    def get(cal, href):
+        try:
+            r = session.get(href)
+        except CliError as e:
+            if e.status in (401, 0):
+                raise
+            return []
+        return [(cal, r.url, r.header("ETag"), r.text)]
 
     def one(cal):
         try:
@@ -208,23 +232,35 @@ def find(session, cals, uid):
         except CliError as e:
             if e.status in (401, 0):
                 raise
-            try:  # server refused the text-match: try the conventional resource name
-                r = session.get(cal["href"] + uid + ".ics")
-                return [(cal, r.url, r.header("ETag"), r.text)]
-            except CliError:
-                return []
+            refused.append(cal)  # server refused the text-match
+            hits = get(cal, cal["href"] + uid + ".ics")
+            if hits:
+                return hits
+            listed = session.report(cal["href"], "C:calendar-query", "<d:prop><d:getetag/></d:prop>" + _ALL_EVENTS)
+            return [h for it in listed if _uid_hit(_res_name(it.href), uid) for h in get(cal, it.href)]
         return [(cal, it.href, it.text("D:getetag"), it.text("C:calendar-data")) for it in items
                 if it.text("C:calendar-data")]
-    found = []
-    targets = [c for c in cals if c["events"] and c["kind"] != "subscribed"]
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(targets)))) as ex:
-        for hits in ex.map(one, targets):
-            for cal, href, etag, data in hits:
-                vcal = ics.parse(data)
-                uids = {e.value("UID") for e in vcal.components("VEVENT")}
-                for u in uids:
-                    if u == uid or (u or "").startswith(uid):
-                        found.append({"cal": cal, "href": href, "etag": etag, "ics": data, "vcal": vcal, "uid": u})
+
+    def scan(cal):
+        items = session.report(cal["href"], "C:calendar-query", "<d:prop><d:getetag/><c:calendar-data/></d:prop>"
+                               + _ALL_EVENTS)
+        return [(cal, it.href, it.text("D:getetag"), it.text("C:calendar-data")) for it in items
+                if it.text("C:calendar-data")]
+
+    def collect(fn, targets):
+        out = []
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(targets)))) as ex:
+            for hits in ex.map(fn, targets):
+                for cal, href, etag, data in hits:
+                    vcal = ics.parse(data)
+                    for u in {e.value("UID") for e in vcal.components("VEVENT")}:
+                        if _uid_hit(u, uid):
+                            out.append({"cal": cal, "href": href, "etag": etag, "ics": data, "vcal": vcal, "uid": u})
+        return out
+
+    found = collect(one, [c for c in cals if c["events"] and c["kind"] != "subscribed"])
+    if not found and refused:  # resource names need not equal the UID
+        found = collect(scan, refused)
     exact = [f for f in found if f["uid"] == uid]
     found = exact or found
     if not found:

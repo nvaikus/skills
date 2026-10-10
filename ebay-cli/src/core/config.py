@@ -12,6 +12,7 @@ DEFAULTS = {
     "ship_to": None,      # ISO 3166 alpha-2 the user ships to, e.g. PT
     "zip": None,          # optional postal code: sharper calculated shipping
     "done_steps": [],     # setup steps the user confirmed: account, keyset, deletion
+    "browser_session": None,  # playwright-cli session for account commands (None = "ebay")
 }
 ENV = {"market": "EBAY_MARKET", "ship_to": "EBAY_SHIP_TO", "zip": "EBAY_ZIP"}
 

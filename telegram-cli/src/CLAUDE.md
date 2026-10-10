@@ -23,7 +23,7 @@ Keep this file one screen. Entry `tg-cli.py` → `src/main.py:main`; re-execs un
 | `core/tg.py` | Telethon import/connect, raw TL requests, `translate` (Telethon error → CliError) |
 | `core/` other | output, config, errors, timeparse — no domain nouns |
 | `api/peers.py` | entity kind/name/marked id/link, dialogs, `find`, `resolve` (the ref grammar) |
-| `api/messages.py` | message rows, history, search, public search, send |
+| `api/messages.py` | message rows, history, search, public search, send, edit |
 | `api/media.py` | media kind/file name, by-id + chat scan, download (sanitized names, read-only) |
 | `api/auth.py` | QR/phone/2FA flows, `me_row` |
 | `commands/<area>/<cmd>.py` | argparse + orchestration, one command per file, <~150 lines |

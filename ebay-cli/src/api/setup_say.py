@@ -31,10 +31,11 @@ DELETION = f"""eBay setup, step 3 of 4: the account-deletion notice (eBay keeps 
 eBay asks every app to either receive "marketplace account deletion" notices or declare that it stores
 no eBay user data. This tool only searches public listings and stores nothing about eBay users, so you opt out:
 
-1. On {KEYS_URL}, next to the Production keyset click the link about
-   "marketplace deletion/account closure notification" (or "Notifications" / "Alerts & Notifications").
-2. Switch "Not persisting eBay data" to On.
-3. Confirm the dialog that pops up.
+1. On {KEYS_URL} the Production keyset says "Your keyset is currently disabled".
+   Click "exemption" there (or "Notifications" next to the keyset).
+2. The "Alerts & Notifications" page opens with "Marketplace Account Deletion" selected.
+   Ignore the endpoint and verification token fields - they are for apps that store user data.
+3. Switch "Exempted from Marketplace Account Deletion" to On and confirm the dialog that pops up.
 4. Pick the reason that says your app does not store eBay user data; "Additional information"
    may stay empty or say "personal search tool, no eBay user data stored".
 5. Click "Submit". Back on {KEYS_URL} the Production keyset should no longer say disabled.
@@ -59,6 +60,7 @@ def keys_other():
 On {KEYS_URL}, Production keyset you need "App ID (Client ID)" and "Cert ID (Client Secret)".
 1. Open a terminal on this computer and run:   ebay setup --keys-stdin
 2. Paste the App ID when asked, Enter; then the Cert ID (hidden), Enter.
+   With rbw (Vaultwarden) installed they go there (run `rbw unlock` first), else into a private file.
    (Alternative: set environment variables EBAY_CLIENT_ID and EBAY_CLIENT_SECRET.)
 3. Do NOT paste the keys here. Just tell me "done"."""
 
@@ -79,7 +81,7 @@ def rejected(err):
 Most common causes:
 1. The Sandbox keys were stored instead of the Production ones - on {KEYS_URL} use the "Production" column.
 2. App ID and Cert ID swapped, or a value copied incompletely - redo step 4 (copy, then run the command).
-3. The keyset is still disabled - redo step 3 (the "Not persisting eBay data" opt-out).
+3. The keyset is still disabled - redo step 3 (the "Exempted from Marketplace Account Deletion" switch).
 Tell me when you have checked these."""
 
 

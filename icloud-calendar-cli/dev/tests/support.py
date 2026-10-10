@@ -55,6 +55,7 @@ class FakeDav:
         self.photon = {"features": []}
         self.n = 0
         self.made = {}  # MKCALENDAR'd collection path -> request body
+        self.refuse_uid_filter = False  # iCloud: any UID prop-filter REPORT -> 412
 
     def add(self, path, ics, etag=None):
         self.n += 1
@@ -125,6 +126,8 @@ class FakeDav:
         return http.Response(405, {}, b"", url)
 
     def _report(self, path, body, url):
+        if self.refuse_uid_filter and '<c:prop-filter name="UID"' in body:
+            return http.Response(412, {}, b"", url)
         m = re.search(r'<c:text-match[^>]*>([^<]*)<', body)
         out = []
         for p, (etag, ics) in sorted(self.res.items()):

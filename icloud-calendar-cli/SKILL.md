@@ -12,7 +12,7 @@ icloud-calendar profiles                                   # Apple IDs here (sta
 icloud-calendar calendars                                  # name kind access owner comps color sharees default id
 icloud-calendar list                                       # next 7 days, all event calendars; --from/--to/--days, --cal X, --grep
 icloud-calendar list --from mon --to fri --cal Work -j
-icloud-calendar show UID                                   # markdown; uid or >= 6 leading chars of it; -j adds raw ics
+icloud-calendar show UID                                   # markdown; uid or >= 6 leading chars (show/edit/delete; ambiguous → exit 2 + candidates); -j adds raw ics
 icloud-calendar add --title Dentist --start 'tomorrow 14:00' --duration 45m --alarm 1h [--cal Family]
 icloud-calendar add --title Trip --start 2026-10-10 --end 2026-10-12 --all-day     # --end inclusive
 icloud-calendar edit UID --start 'fri 15:00'               # keeps duration; --title --end --location --geo --no-geo --notes --alarm --no-alarms --timed

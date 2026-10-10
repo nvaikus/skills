@@ -1,0 +1,12 @@
+{
+  "_note": "msg_list.js result for a thread where eBay auto-translated the seller's reply (live ebay.de 2026-10-10)",
+  "status": "ok",
+  "seller": "ttz0422",
+  "messages": [
+    {"who": "Sie", "day": "Heute", "time": "18:41", "translated": false,
+     "text": "Hello! Before buying the EPYC 7402P: is it vendor-locked?"},
+    {"who": "ttz0422", "day": "Heute", "time": "18:59", "translated": true,
+     "text": "Sehr geehrter Kunde,\nUnser EPYC 7402P ist die entsperrte Standardversion.\nLiebe Grüße",
+     "original": "Dear Customer,\nOur EPYC 7402P is the unlocked standard version.\nBest regards"}
+  ]
+}
