@@ -1,6 +1,6 @@
 """`claude-tg local-api`: a local Telegram Bot API server (telegram-bot-api --local) used ONLY to download
 attachments > 20 MB (up to 2 GB). Polling and sending stay on api.telegram.org, so a stopped server only
-affects big files. The server needs api_id / api_hash: config holds references (rbw:NAME | env:NAME |
+affects big files. The server needs api_id / api_hash: config holds references (env:NAME |
 cred:NAME), resolved at `serve` time and passed to the binary via env - never argv, never logged."""
 import os
 import shutil
@@ -42,57 +42,35 @@ class Fail(Exception):
 def resolve(ref: str, what: str) -> str:
     """Secret value for a config reference. Literals are refused: config must not hold the secret."""
     kind, _, name = str(ref or "").partition(":")
-    if not name or kind not in ("rbw", "env", "cred"):
-        raise Fail(f"{what}: {ref!r} is not a reference - use rbw:NAME, env:NAME or cred:NAME "
+    if not name or kind not in ("env", "cred"):
+        raise Fail(f"{what}: {ref!r} is not a reference - use env:NAME or cred:NAME "
                    f"(the config never holds the value)")
     if kind == "env":
         val = os.environ.get(name, "")
         if not val:
-            raise Fail(f"{what}: env var {name} is empty (env_files are loaded into this process)")
+            raise Fail(f"{what}: env var {name} is empty - add `export {name}=...` to a file listed in "
+                       f"env_files (e.g. ~/.secrets.env); env_files are loaded into this process")
         return val
-    if kind == "cred":
-        d = os.environ.get("CREDENTIALS_DIRECTORY")
-        p = Path(d) / name if d else None
-        if p and p.exists():
-            return p.read_text().strip()
-        # user units: systemd < 258 can't LoadCredentialEncrypted= in the user manager ("Failed to determine
-        # local credential key"), but the user can decrypt a user-scoped credential via the system varlink
-        # service -> encrypted file at rest, plaintext only in this process's env
-        enc = USER_CREDSTORE / name
-        if enc.exists():
-            try:
-                r = subprocess.run(["systemd-creds", "decrypt", "--user", f"--name={name}", str(enc), "-"],
-                                   capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
-            except (OSError, subprocess.TimeoutExpired) as e:
-                raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({e})") from None
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip()
-            raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({r.stderr.strip()[:200]})")
-        raise Fail(f"{what}: systemd credential {name} missing (LoadCredential={name}:<file> in a system unit, "
-                   f"or {enc} from: <secret> | systemd-creds encrypt --user --name={name} - {enc})")
-    if not shutil.which("rbw"):
-        raise Fail(f"{what}: rbw not found on PATH")
-    try:
-        r = subprocess.run(["rbw", "get", name], capture_output=True, text=True, timeout=30,
-                           stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise Fail(f"{what}: rbw get {name} timed out (vault locked? run: rbw unlock)") from None
-    val = r.stdout.strip() if r.returncode == 0 else ""
-    if not val and r.returncode == 0:
-        # value typed on a later editor line lands in notes (`rbw add` keeps line 1 as the password): take
-        # the first non-empty line of the full entry
-        full = subprocess.run(["rbw", "get", "--full", name], capture_output=True, text=True, timeout=30,
-                              stdin=subprocess.DEVNULL)
-        val = next((ln.strip() for ln in full.stdout.splitlines() if ln.strip()), "") if full.returncode == 0 else ""
-        if not val:
-            raise Fail(f"{what}: rbw entry {name} is empty -> rbw edit {name}, put the value on line 1")
-    if not val:
-        err = r.stderr.lower()
-        hint = ("rbw not set up -> rbw config set email <you>; rbw login" if "config set email" in err or "login" in err
-                else "vault locked -> rbw unlock" if "lock" in err or "agent" in err
-                else f"item missing -> rbw add --folder env {name}")
-        raise Fail(f"{what}: rbw get {name} failed ({hint})")
-    return val
+    # cred:NAME
+    d = os.environ.get("CREDENTIALS_DIRECTORY")
+    p = Path(d) / name if d else None
+    if p and p.exists():
+        return p.read_text().strip()
+    # user units: systemd < 258 can't LoadCredentialEncrypted= in the user manager ("Failed to determine
+    # local credential key"), but the user can decrypt a user-scoped credential via the system varlink
+    # service -> encrypted file at rest, plaintext only in this process's env
+    enc = USER_CREDSTORE / name
+    if enc.exists():
+        try:
+            r = subprocess.run(["systemd-creds", "decrypt", "--user", f"--name={name}", str(enc), "-"],
+                               capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({e})") from None
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+        raise Fail(f"{what}: systemd-creds decrypt {enc} failed ({r.stderr.strip()[:200]})")
+    raise Fail(f"{what}: systemd credential {name} missing (LoadCredential={name}:<file> in a system unit, "
+               f"or {enc} from: <secret> | systemd-creds encrypt --user --name={name} - {enc})")
 
 
 def binary(cfg) -> str:
@@ -121,7 +99,7 @@ def serve(cfg) -> int:
     if not binary(cfg) or not os.access(binary(cfg), os.X_OK):
         raise Fail("telegram-bot-api binary not found (local_api_bin, PATH, ~/.local/bin) - build it: "
                    "references/setup.md, 'Files over 20 MB'")
-    for f in cfg.get("env_files") or []:  # env:NAME refs may live there (hosts without a secret store)
+    for f in cfg.get("env_files") or []:  # env:NAME refs live there (e.g. ~/.secrets.env)
         for k, v in config.read_env_file(f).items():
             os.environ.setdefault(k, v)
     env = dict(os.environ)

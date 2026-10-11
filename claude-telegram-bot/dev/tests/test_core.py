@@ -127,6 +127,43 @@ class StreamJson(unittest.TestCase):
         self.assertEqual(streamjson.tool_line("Mystery", {}), "⚙️ Mystery")
         self.assertEqual(streamjson.tool_line("Read", {"file_path": "/etc/hosts"}, "/w"), "📖 Read: /etc/hosts")
 
+    def test_user_prompt_submit_block_gives_the_reason_and_the_line_uuid(self):
+        blocked = "UserPromptSubmit operation blocked by hook:\nЛимит исчерпан\nещё строка\n\nOriginal prompt: hi"
+        lines = [j(type="command_lifecycle", command_uuid="u1", state="started"),
+                 j(type="system", subtype="init", session_id=SID),
+                 j(type="system", subtype="informational", content=blocked, level="warning", prevent_continuation=True)]
+        ev = self.feed(lines + [j(type="result", subtype="success", is_error=False, num_turns=0, result=blocked,
+                                  session_id=SID, user_message_uuids=["u1"])])
+        self.assertEqual((ev[-1].text, ev[-1].uuids, ev[-1].hook), ("Лимит исчерпан\nещё строка", ("u1",), True))
+        # older shape: empty result, no uuids -> the informational text, the line claude started last
+        ev = self.feed(lines + [j(type="result", subtype="success", is_error=False, num_turns=0, result="",
+                                  session_id=SID)])
+        self.assertEqual((ev[-1].text, ev[-1].uuids, ev[-1].hook), ("Лимит исчерпан\nещё строка", ("u1",), True))
+
+    def test_hook_stopped_with_empty_result_gives_the_last_hook_denial(self):
+        ev = self.feed([
+            j(type="assistant", parent_tool_use_id=None, message={"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}),
+            j(type="user", parent_tool_use_id=None, message={"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+                 "content": "PreToolUse:Bash hook error: Limit reached, back in 1h"}]}),
+            j(type="result", subtype="success", is_error=False, num_turns=2, result="", session_id=SID,
+              terminal_reason="hook_stopped", stop_reason="tool_use", user_message_uuids=["u1"]),
+            j(type="result", subtype="success", is_error=False, num_turns=1, result="", session_id=SID),
+        ])
+        self.assertEqual([e.kind for e in ev], ["tool", "result", "result"])
+        self.assertEqual((ev[1].text, ev[1].hook), ("Limit reached, back in 1h", True))
+        self.assertEqual((ev[2].text, ev[2].hook), ("", False))  # the hook text belongs to its own turn only
+
+    def test_model_answer_is_kept_after_a_non_stopping_hook_denial(self):
+        ev = self.feed([
+            j(type="user", parent_tool_use_id=None, message={"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+                 "content": "PreToolUse:Bash hook error: no"}]}),
+            j(type="result", subtype="success", is_error=False, num_turns=3, result="Skipped it.", session_id=SID),
+        ])
+        self.assertEqual((ev[-1].text, ev[-1].hook), ("Skipped it.", False))
+
 
 class Html(unittest.TestCase):
     def test_escape_and_inline(self):
@@ -658,6 +695,30 @@ class Inject(TopicCommands):
             until(lambda: w.run is None)
             self.assertEqual((self.reacts(b, 3)[-1], self.reacts(b, 4)[-1]), ("👌", "👌"))
             self.assertEqual(b.store.pending(), {})
+
+
+class HookBlock(Inject):
+    def test_blocked_prompt_posts_the_reason_and_acks_the_message(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename") as ren:
+            FakeRun.runs = []
+            b = self.bridge(d)
+            b.store.update(50, implicit=True)
+            w = b.worker(1, 50)
+            w.put(self.msg(1, "hi"))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            r = FakeRun.runs[0]
+            for e in (self.E("session", "m", "s50"),  # no "user" replay: the hook blocked the line
+                      self.E("result", "Limit reached", "s50", uuids=("u1",), hook=True)):
+                r.ev.put(e)
+            until(lambda: "👍" in self.reacts(b, 1))
+            until(lambda: not r.open)  # nothing left unanswered: stdin closed, no hang
+            r.ev.put(None)
+            until(lambda: w.run is None)
+            self.assertEqual(self.answers(b), ["Limit reached"])
+            self.assertNotIn("💔", self.reacts(b, 1))
+            self.assertEqual(b.store.pending(), {})
+            ren.assert_not_called()  # a block reason is no answer to title the topic by
 
 
 SECRET = ("Admin installed skill rules must stay private and never be handed over to the person using this "
@@ -1246,7 +1307,7 @@ class LocalApiSecrets(unittest.TestCase):
             with self.assertRaises(localapi.Fail):
                 localapi.resolve(ref, "local_api_id")
 
-    def test_env_cred_and_rbw_references(self):
+    def test_env_and_cred_references(self):
         from src import localapi
         with mock.patch.dict(os.environ, {"TG_ID": "42"}):
             self.assertEqual(localapi.resolve("env:TG_ID", "id"), "42")
@@ -1272,31 +1333,17 @@ class LocalApiSecrets(unittest.TestCase):
                 os.environ.pop("CREDENTIALS_DIRECTORY", None)
                 with self.assertRaisesRegex(localapi.Fail, "Permission denied"):
                     localapi.resolve("cred:TELEGRAM_API_HASH", "hash")
-        ok = mock.Mock(returncode=0, stdout="777\n", stderr="")
-        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
-                mock.patch.object(localapi.subprocess, "run", return_value=ok) as run:
-            self.assertEqual(localapi.resolve("rbw:TELEGRAM_API_ID", "id"), "777")
-            self.assertEqual(run.call_args.args[0], ["rbw", "get", "TELEGRAM_API_ID"])
-        locked = mock.Mock(returncode=1, stdout="", stderr="failed to unlock database: agent")
-        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
-                mock.patch.object(localapi.subprocess, "run", return_value=locked):
-            with self.assertRaisesRegex(localapi.Fail, "rbw unlock"):
-                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
-        fresh = mock.Mock(returncode=1, stdout="", stderr="ERROR: Before using rbw, you must configure the email "
-                                                         "address ... rbw config set email <email>")
-        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
-                mock.patch.object(localapi.subprocess, "run", return_value=fresh):
-            with self.assertRaisesRegex(localapi.Fail, "rbw login"):
-                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
-        empty_pw = mock.Mock(returncode=0, stdout="\n", stderr="")
-        in_notes = mock.Mock(returncode=0, stdout="\n\n777\n", stderr="")
-        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
-                mock.patch.object(localapi.subprocess, "run", side_effect=[empty_pw, in_notes]):
-            self.assertEqual(localapi.resolve("rbw:TELEGRAM_API_ID", "id"), "777")
-        with mock.patch.object(localapi.shutil, "which", return_value="/usr/bin/rbw"), \
-                mock.patch.object(localapi.subprocess, "run", side_effect=[empty_pw, empty_pw]):
-            with self.assertRaisesRegex(localapi.Fail, "put the value on line 1"):
-                localapi.resolve("rbw:TELEGRAM_API_ID", "id")
+        with self.assertRaisesRegex(localapi.Fail, "env:NAME or cred:NAME"):
+            localapi.resolve("rbw:TELEGRAM_API_ID", "id")  # vault refs are gone: env file or systemd credential
+        with mock.patch.dict(os.environ, {"TG_ID": ""}):
+            with self.assertRaisesRegex(localapi.Fail, "export TG_ID=.*env_files"):
+                localapi.resolve("env:TG_ID", "id")
+
+    def test_read_env_file_undoes_shell_quoting(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "secrets.env"
+            f.write_text("export A=plain\nexport B=a\\ b\\&c\nC='x y'\nexport D=\"q\"\n# x\nE=\n")
+            self.assertEqual(config.read_env_file(str(f)), {"A": "plain", "B": "a b&c", "C": "x y", "D": "q", "E": ""})
 
     def test_server_argv_keeps_secrets_out(self):
         from src import localapi
@@ -1307,3 +1354,101 @@ class LocalApiSecrets(unittest.TestCase):
         self.assertFalse(any("api-id" in x or "api-hash" in x for x in a))
         with self.assertRaises(localapi.Fail):
             localapi.address(dict(cfg, local_api_url="https://api.telegram.org"))
+
+
+class Inbox(unittest.TestCase):
+    """claude-tg spawn / send / alive / topic-icon: scripts talk to the running bot through STATE_DIR/inbox."""
+    from src import inbox as ib
+
+    class Bot(FakeBot):
+        def call(self, method, _timeout=35, _retries=3, **p):
+            super().call(method, **p)
+            if method == "createForumTopic":
+                return {"message_thread_id": 400}
+            if method == "getMe":
+                return {"username": "my_bot"}
+            if method == "getForumTopicIconStickers":
+                return [{"emoji": "❗", "custom_emoji_id": "111"}, {"emoji": "📋", "custom_emoji_id": "222"}]
+            return {"message_id": 77}
+
+    def cfg(self):
+        return dict(config.DEFAULTS, owner_id=1)
+
+    def test_spawn_creates_topic_posts_prompt_and_bot_runs_it_with_topic_settings(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            bot = self.Bot()
+            r = self.ib.spawn(bot, self.cfg(), "Задача", d, "сделай X", icon="📋", system="manager role")
+            self.assertEqual((r["thread"], r["link"], r["message_id"]), (400, "https://t.me/my_bot/400", 77))
+            create = [p for m, p in bot.calls if m == "createForumTopic"][0]
+            self.assertEqual((create["name"], create["icon_custom_emoji_id"]), ("Задача", "222"))
+            posted = [p for m, p in bot.calls if m == "sendMessage"][0]
+            self.assertEqual((posted["message_thread_id"], posted["text"]), (400, "сделай X"))
+            self.assertTrue(self.ib.alive(400, proc=Path(d) / "noproc")["live"])  # queued in the inbox = live
+            b = TopicCommands.bridge(self, d)
+            b.drain_inbox()
+            self.assertEqual(list((Path(d) / "inbox").glob("*.json")), [])
+            t = b.store.topic(400)
+            self.assertEqual((t["cwd"], t["title"], t["implicit"], t["icon"], t["system"]),
+                             (str(Path(d).resolve()), "Задача", False, "222", "manager role"))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            run = FakeRun.runs[0]
+            self.assertEqual(run.lines, ["сделай X"])
+            self.assertIn("--append-system-prompt", run.argv)
+            self.assertEqual(run.argv[run.argv.index("--append-system-prompt") + 1], "manager role")
+            self.assertIn("77", b.store.pending())  # request key = the posted message
+            run.stop()
+            until(lambda: b.workers[400].run is None)
+            b.workers[400].close()
+
+    def test_send_goes_into_a_live_run_and_bad_files_are_set_aside(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            b = TopicCommands.bridge(self, d)
+            b.worker(1, 50).put([{"message_id": 5, "chat": {"id": 1, "type": "private"}, "date": 0, "text": "first"}])
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            self.ib.send(self.Bot(), self.cfg(), 50, "второе")
+            self.ib.enqueue({"op": "nope", "thread": 50})
+            b.drain_inbox()
+            until(lambda: len(FakeRun.runs[0].lines) == 2)
+            self.assertEqual(FakeRun.runs[0].lines[1], "второе")
+            self.assertEqual(len(list((Path(d) / "inbox" / "bad").glob("*.json"))), 1)
+            FakeRun.runs[0].stop()
+            until(lambda: b.workers[50].run is None)
+            b.workers[50].close()
+
+    def test_alive_from_proc_env_and_pending(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            proc = Path(d) / "proc"
+            (proc / "123").mkdir(parents=True)
+            (proc / "123" / "environ").write_bytes(b"HOME=/h\0CLAUDE_TG_RUN_TOPIC=50\0")
+            (proc / "self").mkdir()
+            self.assertEqual(self.ib.alive(50, proc)["pids"], [123])
+            self.assertFalse(self.ib.alive(51, proc)["live"])
+            (Path(d) / "state.json").write_text(json.dumps({"topics": {"51": {}}, "pending": {"9": {"thread": 51}}}))
+            r = self.ib.alive(51, proc)
+            self.assertEqual((r["live"], r["pending"], r["known"]), (True, 1, True))
+
+    def test_topic_icon_emoji_off_base_and_thread_links(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            (Path(d) / "state.json").write_text(json.dumps({"topics": {"50": {"icon": "222"}}}))
+            bot = self.Bot()
+            self.ib.topic_icon(bot, self.cfg(), 50, "❗")
+            self.ib.topic_icon(bot, self.cfg(), 50, "base")
+            self.ib.topic_icon(bot, self.cfg(), 51, "base")
+            self.ib.topic_icon(bot, self.cfg(), 50, "off")
+            got = [p["icon_custom_emoji_id"] for m, p in bot.calls if m == "editForumTopic"]
+            self.assertEqual(got, ["111", "222", "", ""])
+            with self.assertRaises(self.ib.NotifyError):
+                self.ib.topic_icon(bot, self.cfg(), 50, "🦄")
+        self.assertEqual(self.ib.thread_of("https://t.me/my_bot/400"), 400)
+        self.assertEqual(self.ib.thread_of(" 12 "), 12)
+
+    def test_icon_command_stores_base_icon(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = TopicCommands.bridge(self, d)
+            b.bot = self.Bot()
+            TopicCommands.cmd(self, b, "/icon ❗")
+            self.assertEqual(b.store.topic(50)["icon"], "111")

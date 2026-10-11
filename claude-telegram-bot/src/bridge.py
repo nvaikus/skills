@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, fmt, guard, media, runner, ui
+from . import config, fmt, guard, inbox, media, runner, ui
 from .botapi import Bot, TgError
 from .store import GENERAL, Store
 
@@ -352,6 +352,7 @@ class Bridge:
         except TgError as e:
             if "not modified" not in e.description:
                 return self.say(chat, thread, self.s("icon_fail", e=e.description))
+        self.store.update(thread, icon=cid or None)  # base icon: `claude-tg topic-icon base` restores it
         self.react(chat, mid, "👌")
 
     # ---------- restart safety ----------
@@ -384,6 +385,29 @@ class Bridge:
             time.sleep(0.2)
         log.info("shutdown: %d run(s) interrupted, will re-run on start", len(busy))
 
+    # ---------- scripts: claude-tg spawn / send ----------
+    def drain_inbox(self):
+        """Run the prompts scripts queued in STATE_DIR/inbox/ (inbox.py), oldest first; a bad file -> inbox/bad/."""
+        for path, item in inbox.pending_files():
+            try:
+                thread = inbox.apply(self, item)
+                log.info("inbox: prompt %s queued for topic %s", item.get("msg", {}).get("message_id"), thread)
+            except Exception:
+                log.exception("inbox: %s failed", path.name)
+                bad = path.parent / "bad"
+                bad.mkdir(exist_ok=True)
+                os.replace(path, bad / path.name)
+                continue
+            path.unlink(missing_ok=True)
+
+    def _inbox_loop(self, every=1.0):
+        while not self.stopping:
+            try:
+                self.drain_inbox()
+            except Exception:
+                log.exception("inbox loop")
+            time.sleep(every)
+
     # ---------- main loop ----------
     def serve(self):
         me = self.bot.call("getMe")
@@ -393,6 +417,7 @@ class Bridge:
             log.warning("Threaded Mode is off: enable it in @BotFather (Bot Settings -> Threads)")
         self.quiet("setMyCommands", commands=[{"command": c, "description": self.s("cmd." + c)} for c in COMMANDS])
         self.restore()
+        threading.Thread(target=self._inbox_loop, daemon=True, name="inbox").start()
         offset = None
         while True:
             try:
@@ -647,7 +672,8 @@ class Worker:
             b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
         t = b.store.topic(thread)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
-        argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"))
+        argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"),
+                                 t.get("system"))
         run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread)}))
         self.stopped, self.last_stderr = False, run.stderr
         unsent = []
@@ -708,6 +734,10 @@ class Worker:
                 elif ev.kind == "result":
                     self.turn_end()
                     with self.lock:
+                        for uid in ev.uuids:  # lines answered without a replay (blocked by a hook)
+                            bt = self.sent.pop(uid, None)
+                            if bt:
+                                self.seen.append(bt)
                         answered, self.seen, self.idle = self.seen, [], True
                     if ev.session_id:
                         b.store.update(thread, session_id=ev.session_id)
@@ -753,7 +783,7 @@ class Worker:
                 self.answer(ev.text)  # skipped if the idle ticker posted it already
             for bt in answered:
                 b.react(chat, bt.key, "👍")
-            if answered and not self.renamed and b.store.topic(thread).get("implicit"):
+            if answered and not ev.hook and not self.renamed and b.store.topic(thread).get("implicit"):
                 self.renamed = True
                 threading.Thread(target=self.rename, args=(answered[0].prompt, ev.text), daemon=True).start()
         for bt in answered:

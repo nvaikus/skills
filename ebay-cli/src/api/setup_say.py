@@ -60,8 +60,8 @@ def keys_other():
 On {KEYS_URL}, Production keyset you need "App ID (Client ID)" and "Cert ID (Client Secret)".
 1. Open a terminal on this computer and run:   ebay setup --keys-stdin
 2. Paste the App ID when asked, Enter; then the Cert ID (hidden), Enter.
-   With rbw (Vaultwarden) installed they go there (run `rbw unlock` first), else into a private file.
-   (Alternative: set environment variables EBAY_CLIENT_ID and EBAY_CLIENT_SECRET.)
+   They go into a private file (chmod 600).
+   (Alternative, better for servers: export environment variables EBAY_CLIENT_ID and EBAY_CLIENT_SECRET.)
 3. Do NOT paste the keys here. Just tell me "done"."""
 
 

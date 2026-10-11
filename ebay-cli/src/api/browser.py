@@ -6,8 +6,10 @@ One JS file per action in js/, prefixed by js/prelude.js; params go in as JSON, 
 Never checkout, pay, bid or offer: the rail test greps js/ for those controls."""
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -50,6 +52,13 @@ def _call(args, timeout):
                        "(browser hung?): `playwright-cli -s=<session> close`, rerun") from None
 
 
+def _reason(text):
+    """Node stack traces open with source lines: return the Error lines, not the first 300 chars."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    hits = [ln for ln in lines if re.search(r"(?:^|\[)\w*Error\b", ln) and "new Error(" not in ln]
+    return (" | ".join(hits) or " ".join(lines))[:400]
+
+
 def is_open(name):
     r = _call(["list", "--json"], 30)
     try:
@@ -65,7 +74,11 @@ def ensure_open(name, url="about:blank"):
         return False
     r = _call([f"-s={name}", "open", "--browser=chrome", "--headed", "--persistent", url], 90)
     if r.returncode != 0:
-        raise CliError(f"could not open the browser: {(r.stderr or r.stdout).strip()[:300]}")
+        hint = ""
+        if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            hint = (" (headless host, no DISPLAY: browser actions need the user's desktop machine;"
+                    " seller replies also arrive as eBay notification emails)")
+        raise CliError(f"could not open the browser: {_reason(r.stderr or r.stdout)}{hint}")
     return True
 
 

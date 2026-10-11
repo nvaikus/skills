@@ -30,6 +30,7 @@ def row(m, chat, sender, text_limit=None):
             "chat": peers.name(chat) if chat is not None else None, "msg_id": m.id,
             "sender": peers.name(sender) if sender is not None else None,
             "sender_id": peers.peer_id(sender) if sender is not None else None,
+            "sender_username": peers.username(sender) if sender is not None else None,
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
             "media": k, "file": media.file_info(m)[0] if k in media.KINDS else None,
             "link": peers.link(chat, m.id), "out": bool(getattr(m, "out", False)),

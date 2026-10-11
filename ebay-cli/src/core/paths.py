@@ -3,7 +3,7 @@
 ~/.claude/ebay/            user-local, never touched by skill updates
   config.json              market, ship_to, zip, setup progress
   token.json               cached application token (chmod 600)
-  credentials.json         App ID + Cert ID where no env / Keychain / rbw (chmod 600)
+  credentials.json         App ID + Cert ID where no env / Keychain (chmod 600)
   watch/searches.json      saved searches
   watch/seen/<name>.json   items a saved search has already reported
   browser/                 playwright-cli working dir; browser/dumps/ = failure screenshots + page dumps

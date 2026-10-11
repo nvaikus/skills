@@ -24,11 +24,13 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 - `Status` renders from a 0.5 s ticker thread (elapsed time moves while a tool runs silently); the event loop only sets attributes. Once shown, it is edited in place, never re-sent: a new message would wipe the `sendMessageDraft` preview.
 - Forward-with-comment = comment, then each forward as separate updates < 1 s apart (albums: N updates). `Bridge.collect` debounces per topic (`BURST` 1 s, `ALBUM` 1.5 s, `FORWARD` 6 s - a forwarded photo came 5 s after its text) → one run; a burst in All messages gets one `new_topic` at flush.
 - Prompts go on stdin (`--input-format stream-json`, one process, many turns: `system/init` + `result` per turn). `--replay-user-messages` echoes each line with our `uuid` when claude takes it in → `Worker.sent`/`seen` map every `result` to the batches it answers (a mid-turn line is absorbed into the running turn; a finished helper starts a turn with no line). `background_tasks_changed.tasks` = full list of running top-level tasks. `Worker.maybe_close` closes stdin when idle, 0 tasks, nothing sent unseen, nothing being built; closing is safe any time (claude finishes helpers + their turn, then exits). Failed `--resume` exits by itself.
+- Hook stops (`streamjson.BLOCKED` / `HOOK_ERROR`): a UserPromptSubmit block never replays the line - `result.user_message_uuids` maps it (fallback: last `command_lifecycle` started); its text, or the last PreToolUse `hook error:` on `terminal_reason: hook_stopped` with an empty result, becomes the answer (`Event.hook`, no topic rename).
 - `result` carries only the last text block; drafts die in 30 s. An ended text block followed by more events (or 3 s of silence, e.g. waiting for a background Agent) is posted as a real message by `Worker.post_interim`; the final answer is skipped if identical to the last posted one.
 - New bot-facing text → a key in both `ui.S` tables (a test checks key/placeholder parity).
 - `setMyProfilePhoto` takes `photo` = InputProfilePhoto JSON `{"type":"static","photo":"attach://p"}` + the jpg as multipart field `p` (jpg only: `botprofile` converts via ffmpeg).
 - Cloud `getFile` refuses > 20 MB (`file is too big`). `media.fetch` never raises per attachment: > 20 MB goes to `Bridge.big` (local `telegram-bot-api --local`, downloads only - no `logOut`, polling stays on the cloud); its getFile blocks until the whole file is on its disk and returns an absolute path (contains the token: never log it) → copied, then unlinked. Failures → `Skipped`: owner line `skip_text`, note appended to the prompt.
 - `cred:NAME` in a user unit: systemd 257's user manager fails `LoadCredentialEncrypted=` ("Failed to determine local credential key"), but `systemd-creds decrypt --user` (system varlink) works from inside the unit → `localapi.resolve` falls back to `~/.config/credstore.encrypted/NAME`.
+- Scripts never write state.json (the bot rewrites it from memory): `spawn`/`send` post the prompt as a bot message, then drop a file in `STATE_DIR/inbox/`; `Bridge._inbox_loop` (1 s) → `inbox.apply` → topic fields (`cwd`, `title`, `icon` = base icon, `system` → `--append-system-prompt`) + `Worker.put` of a synthetic owner message keyed by the posted message id. Bad file → `inbox/bad/`.
 - `getUpdates` 409 = another poller with the same token; the file lock in `STATE_DIR/lock` only guards one host.
 
 ## Layers
@@ -43,9 +45,10 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `runner.py` | claude argv, env scrub, process group kill, one-shot titles |
 | `streamjson.py` / `fmt.py` | pure parsers: stream-json → events; markdown → Telegram HTML + splitter |
 | `media.py` | attachment download (cloud ≤ 20 MB, local server above, `Skipped`), model-cli STT |
-| `localapi.py` | `claude-tg local-api`: user unit `claude-tg-botapi`, `serve` resolves secret refs (rbw/env/cred) into env and execs the server, probe for doctor |
+| `localapi.py` | `claude-tg local-api`: user unit `claude-tg-botapi`, `serve` resolves secret refs (env/cred) into env and execs the server, probe for doctor |
 | `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
 | `notify.py` | `claude-tg notify`: owner chat, topic registry (`notify_topics` key → name/icon), thread id + applied name/icon cached per key (`notify.json`, not state.json - the bot owns that); `--file` uploads (video/photo/document, fallback document); default target = `$CLAUDE_TG_RUN_TOPIC` inside a run; `--replace KEY` / `notify-delete`: ids per key in `notify.json` `replace`, send before delete, 400 delete = forget, transient = keep for retry |
+| `inbox.py` | `spawn` / `send` / `alive` / `topic-icon`: inbox files (CLI side) + `apply` (bot side), liveness from `/proc` env + pending + inbox |
 | `botprofile.py` | `claude-tg profile`: getMy*/setMy* name, descriptions, profile photo |
 | `service.py` | systemd unit (system / user mode: user unit file present → user), doctor, setup |
 

@@ -11,8 +11,8 @@ EPILOG = """examples:
 Driving it (agent): run, relay the text under "say to the user" WORD FOR WORD (a "(agent ...)" text is
 for you: ask the user, then run "then run" with the answers), repeat until DONE. Exit 5 = waiting on
 the user; 0 = done. Keys never pass through the chat or argv: macOS Keychain items EBAY_CLIENT_ID /
-EBAY_CLIENT_SECRET, else env vars of those names, else --keys-stdin (rbw folder env where rbw exists,
-else ~/.claude/ebay/credentials.json, 600).
+EBAY_CLIENT_SECRET, else env vars of those names, else --keys-stdin (~/.claude/ebay/credentials.json,
+600).
 The last step proves the keys live (token + one search); `ebay doctor` repeats that check any time.
 """
 

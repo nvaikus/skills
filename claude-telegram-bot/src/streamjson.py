@@ -14,6 +14,17 @@ ICONS = {
 
 
 DENIED = re.compile(r"permission .{0,40}denied|denied by .{0,60}(classifier|permission)|requested permissions", re.I)
+# Hook stops: UserPromptSubmit block = `system/informational` (+ the same text as `result`), no replay of the line;
+# PreToolUse deny with continue:false = tool_result "PreToolUse:Bash hook error: <msg>", then an empty
+# `result` with terminal_reason hook_stopped. Both carry the hook's own text for the user.
+BLOCKED = re.compile(r"^\S+ operation blocked by hook:\n(.*?)(?:\n\nOriginal prompt: .*)?$", re.S)
+HOOK_ERROR = re.compile(r"^\S+ hook error: (.+)$", re.S)
+
+
+def hook_reason(text: str) -> str:
+    """`X operation blocked by hook:\n<reason>\n\nOriginal prompt: ...` -> `<reason>`; other text unchanged."""
+    m = BLOCKED.match(text or "")
+    return m.group(1).strip() if m else (text or "").strip()
 
 @dataclass
 class Event:
@@ -28,6 +39,8 @@ class Event:
     sub: bool = False         # tool events: called inside a subagent
     count: int = 0            # bg: background tasks (helpers, background shells) still running;
                               # result: permission denials in the turn
+    uuids: tuple = ()         # result: our stdin line uuids it answers (a blocked line is never replayed)
+    hook: bool = False        # result: text is a hook's block reason, not a model answer
 
 
 def _short(s: str, n: int = 60) -> str:
@@ -64,6 +77,8 @@ class Parser:
         self.think = ""  # current top-level thinking block (often empty: models may omit thinking text)
         self.block = ""  # type of the open top-level content block
         self.tools = {}  # tool_use_id -> tool name (a denial names only the id)
+        self.hook = ""   # last hook block / denial message this turn
+        self.started = ""  # uuid of the stdin line claude started last (command_lifecycle)
 
     def feed(self, line: str) -> list:
         line = line.strip()
@@ -79,12 +94,22 @@ class Parser:
             return [Event("session", d.get("model") or "", d.get("session_id"))]
         if t == "system" and d.get("subtype") == "background_tasks_changed":  # full list, top-level tasks only
             return [Event("bg", count=len(d.get("tasks") or []))]
+        if t == "command_lifecycle" and d.get("state") == "started":
+            self.started = d.get("command_uuid") or ""
+            return []
+        if t == "system" and d.get("subtype") == "informational" and d.get("prevent_continuation"):
+            self.hook = hook_reason(str(d.get("content") or "")) or self.hook
+            return []
         if t == "user" and d.get("isReplay") and not sub:  # --replay-user-messages: a stdin line was taken in
             return [Event("user", d.get("uuid") or "")]
         if t == "user":  # tool results: a permission-mode denial comes back as an error result, the run goes on
             content = (d.get("message") or {}).get("content")
             out = []
             for c in content if isinstance(content, list) else []:
+                m = c.get("type") == "tool_result" and c.get("is_error") and not sub and \
+                    HOOK_ERROR.match(str(c.get("content")))
+                if m:
+                    self.hook = m.group(1).strip()
                 if c.get("type") == "tool_result" and c.get("is_error") and DENIED.search(str(c.get("content"))[:400]):
                     out.append(Event("denied", name=self.tools.get(c.get("tool_use_id"), "?"), sub=sub))
             return out
@@ -121,8 +146,18 @@ class Parser:
                     out.append(Event("tool", ("↳ " if sub else "") + line_, name=block.get("name", ""), sub=sub))
             return out
         if t == "result":
-            self.tools = {}
-            return [Event("result", d.get("result") or "", d.get("session_id"), bool(d.get("is_error")),
+            hook, started = self.hook, self.started
+            self.tools, self.hook, self.started = {}, "", ""
+            raw = d.get("result") or ""
+            text = hook_reason(raw) if BLOCKED.match(raw) else raw
+            uuids = d.get("user_message_uuids") or ([d["user_message_uuid"]] if d.get("user_message_uuid") else [])
+            is_hook = text != raw
+            if not text.strip() and hook and not d.get("is_error") and \
+                    (d.get("terminal_reason") == "hook_stopped" or not d.get("num_turns")):
+                text, is_hook = hook, True
+            if is_hook and not uuids and started:  # older claude: no uuids on result -> the line it started last
+                uuids = [started]
+            return [Event("result", text, d.get("session_id"), bool(d.get("is_error")),
                           d.get("num_turns") or 0, d.get("duration_api_ms") or 0,
-                          count=len(d.get("permission_denials") or []))]
+                          count=len(d.get("permission_denials") or []), uuids=tuple(uuids), hook=is_hook)]
         return []

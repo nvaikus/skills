@@ -8,7 +8,7 @@ Keep this file one screen. Entry `ebay.py` → `src/main.py:main`. Python 3.9+, 
 - Account actions (cart, msg, login) only through `api/browser` + `api/js/*.js` (playwright-cli run-code). Never checkout, pay, bid, offer: a test greps `api/js` for those words. Every wait bounded (`browser.TIMEOUTS`); every action verifies its outcome on the page; failure returns a screenshot + ARIA dump. Not logged in → exit 5.
 - A command never speaks HTTP and never prints: `api/` does the work, rows go to `ctx.write` / `ctx.text`.
 - stdout = data; stderr = `# ` notes and `ebay: <error>`. Exit 0 · 1 · 2 · 5 setup waits on the user · 130. Branch on `e.status` / `http.error_ids(e)`, never on message text.
-- Keys never in argv, config.json or output: env > macOS Keychain > rbw (Linux, folder `env`, stdin only) > `credentials.json` (600, warned), see `core/secrets.py`. `doctor` shows them masked.
+- Keys never in argv, config.json or output: env > macOS Keychain > `credentials.json` (600, warned), see `core/secrets.py`. `doctor` shows them masked.
 - Config keys are contract (`core/config.DEFAULTS`); watch files (`api/watch.py`) too.
 
 ## Layers

@@ -14,8 +14,8 @@
 
 ## Google Cloud side
 - Consent screen Audience: **Internal** exists only for Google Workspace (company) accounts - no verification, no 100-user cap, token never expires by policy. Personal gmail: **External** + **Publish app**; left in Testing, refresh tokens die after 7 days. After publishing, the user must log in once more (a Testing-era token keeps its 7-day expiry).
-- `onboard` detects both after login: id_token `hd` claim = Workspace; `refresh_token_expires_in` in the token response = Testing app → it asks for branding + publish and a new login. (Live 2026-10-01: gmail Testing app returns it; after publish + re-login it is absent = permanent.)
-- Publish app greyed out (live 2026-10-01) until Branding has Application home page + privacy policy link on an Authorised domain. Shared pages work for ANY user, no domain verification: home `https://nvaikus.github.io/personal-drive/`, privacy `.../privacy.html`, domain `nvaikus.github.io` (GitHub Pages, own repo outside the skills repo). Still impossible → `onboard --keep-testing` (re-login every 7 days).
+- `onboard` detects both after login: id_token `hd` claim = Workspace; `refresh_token_expires_in` in the token response = Testing app → it asks for branding + publish and a new login. (Live: gmail Testing app returns it; after publish + re-login it is absent = permanent.)
+- Publish app greyed out (live) until Branding has Application home page + privacy policy link on an Authorised domain. Shared pages work for ANY user, no domain verification: home `https://nvaikus.github.io/personal-drive/`, privacy `.../privacy.html`, domain `nvaikus.github.io` (GitHub Pages, own repo outside the skills repo). Still impossible → `onboard --keep-testing` (re-login every 7 days).
 - App name must be "Personal Drive": names like gdrive / G-drive are refused (Google trademark).
 - Right after publishing, the consent URL may give Google "500 That's an error": wait ~2 min or use an incognito window.
 - Testing app: the user must be listed under Audience → Test users, else the login is refused.

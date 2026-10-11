@@ -32,7 +32,7 @@ def child_env(token: str, extra: dict, connectors: bool = True) -> dict:
 PERMISSION_MODES = ("bypass", "auto", "default", "acceptEdits")
 
 
-def build_argv(claude: str, session_id, extra_args, permission_mode="bypass") -> list:
+def build_argv(claude: str, session_id, extra_args, permission_mode="bypass", system=None) -> list:
     """Prompts go in on stdin as user lines (one process, many turns); --replay-user-messages echoes each
     line with its uuid when claude takes it in -> we know which `result` answered which message."""
     argv = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -42,6 +42,8 @@ def build_argv(claude: str, session_id, extra_args, permission_mode="bypass") ->
     else:  # auto: classifier-gated; denials come back as tool errors (streamjson "denied"), the run goes on
         argv += ["--permission-mode", permission_mode]
     argv += list(extra_args)
+    if system:  # per-topic role (claude-tg spawn --system)
+        argv += ["--append-system-prompt", system]
     if session_id:
         argv += ["--resume", session_id]
     return argv

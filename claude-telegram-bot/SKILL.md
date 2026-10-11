@@ -1,6 +1,6 @@
 ---
 name: claude-telegram-bot
-description: Runs a Telegram bot that bridges the owner's private chat to Claude Code on a Linux box - each bot topic (Threaded Mode) is its own `claude -p` session with streaming progress, files, photos and voice notes (via model-cli). CLI to set it up, install it as a systemd service, check and debug it. Use when the user wants to talk to Claude Code from Telegram / from the phone, "Telegram bot for Claude", "claude in telegram", sets up, restarts, debugs or reads logs of the claude-tg bot, "claude-tg". NOT for reading or sending Telegram messages as the user (that's telegram-cli).
+description: Runs a Telegram bot that bridges the owner's private chat to Claude Code on a Linux box - each bot topic (Threaded Mode) is its own `claude -p` session with streaming progress, files, photos and voice notes (via model-cli). CLI to set it up, install it as a systemd service, check and debug it. Use when the user wants to talk to Claude Code from Telegram / from the phone, sets up, restarts, debugs or reads logs of the claude-tg bot. NOT for reading or sending Telegram messages as the user (that's telegram-cli). Triggers - Telegram bot for Claude, claude in telegram, claude-tg.
 ---
 
 # claude-telegram-bot
@@ -15,6 +15,10 @@ claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after eve
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat] [--replace KEY]   # bot -> owner; stdin if no TEXT
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
+claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [PROMPT]   # new topic + session; stdin if no PROMPT
+claude-tg send --thread ID|LINK [--silent] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
+claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
+claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
 claude-tg local-api install|status|uninstall   # optional local Bot API server: attachments up to 2 GB (setup.md)
 ```
@@ -53,6 +57,13 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Recurring post (digest, status) that must not pile up: `--replace KEY` sends, then deletes the messages last sent under KEY (ids in notify.json `replace`). Delete failure (bots can't delete > 48 h old in some chats, already gone) = stderr warning, exit stays 0. `notify-delete KEY` removes it without a new post.
 - Inside a bot run (`$CLAUDE_TG_RUN_TOPIC` set) the default target is that run's own topic: send a produced file back with `claude-tg notify --file out.mp4 "caption"`.
 - A reply to a notification there starts a claude session in that topic with the notification quoted (any reply to a bot message is quoted in the prompt).
+
+## spawn / send (scripts driving sessions)
+
+- Need the running service: the prompt is posted into the topic as a bot message (the owner sees it), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
+- `spawn` prints `{thread, link, message_id, cwd}`; `link` = `https://t.me/<bot>/<thread>`. `--system` = per-topic role appended to claude's system prompt on every run of that topic.
+- `alive` = a process with `CLAUDE_TG_RUN_TOPIC=<thread>`, a pending request or an inbox file. A finished turn ends the process: idle between turns is normal.
+- Status-only lines into a topic (no claude turn): `notify --thread ID --silent`.
 
 ## Fixing the bot from inside the bot
 

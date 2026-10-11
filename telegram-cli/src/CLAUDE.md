@@ -4,12 +4,12 @@ Keep this file one screen. Entry `tg-cli.py` → `src/main.py:main`; re-execs un
 
 ## Invariants — never break
 
-- Python 3.9+. stdlib only, except Telethon + qrcode, imported lazily and only in `core/tg.py` and `api/auth.py` (house-rule exception: MTProto cannot be done in stdlib; agreed 2026-09-30). `--help` and `accounts` work without them.
+- Python 3.9+. stdlib only, except Telethon + qrcode, imported lazily and only in `core/tg.py` and `api/auth.py` (house-rule exception: MTProto cannot be done in stdlib). `--help` and `accounts` work without them.
 - A command never talks to Telethon directly and never prints: it calls `api/`, hands rows to `ctx.write`. `-j` / `--fields` / `--no-header` come free from `main`.
 - stdout = data only; stderr = `# ` notes and `tg-cli: <error>`. BrokenPipe → exit 0.
 - Exit: 0 ok · 1 Telegram/runtime · 2 usage/config/not logged in/not found/ambiguous · 3 refused (nothing sent) · 4 needs Premium · 130. Raise `CliError`/`UsageError`/`Refused`/`Cannot`; never branch on message text.
 - Credentials never in argv: API keys from env/config, codes and 2FA from a tty prompt.
-- `send` has no preview/--force by user decision (2026-09-30): "if sent, then sent". The rail that stays: an ambiguous or unknown target is exit 2 and nothing is sent. `WRITE = True` marks it (and login/logout) so tests never hit them live.
+- `send` has no preview/--force by user decision: "if sent, then sent". The rail that stays: an ambiguous or unknown target is exit 2 and nothing is sent. `WRITE = True` marks it (and login/logout) so tests never hit them live.
 - `--public` never passes `allow_paid_stars`; out of free slots is exit 3.
 - Text goes out verbatim (`parse_mode=None`); markdown only on `--markdown` (agent text full of `_` and `*` would be mangled by the md parser).
 

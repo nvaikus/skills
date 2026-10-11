@@ -1,6 +1,6 @@
 # Rich text: markdown ⇄ ADF
 
-Jira Cloud stores descriptions and comments as ADF json — many times the size of the text. `scripts/adf.py` (relative to the skill folder) converts both ways; the dialect is in `python3 scripts/adf.py --help`. Headings take a color: `## Actual result {#ba424c}`.
+Jira Cloud stores descriptions and comments as ADF json — many times the size of the text. `scripts/adf.py` (relative to the skill folder) converts both ways; the dialect is in `python3 scripts/adf.py --help`.
 
 ## Write
 
@@ -26,7 +26,6 @@ Jira Cloud stores descriptions and comments as ADF json — many times the size 
 
 ## adf.py exits 1
 
-- The doc holds something outside the dialect; stderr names the node and mark types, stdout stays empty.
-- That is a skill defect (Fix on friction): extend `scripts/adf.py` in both directions — to-md output must parse back to the same ADF — then retry.
+- A doc outside the dialect is a skill defect (Fix on friction): extend `scripts/adf.py` in both directions — to-md output must parse back to the same ADF — then retry.
 - Done when `python3 scripts/adf.py check <failing-doc.json>` prints `OK` and the unit tests stay green.
 - Never turn a real description into a test fixture (credentials, customer data); write a synthetic one.

@@ -20,6 +20,10 @@ examples:
   claude-tg notify --file out.mp4 "demo"   # file -> owner; inside a bot run: into that run's topic
   claude-tg notify --replace digest "..."  # send, then delete the previous message(s) sent with --replace digest
   claude-tg notify-delete digest           # delete the message(s) stored under --replace digest
+  claude-tg spawn --title "Fix X" --cwd ~/proj "do X"   # new topic + claude session with that prompt (scripts)
+  claude-tg send --thread 123 "next step"   # prompt into a topic as if the owner wrote it (resumes / joins a run)
+  claude-tg alive --thread 123              # exit 0 = a claude run is live or queued there, 1 = idle
+  claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
 """
@@ -108,6 +112,30 @@ def main(argv=None):
                         "else Notifications)")
     g.add_argument("--thread", type=int, metavar="ID", help="send into this topic (message_thread_id)")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
+    INBOX = ("Needs the running bot: the prompt is posted into the topic as a bot message, then queued in "
+             "STATE_DIR/inbox/ and run by the bot like an owner message (queued while it is down). Prints JSON.")
+    s = sub.add_parser("spawn", help="new topic + claude session started with PROMPT (args or stdin)",
+                       description=INBOX + " Output: {thread, link, message_id, cwd}.")
+    s.add_argument("--title", required=True, help="topic name")
+    s.add_argument("--cwd", help="working dir of the topic's session (default: config default_cwd)")
+    s.add_argument("--icon", help="topic icon emoji (getForumTopicIconStickers); kept as the topic's base icon")
+    s.add_argument("--system", metavar="TEXT|@FILE",
+                   help="appended to claude's system prompt on every run of this topic (topic role)")
+    s.add_argument("--silent", action="store_true", help="post the prompt without sound")
+    s.add_argument("prompt", nargs="*")
+    s = sub.add_parser("send", help="PROMPT into an existing topic as if the owner wrote it",
+                       description=INBOX + " A live run takes it at once (stdin); else the topic's session resumes.")
+    s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--silent", action="store_true", help="post the prompt without sound")
+    s.add_argument("prompt", nargs="*")
+    s = sub.add_parser("alive", help="is a claude run live (or queued) in a topic? exit 0 yes, 1 no",
+                       description="Live = a process with CLAUDE_TG_RUN_TOPIC=<thread> (/proc), a pending request "
+                                   "of the topic in state.json, or an inbox file for it. Prints JSON.")
+    s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s = sub.add_parser("topic-icon", help="set a topic's icon: emoji | off | base")
+    s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
+                                "spawn --icon; none = off)")
     s = sub.add_parser("notify-delete", help="delete notifications sent with --replace KEY (or by message id)",
                        description="Deletes the messages stored under each KEY and forgets the KEY; --id deletes "
                                    "message ids in the owner chat. Exit 0 = all deleted (unknown KEY: nothing to do), "
@@ -128,8 +156,8 @@ def main(argv=None):
     s = sub.add_parser("local-api", help="local Bot API server for attachments > 20 MB (install | serve | status)",
                        description="Downloads only: polling and sending stay on api.telegram.org. Config: "
                                    "local_api_url (http://127.0.0.1:PORT), local_api_id / local_api_hash = secret "
-                                   "references rbw:NAME | env:NAME | cred:NAME (default rbw:TELEGRAM_API_ID / "
-                                   "rbw:TELEGRAM_API_HASH), local_api_bin. Setup: references/setup.md.")
+                                   "references env:NAME | cred:NAME (default env:TELEGRAM_API_ID / "
+                                   "env:TELEGRAM_API_HASH, from the env or env_files), local_api_bin. Setup: references/setup.md.")
     s.add_argument("action", choices=["install", "uninstall", "serve", "status"],
                    help="install = systemd --user unit claude-tg-botapi; serve = its ExecStart; status = unit + probe")
     a = p.parse_args(argv)
@@ -146,6 +174,9 @@ def main(argv=None):
         if a.cmd == "notify-delete":
             from . import notify
             return notify.delete_main(cfg, a)
+        if a.cmd in ("spawn", "send", "alive", "topic-icon"):
+            from . import inbox
+            return inbox.main(cfg, a)
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)

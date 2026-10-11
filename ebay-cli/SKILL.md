@@ -1,6 +1,6 @@
 ---
 name: ebay-cli
-description: Buyer-side eBay search for agents through eBay's official Browse API (no scraping), one stdlib CLI on macOS, Linux and Windows. Search listings with price, condition, auction/fixed/best-offer, sort and category filters and shipping priced for the user's own country; open a listing as a compact card (shipping, returns, seller, item specifics, variations); find category ids; save searches and rerun them to get only new listings and price drops (cron-ready). Guided onboarding of the user's free developer keys in chat. In the user's own logged-in browser (playwright-cli): add/list/remove cart items and message a listing's seller, then read the replies. Use when a task is about buying or finding something on eBay - "find on eBay", "search eBay for", "how much is X on eBay", "cheapest X that ships to me", "look at this eBay listing", an ebay.* /itm/ link, "watch eBay for X", "alert me when a new X is listed", "eBay deal", "put it in my eBay cart", "ask the seller", "did the seller answer", "ebay". NOT for selling, checkout/paying, bidding, offers, or sold-price history.
+description: Buyer-side eBay search for agents through eBay's official Browse API (no scraping), one stdlib CLI on macOS, Linux and Windows. Search listings with price, condition, auction/fixed/best-offer, sort and category filters and shipping priced for the user's own country; open a listing as a compact card (shipping, returns, seller, item specifics, variations); find category ids; save searches and rerun them to get only new listings and price drops (cron-ready). Guided onboarding of the user's free developer keys in chat. In the user's own logged-in browser (playwright-cli): add/list/remove cart items and message a listing's seller, then read the replies. Use when a task is about buying or finding something on eBay. NOT for selling, checkout/paying, bidding, offers, or sold-price history. Triggers - "find on eBay", "search eBay for", "how much is X on eBay", "cheapest X that ships to me", "look at this eBay listing", an ebay.* /itm/ link, "watch eBay for X", "alert me when a new X is listed", "eBay deal", "put it in my eBay cart", "ask the seller", "did the seller answer", "ebay".
 ---
 
 # ebay-cli
@@ -22,7 +22,7 @@ ebay msg list                                        # inbox, last_by=them = ans
 
 ## Onboarding
 
-`ebay setup`: each run prints one step. Relay the text under "say to the user" word for word; a text marked "(agent ...)" is for you - ask the user, then run "then run" with the answers. Repeat until `DONE`; exit 5 = waiting on the user. Keys never go through the chat or argv: the user stores them himself (macOS Keychain command / `ebay setup --keys-stdin` in his own terminal, which uses rbw where installed).
+`ebay setup`: each run prints one step. Relay the text under "say to the user" word for word; a text marked "(agent ...)" is for you - ask the user, then run "then run" with the answers. Repeat until `DONE`; exit 5 = waiting on the user. Keys never go through the chat or argv: the user stores them himself (macOS Keychain command / `ebay setup --keys-stdin` in his own terminal, or env vars `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`).
 
 ## Account (browser)
 

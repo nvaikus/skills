@@ -1,6 +1,7 @@
 """Paths and user config. Config file is optional; every key has a default."""
 import json
 import os
+import shlex
 import shutil
 from pathlib import Path
 
@@ -30,8 +31,8 @@ DEFAULTS = {
     "protect_min_words": 12,     # consecutive matching words that count as a leak
     "protect_exempt_marker": ".user-made",  # dirs holding this file are not protected
     "local_api_url": None,       # local Bot API server (--local) for attachments > 20 MB, e.g. http://127.0.0.1:8081
-    "local_api_id": "rbw:TELEGRAM_API_ID",      # secret REFERENCES for `local-api serve`: rbw:NAME | env:NAME |
-    "local_api_hash": "rbw:TELEGRAM_API_HASH",  # cred:NAME (systemd credential); literal values are refused
+    "local_api_id": "env:TELEGRAM_API_ID",      # secret REFERENCES for `local-api serve`: env:NAME (process env
+    "local_api_hash": "env:TELEGRAM_API_HASH",  # or env_files) | cred:NAME (systemd credential); literals refused
     "local_api_bin": None,       # telegram-bot-api binary; None = PATH, then ~/.local/bin
     "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
 }
@@ -62,7 +63,8 @@ def model_cli_bin():
 
 
 def read_env_file(path: str) -> dict:
-    """Parse `KEY=VALUE` / `export KEY=VALUE` lines; quotes stripped; no shell expansion."""
+    """Parse `KEY=VALUE` / `export KEY=VALUE` lines; shell quoting undone (quotes, backslash escapes as written
+    by `printf %q`); no variable expansion."""
     out = {}
     p = Path(path).expanduser()
     if not p.exists():
@@ -75,8 +77,11 @@ def read_env_file(path: str) -> dict:
             line = line[7:].lstrip()
         k, v = line.split("=", 1)
         v = v.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
-            v = v[1:-1]
+        try:
+            v = "".join(shlex.split(v)) if v else v
+        except ValueError:  # unbalanced quote: keep the old rule
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                v = v[1:-1]
         out[k.strip()] = v
     return out
 
