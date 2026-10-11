@@ -479,26 +479,44 @@ def chats(cfg) -> int:
     return 0
 
 
-SETUP = """claude-tg setup
+SETUP = """claude-tg setup ({mode})
 1. Telegram -> @BotFather -> /newbot -> name + username -> copy the token.
-2. @BotFather -> open the Mini App (Open button) -> your bot -> Bot Settings -> Threads Settings ->
-   turn Threaded Mode on (topics in the private chat; users may create topics).
-3. Token file: {tf} (chmod 600). Enter the token below, or pipe it: `... | claude-tg setup --token-stdin`.
+{step2}
+3. Token file: {tf} (chmod 600). Enter the token below (needs a terminal: `ssh -t`), or pipe it:
+   `... | claude-tg setup --token-stdin`.
 4. claude-tg doctor   -> everything ok
 5. claude-tg install  -> systemd service (Linux; system unit if sudo works, else user unit); or `claude-tg run`
-6. Message the bot first: the first private-chat user becomes its only owner.
+{step6}
 """
+SETUP_PRIVATE = (
+    "2. @BotFather -> open the Mini App (Open button) -> your bot -> Bot Settings -> Threads Settings ->\n"
+    "   turn Threaded Mode on (topics in the private chat; users may create topics).",
+    "6. Message the bot first: the first private-chat user becomes its only owner.")
+SETUP_GROUP = (
+    "2. Group mode (group_id {group} in config): the group is a forum supergroup (Topics on); the bot is an admin\n"
+    "   with Manage Topics (or privacy mode off: @BotFather -> /setprivacy -> Disable). Threaded Mode is not needed.",
+    "6. Only allowed_users ({users}) are answered in the group; `claude-tg chats` (service stopped) lists sender ids.")
+
+
+def setup_text(cfg, tf) -> str:
+    group = config.group_id(cfg)
+    if group is None:
+        return SETUP.format(mode="private-chat mode", tf=tf, step2=SETUP_PRIVATE[0], step6=SETUP_PRIVATE[1])
+    users = ", ".join(map(str, sorted(config.allowed_users(cfg)))) or "none yet"
+    return SETUP.format(mode="group mode", tf=tf, step2=SETUP_GROUP[0].format(group=group),
+                        step6=SETUP_GROUP[1].format(users=users))
 
 
 def setup(cfg, token_stdin: bool):
     tf = Path(cfg["token_file"]).expanduser()
-    print(SETUP.format(tf=tf), file=sys.stderr)
+    print(setup_text(cfg, tf), file=sys.stderr)
     if token_stdin:
         token = sys.stdin.read().strip()
     elif sys.stdin.isatty():
         token = getpass.getpass("bot token (empty = keep current): ").strip()
     else:
-        token = ""
+        raise Fail("no terminal to prompt for the token (stdin is not a TTY): run `ssh -t ... claude-tg setup`, "
+                   "or pipe it: `... | claude-tg setup --token-stdin`")
     if not token:
         return 0
     if ":" not in token:

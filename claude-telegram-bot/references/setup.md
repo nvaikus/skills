@@ -4,7 +4,7 @@
 |---|---|---|
 | 1 | user | @BotFather → `/newbot` → copy the token |
 | 2 | user | @BotFather → Open (Mini App) → the bot → Bot Settings → Threads Settings → Threaded Mode on, allow users to create topics |
-| 3 | user | `claude-tg setup` in a real terminal (hidden prompt). Agent-safe variant: user puts the token in a file himself, or `pbpaste \| claude-tg setup --token-stdin`. Never paste the token into the chat or argv |
+| 3 | user | `claude-tg setup` in a real terminal (hidden prompt; remote: `ssh -t host claude-tg setup` — without a TTY it exits with an error). Agent-safe variant: user puts the token in a file himself, or `pbpaste \| claude-tg setup --token-stdin`. Never paste the token into the chat or argv |
 | 4 | agent | `claude-tg doctor` → all ok (`threaded_mode FAIL` = step 2 not done) |
 | 5 | agent | `claude-tg install` → `claude-tg logs` shows `bot @… up; topics enabled: True`. Mode is automatic (below) |
 | 6 | user | writes to the bot first → becomes owner (`owner set: user id …` in logs) |

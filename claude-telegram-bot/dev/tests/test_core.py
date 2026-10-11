@@ -1991,3 +1991,29 @@ class GroupMode(unittest.TestCase):
         self.assertIn(f"chat\t{self.G}\tsupergroup\tStudio\tforum", lines)
         self.assertIn(f"user\t{self.A}\tAnn\t-\t{self.G}", lines)
         self.assertEqual(len(lines), 3)
+
+
+class SetupText(unittest.TestCase):
+    def cfg(self, **kw):
+        c = dict(config.DEFAULTS, token_file=str(Path(tempfile.mkdtemp()) / "token"))
+        c.update(kw)
+        return c
+
+    def test_private_mode_mentions_threaded_and_owner(self):
+        t = service.setup_text(self.cfg(), "/x/token")
+        self.assertIn("Threaded Mode on", t)
+        self.assertIn("first private-chat user becomes its only owner", t)
+
+    def test_group_mode_has_no_owner_or_threaded_step(self):
+        t = service.setup_text(self.cfg(group_id=-100123, allowed_users=[7, 5]), "/x/token")
+        self.assertIn("group mode", t)
+        self.assertIn("-100123", t)
+        self.assertIn("5, 7", t)
+        self.assertNotIn("Threaded Mode on", t)
+        self.assertNotIn("first private-chat user", t)
+
+    def test_no_tty_fails_loudly(self):
+        with mock.patch.object(sys, "stdin") as stdin, mock.patch("sys.stderr"):
+            stdin.isatty.return_value = False
+            with self.assertRaisesRegex(service.Fail, "TTY"):
+                service.setup(self.cfg(), token_stdin=False)

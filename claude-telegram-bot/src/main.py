@@ -11,7 +11,7 @@ TOP = """Telegram bot <-> Claude Code bridge: one bot topic = one `claude -p` se
 
 examples:
   claude-tg setup            # BotFather steps + token file (prompted, or --token-stdin)
-  claude-tg doctor           # token, getMe, Threaded Mode, claude, model-cli
+  claude-tg doctor           # token, getMe, Threaded Mode or group rights, claude, model-cli
   claude-tg install          # systemd unit (system if sudo works, else user unit), starts it
   claude-tg restart          # waits until no run is active, then restarts (use after deploys)
   claude-tg logs -f          # journalctl -u claude-tg
@@ -70,7 +70,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup", help="BotFather steps + save the token file")
     s.add_argument("--token-stdin", action="store_true", help="read the token from stdin (never pass it in argv)")
-    sub.add_parser("doctor", help="check token, bot, Threaded Mode, claude, voice deps, service")
+    sub.add_parser("doctor", help="check token, bot, Threaded Mode (private) or group + admin rights (group mode), claude, voice deps, service")
     sub.add_parser("chats", help="group mode setup: groups + senders in pending updates (nothing confirmed)",
                    description="Lists group/supergroup chats (id, type, title, forum) and the users who wrote "
                                "there, from getUpdates without an offset: nothing is confirmed, the bot still gets "
