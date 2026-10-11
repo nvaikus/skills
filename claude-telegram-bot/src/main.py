@@ -26,6 +26,7 @@ examples:
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
+  claude-tg chats            # group mode setup: group ids + sender ids from pending updates (service stopped)
 """
 
 
@@ -70,6 +71,10 @@ def main(argv=None):
     s = sub.add_parser("setup", help="BotFather steps + save the token file")
     s.add_argument("--token-stdin", action="store_true", help="read the token from stdin (never pass it in argv)")
     sub.add_parser("doctor", help="check token, bot, Threaded Mode, claude, voice deps, service")
+    sub.add_parser("chats", help="group mode setup: groups + senders in pending updates (nothing confirmed)",
+                   description="Lists group/supergroup chats (id, type, title, forum) and the users who wrote "
+                               "there, from getUpdates without an offset: nothing is confirmed, the bot still gets "
+                               "them on start. 409 = the service is polling: stop it first.")
     s = sub.add_parser("install", help="write + enable + (re)start the systemd unit (Linux)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--system", dest="mode", action="store_const", const="system",
@@ -203,6 +208,8 @@ def main(argv=None):
             return service.setup(cfg, a.token_stdin)
         if a.cmd == "doctor":
             return service.doctor(cfg)
+        if a.cmd == "chats":
+            return service.chats(cfg)
         if a.cmd == "install":
             return service.install(cfg, a.mode) or 0
         if a.cmd == "uninstall":

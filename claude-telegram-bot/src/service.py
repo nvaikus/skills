@@ -306,12 +306,12 @@ def _revision():
 def _report(cfg, topic, key, **kw):
     """Post a restart outcome into the topic that asked for it (works even if the bot itself is down)."""
     from . import ui
-    st = config.STATE_DIR / "state.json"
+    from .notify import NotifyError, owner_chat
     try:
-        owner = cfg.get("owner_id") or json.loads(st.read_text()).get("owner_id")
+        owner = owner_chat(cfg)  # group mode: the group
         Bot(config.read_token(cfg), state_dir=config.STATE_DIR).call("sendMessage", chat_id=owner, message_thread_id=int(topic),
                                          text=ui.t(ui.lang(cfg), key, **kw))
-    except (OSError, ValueError, TgError) as e:
+    except (OSError, ValueError, TgError, NotifyError) as e:
         print(f"# restart report to topic {topic} failed: {e}", file=sys.stderr)
 
 
@@ -358,10 +358,14 @@ def doctor(cfg) -> int:
         row("token_file", False, f"{tf} missing -> claude-tg setup")
     if token:
         try:
-            me = Bot(token).call("getMe", _retries=0, _timeout=15)
+            bot = Bot(token)
+            me = bot.call("getMe", _retries=0, _timeout=15)
             row("getMe", True, "@" + me.get("username", "?"))
-            row("threaded_mode", bool(me.get("has_topics_enabled")),
-                "on" if me.get("has_topics_enabled") else "off -> @BotFather: Bot Settings -> Threads Settings")
+            if config.group_id(cfg) is None:
+                row("threaded_mode", bool(me.get("has_topics_enabled")),
+                    "on" if me.get("has_topics_enabled") else "off -> @BotFather: Bot Settings -> Threads Settings")
+            else:
+                rows_group(bot, me, config.group_id(cfg), row, rows)
         except TgError as e:
             row("getMe", False, e.description)
     cb = config.claude_bin(cfg)
@@ -387,7 +391,11 @@ def doctor(cfg) -> int:
         row("leak_filter", True, guard.from_config(cfg).stats())
     st = config.STATE_DIR / "state.json"
     owner = cfg.get("owner_id") or (json.loads(st.read_text()).get("owner_id") if st.exists() else None)
-    if owner and not str(owner).lstrip("-").isdigit():
+    if cfg.get("group_id") not in (None, "", 0):
+        users = config.allowed_users(cfg)
+        row("allowed_users", bool(users), ", ".join(map(str, sorted(users))) if users
+            else "empty: group mode accepts nobody -> list user ids (`claude-tg chats` shows who wrote)")
+    elif owner and not str(owner).lstrip("-").isdigit():
         row("owner", False, f"{owner!r} is not a numeric Telegram user id: the bot ignores everyone")
     else:
         row("owner", True, str(owner) if owner else "not yet: first private-chat user becomes owner")
@@ -404,6 +412,71 @@ def doctor(cfg) -> int:
     print("check\tstatus\tdetail")
     print("\n".join(rows))
     return 1 if bad else 0
+
+
+def rows_group(bot, me, group, row, rows):
+    """doctor, group mode: the group is a forum supergroup and the bot can see every message + manage topics."""
+    try:
+        chat = bot.call("getChat", _retries=0, _timeout=15, chat_id=group)
+    except TgError as e:
+        return row("group", False, f"getChat {group}: {e.description} -> bot not in the group, or wrong group_id "
+                                   "(`claude-tg chats`)")
+    title = chat.get("title", "?")
+    if chat.get("type") != "supergroup" or not chat.get("is_forum"):
+        row("group", False, f"{title!r}: {chat.get('type')}, topics {'on' if chat.get('is_forum') else 'off'} "
+                            "-> group settings: Topics on (makes it a supergroup)")
+    else:
+        row("group", True, f"{title!r}: forum supergroup")
+    try:
+        m = bot.call("getChatMember", _retries=0, _timeout=15, chat_id=group, user_id=me["id"])
+    except TgError as e:
+        return row("group_admin", False, f"getChatMember: {e.description}")
+    status = m.get("status")
+    if status == "administrator":
+        row("group_admin", bool(m.get("can_manage_topics")), "admin, can_manage_topics" if m.get("can_manage_topics")
+            else "admin without Manage Topics -> edit the bot's admin rights")
+    elif status in ("member", "restricted") and me.get("can_read_all_group_messages"):
+        rows.append("group_admin\tWARN\tnot admin (privacy mode off, so all messages arrive); topic create/rename "
+                    "needs Manage Topics -> make the bot admin")
+    elif status in ("member", "restricted"):
+        row("group_admin", False, "not admin + privacy mode on: the bot sees only commands -> make it admin with "
+                                  "Manage Topics (or @BotFather /setprivacy Disable, then re-add it)")
+    else:
+        row("group_admin", False, f"bot is {status} in the group -> add it as admin")
+
+
+def chats(cfg) -> int:
+    """`claude-tg chats`: groups and senders in the bot's pending updates, to find group_id / allowed_users.
+    getUpdates without an offset confirms nothing: the bot still gets these updates when it starts."""
+    try:
+        ups = Bot(config.read_token(cfg)).call("getUpdates", _retries=0, _timeout=20, timeout=0, limit=100,
+                                               allowed_updates=["message", "my_chat_member", "callback_query"])
+    except TgError as e:
+        if e.code == 409:
+            print("claude-tg chats: the bot is polling (409): stop it first (`systemctl [--user] stop "
+                  f"{config.SERVICE}`), add/write in the group, run again, then start it", file=sys.stderr)
+        else:
+            print(f"claude-tg chats: {e}", file=sys.stderr)
+        return 1
+    seen, users = {}, {}
+    for u in ups:
+        obj = u.get("message") or u.get("my_chat_member") or (u.get("callback_query") or {}).get("message") or {}
+        c = obj.get("chat") or {}
+        if c.get("type") in ("group", "supergroup"):
+            seen[c["id"]] = c
+            f = (u.get("message") or u.get("my_chat_member") or u.get("callback_query") or {}).get("from") or {}
+            if f.get("id") and not f.get("is_bot"):
+                users[(c["id"], f["id"])] = f
+    print("kind\tid\ttype/name\ttitle/@username\tforum/chat")
+    for c in seen.values():
+        print(f"chat\t{c['id']}\t{c.get('type')}\t{c.get('title', '')}\t{'forum' if c.get('is_forum') else '-'}")
+    for (cid, uid), f in users.items():
+        name = " ".join(x for x in (f.get("first_name"), f.get("last_name")) if x)
+        print(f"user\t{uid}\t{name}\t{'@' + f['username'] if f.get('username') else '-'}\t{cid}")
+    if not seen:
+        print(f"# no group in {len(ups)} pending update(s): add the bot to the group (or write there), run again",
+              file=sys.stderr)
+    return 0
 
 
 SETUP = """claude-tg setup

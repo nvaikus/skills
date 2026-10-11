@@ -42,8 +42,29 @@
 | `local_api_bin` | PATH, then `~/.local/bin/telegram-bot-api` | server binary |
 | `notify_topics` | `{}` | `notify --topic KEY` registry: `{"mail": {"name": "Mail", "icon": "📝"}, "ci": "CI"}`. `icon` = an emoji from `getForumTopicIconStickers` (fixed set, e.g. 💬 💻 🤖 📣 📝 🔥 ❗) or its custom_emoji_id; anything else → no icon, warning. Keep emoji out of `name`: the client shows the icon beside it. Editing name/icon renames the cached topic on the next send (no new topic). Key `Notifications` = the default topic |
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
+| `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
+| `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
 
 Restart after edits or skill updates: `claude-tg restart` (waits until no run is active).
+
+## Group mode (forum supergroup, several users)
+
+| step | who | what |
+|---|---|---|
+| 1 | user | @BotFather `/newbot` → token → `claude-tg setup` (Threaded Mode is for private chats: irrelevant here, harmless) |
+| 2 | user | Telegram: new group → settings → Topics on (turns it into a forum supergroup); add the members |
+| 3 | user | add the bot, then make it **admin** with Manage Topics. Admins get every message; a non-admin bot with privacy mode on sees only commands (alternative: @BotFather `/setprivacy` → Disable, then remove + re-add the bot) |
+| 4 | user | each member writes one message in the group |
+| 5 | agent | service stopped (or not installed yet): `claude-tg chats` → `chat` row = `group_id`, `user` rows = ids for `allowed_users`. Reads pending updates without confirming them; 409 = the service is polling, stop it first. Those messages run when the bot starts |
+| 6 | agent | config `"group_id": -100…, "allowed_users": [id, id]` → `claude-tg doctor` (`group`, `group_admin`, `allowed_users` ok) → `claude-tg install` / `restart` |
+
+- Routing: only that group, only `allowed_users`; other groups/members/bots/channel posts/anonymous admins are ignored (log `ignored: …` once per source per hour). Added to another group → the bot leaves it. `/cmd@other_bot` is ignored.
+- All allowed users are equal (commands, ⏹, everything); `owner_id` is unused in group mode.
+- General = All messages: a message there opens a new topic. Join/pin/title service messages never run.
+- Prompts are tagged per sender: `[From: Name (@user, id N)]`.
+- Limits: ~20 messages/min per group, edits included. Cosmetic budget (status edits, typing, stream edits) 0.2/s, burst 3 (private: 0.5/s, burst 5); answers are never dropped. `sendMessageDraft` is private-only → answers stream as an edited message.
+- Topic links: `https://t.me/c/<group id without -100>/<thread>/2147483647` (members only).
+- Switching an existing bot between modes: notify topics are recreated in the new chat; old topic sessions in state.json point at the old chat - start from a fresh bot or clear `topics`.
 
 ## Files over 20 MB (optional local Bot API server)
 

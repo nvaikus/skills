@@ -1205,8 +1205,8 @@ class Notify(unittest.TestCase):
             self.assertTrue(bot.calls[1][1]["disable_notification"])
             self.assertEqual(r, {"chat": 7, "thread": 300, "message_ids": [5]})
             self.assertEqual(json.loads((Path(d) / "notify.json").read_text()),
-                             {"topics": {"Notifications": 300}, "meta": {"Notifications": {"name": "Notifications",
-                                                                                           "icon": None}}})
+                             {"chat": 7, "topics": {"Notifications": 300},
+                              "meta": {"Notifications": {"name": "Notifications", "icon": None}}})
 
     def test_deleted_topic_is_recreated(self):
         class Bot(FakeBot):
@@ -1787,3 +1787,207 @@ class Inbox(unittest.TestCase):
             b.bot = self.Bot()
             TopicCommands.cmd(self, b, "/icon ❗")
             self.assertEqual(b.store.topic(50)["icon"], "111")
+
+
+class GroupMode(unittest.TestCase):
+    """group_id + allowed_users: one forum supergroup, several people; private-owner mode stays as it was."""
+    G, A, B = -1001234567890, 111, 222  # placeholder ids
+
+    def cfg(self, **kw):
+        return dict(config.DEFAULTS, group_id=self.G, allowed_users=[self.A, self.B], **kw)
+
+    def bridge(self, d, cfg=None):
+        with mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = bridge.Bridge(cfg or self.cfg(), "tok")
+        b.bot = FakeBot()
+        b.collected = []
+        b.collect = lambda chat, thread, msg: b.collected.append((chat, thread, msg["message_id"]))
+        return b
+
+    def msg(self, mid=9, chat=None, uid=None, thread=55, text="hi", **kw):
+        m = {"message_id": mid, "chat": {"id": self.G if chat is None else chat, "type": "supergroup", "is_forum": True},
+             "from": {"id": self.A if uid is None else uid, "first_name": "Ann"}, "text": text, "date": 0}
+        if thread:
+            m.update(message_thread_id=thread, is_topic_message=True)
+        m.update(kw)
+        return {"message": m}
+
+    def test_only_allowed_users_in_the_group_are_heard(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.msg(1))
+            b.handle(self.msg(2, uid=self.B))
+            b.handle({"message": {"message_id": 4, "chat": {"id": self.A, "type": "private"},
+                                  "from": {"id": self.A}, "text": "dm", "date": 0}})
+            b.handle(self.msg(5, chat=-100999))                         # another group
+            b.handle(self.msg(6, uid=333))                              # a member not in allowed_users
+            b.handle(self.msg(7, uid=self.A, **{"sender_chat": {"id": self.G}}))  # anonymous admin
+            bot_msg = self.msg(8)
+            bot_msg["message"]["from"]["is_bot"] = True
+            b.handle(bot_msg)
+            self.assertEqual(b.collected, [(self.G, 55, 1), (self.G, 55, 2)])
+            self.assertIsNone(b.owner)  # nobody became owner from a group
+
+    def test_ignored_sources_are_logged_once_per_window(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            with self.assertLogs("claude-tg", "INFO") as cm:
+                for i in range(5):
+                    b.handle(self.msg(i, uid=333))
+                b.handle(self.msg(9, chat=-100999))
+            self.assertEqual(len([x for x in cm.output if "ignored" in x]), 2)
+
+    def test_empty_allowed_users_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d, dict(config.DEFAULTS, group_id=self.G, allowed_users=[]))
+            b.handle(self.msg(1))
+            self.assertEqual(b.collected, [])
+
+    def test_general_and_reply_threads_map_to_all_messages(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.msg(1, thread=None))
+            reply = self.msg(2, thread=None, message_thread_id=1)  # a reply in General: thread id, not a topic
+            b.handle(reply)
+            self.assertEqual([t for _, t, _ in b.collected], [bridge.GENERAL, bridge.GENERAL])
+
+    def test_service_messages_never_become_prompts(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.msg(1, thread=None, text=None, new_chat_members=[{"id": self.B}]))
+            b.handle(self.msg(2, text=None, pinned_message={"message_id": 1}))
+            self.assertEqual(b.collected, [])
+
+    def test_user_created_topic_is_noted(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.msg(70, thread=70, text=None, forum_topic_created={"name": "Kitchen"}))
+            self.assertEqual(b.store.topic(70)["title"], "Kitchen")
+            self.assertEqual(b.collected, [])
+
+    def test_commands_for_other_bots_are_ignored_and_ours_answered_in_the_group(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.username = "my_bot"
+            b.handle(self.msg(1, text="/status@other_bot"))
+            self.assertEqual(b.bot.calls, [])
+            b.handle(self.msg(2, text="/status@My_Bot"))
+            self.assertEqual(b.bot.calls[-1][1]["chat_id"], self.G)
+            self.assertEqual(b.bot.calls[-1][1]["message_thread_id"], 55)
+
+    def test_stop_button_any_allowed_user_only_in_the_group(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            w = mock.Mock(st=mock.Mock(id=77), run=True)
+            b.workers[55] = w
+            b.button({"id": "q", "from": {"id": 333}, "data": "stop", "message": {"message_id": 77, "chat": {"id": self.G}}})
+            w.stop.assert_not_called()
+            b.button({"id": "q", "from": {"id": self.B}, "data": "stop", "message": {"message_id": 77, "chat": {"id": -100999}}})
+            w.stop.assert_not_called()
+            b.button({"id": "q", "from": {"id": self.B}, "data": "stop", "message": {"message_id": 77, "chat": {"id": self.G}}})
+            w.stop.assert_called_once_with(drop_queue=False)
+
+    def test_added_to_a_foreign_group_leaves_it(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            ev = lambda chat: {"my_chat_member": {"chat": {"id": chat, "type": "supergroup"}, "from": {"id": 5},
+                                                   "new_chat_member": {"status": "member"}}}
+            b.handle(ev(self.G))
+            self.assertEqual(b.bot.calls, [])
+            b.handle(ev(-100999))
+            self.assertEqual(b.bot.calls, [("leaveChat", {"chat_id": -100999})])
+            p = self.bridge(d, dict(config.DEFAULTS, owner_id=1))  # private mode never leaves anything
+            p.handle(ev(-100999))
+            self.assertEqual(p.bot.calls, [])
+
+    def test_no_draft_streaming_in_groups(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            self.assertFalse(self.bridge(d).draft_ok)
+            self.assertTrue(self.bridge(d, dict(config.DEFAULTS, owner_id=1)).draft_ok)
+
+    def test_prompt_names_each_sender_in_group_mode_only(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            a = self.msg(1, text="one")["message"]
+            a2 = self.msg(2, text="two")["message"]
+            c = self.msg(3, uid=self.B, text="three")["message"]
+            c["from"] = {"id": self.B, "first_name": "Bo", "username": "bo"}
+            w = bridge.Worker(b, self.G, 55)
+            self.assertEqual(w.prompt([a, a2, c]), f"[From: Ann (id {self.A})]\n\none\n\ntwo\n\n"
+                                                   f"[From: Bo (@bo, id {self.B})]\n\nthree")
+            script = {"message_id": 4, "chat": {"id": self.G}, "from": {"id": self.G}, "text": "job", "date": 0}
+            self.assertEqual(w.prompt([script]), "job")  # inbox message: no person behind it
+            p = self.bridge(d, dict(config.DEFAULTS, owner_id=1))
+            self.assertEqual(bridge.Worker(p, 1, 55).prompt([a]), "one")
+
+    def test_flood_budget_is_tighter_for_groups(self):
+        clock = [1000.0]
+        f = botapi.Flood(clock=lambda: clock[0])
+        self.assertEqual(sum(f.take(self.G, "editMessageText", True) for _ in range(10)), 3)
+        self.assertEqual(sum(f.take(7, "editMessageText", True) for _ in range(10)), 5)
+        clock[0] += 5  # 0.2/s in a group vs 0.5/s private
+        self.assertEqual(sum(f.take(self.G, "editMessageText", True) for _ in range(10)), 1)
+
+    def test_notify_inbox_and_restart_report_target_the_group(self):
+        from src import inbox, notify
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            self.assertEqual(notify.owner_chat(self.cfg(owner_id=1)), self.G)
+            bot = Inbox.Bot()
+            r = inbox.spawn(bot, self.cfg(), "Task", d, "do X")
+            self.assertTrue(all(p["chat_id"] == self.G for _, p in bot.calls if "chat_id" in p))
+            self.assertEqual(r["link"], "https://t.me/c/1234567890/400/2147483647")
+            self.assertEqual(inbox.thread_of(r["link"]), 400)
+            self.assertEqual(inbox.thread_of("t.me/c/1234567890/400"), 400)
+            self.assertEqual(inbox.thread_of("https://t.me/my_bot/400/2147483647"), 400)
+            sent = []
+            with mock.patch.object(service, "Bot") as B, mock.patch.object(config, "read_token", lambda c: "tok"):
+                B.return_value.call = lambda m, **p: sent.append(p)
+                service._report(self.cfg(), "400", "restart_ok", rev="abc", state="active")
+            self.assertEqual(sent[0]["chat_id"], self.G)
+
+    def test_notify_topic_cache_follows_the_chat(self):
+        from src import notify
+        bot = Inbox.Bot()
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            (Path(d) / "notify.json").write_text(json.dumps({"topics": {"Notifications": 12}}))
+            self.assertEqual(notify.topic_id(bot, 7, "Notifications"), 12)  # old file: adopted, not reset
+            self.assertEqual(json.loads((Path(d) / "notify.json").read_text())["chat"], 7)
+            self.assertEqual(notify.topic_id(bot, self.G, "Notifications"), 400)  # switched to the group: new topic
+            self.assertEqual(bot.calls[-1], ("createForumTopic", {"chat_id": self.G, "name": "Notifications"}))
+
+    def test_doctor_group_rows(self):
+        class Bot(FakeBot):
+            def __init__(self, chat, member):
+                super().__init__()
+                self.chat, self.member = chat, member
+
+            def call(self, method, _timeout=35, _retries=3, **p):
+                return self.chat if method == "getChat" else self.member
+        me = {"id": 42, "can_read_all_group_messages": False}
+
+        def rows_of(chat, member, me=me):
+            rows = []
+            service.rows_group(Bot(chat, member), me, self.G, lambda c, ok, d="": rows.append(f"{c}\t{'ok' if ok else 'FAIL'}\t{d}"), rows)
+            return [r.split("\t")[1] for r in rows]
+        forum = {"type": "supergroup", "is_forum": True, "title": "T"}
+        self.assertEqual(rows_of(forum, {"status": "administrator", "can_manage_topics": True}), ["ok", "ok"])
+        self.assertEqual(rows_of(forum, {"status": "administrator"}), ["ok", "FAIL"])
+        self.assertEqual(rows_of(forum, {"status": "member"}), ["ok", "FAIL"])
+        self.assertEqual(rows_of(forum, {"status": "member"}, dict(me, can_read_all_group_messages=True)), ["ok", "WARN"])
+        self.assertEqual(rows_of({"type": "supergroup", "title": "T"}, {"status": "administrator",
+                                                                         "can_manage_topics": True}), ["FAIL", "ok"])
+
+    def test_chats_lists_groups_and_senders_without_confirming(self):
+        ups = [{"update_id": 1, "message": {"chat": {"id": self.G, "type": "supergroup", "title": "Studio",
+                                                      "is_forum": True}, "from": {"id": self.A, "first_name": "Ann"}}},
+               {"update_id": 2, "message": {"chat": {"id": self.A, "type": "private"}, "from": {"id": self.A}}}]
+        calls = []
+        with mock.patch.object(service, "Bot") as B, mock.patch.object(config, "read_token", lambda c: "tok"), \
+                mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out:
+            B.return_value.call = lambda m, **p: calls.append((m, p)) or ups
+            self.assertEqual(service.chats(dict(config.DEFAULTS)), 0)
+        self.assertNotIn("offset", calls[0][1])
+        lines = out.getvalue().splitlines()
+        self.assertIn(f"chat\t{self.G}\tsupergroup\tStudio\tforum", lines)
+        self.assertIn(f"user\t{self.A}\tAnn\t-\t{self.G}", lines)
+        self.assertEqual(len(lines), 3)

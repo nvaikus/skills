@@ -88,6 +88,9 @@ class Flood:
     Times are wall clock (time.time) so other processes can read them. The file is rewritten atomically under
     an flock; any file error falls back to this process's memory."""
     RATE, BURST = 0.5, 5.0
+    # Groups (chat id < 0): Telegram allows ~20 messages/min per group, edits included -> 0.2/s (12/min) for
+    # cosmetics leaves room for real sends, which spend the same bucket.
+    GROUP_RATE, GROUP_BURST = 0.2, 3.0
     COST = {"sendChatAction": 0.25, "deleteMessage": 0.0}  # deletes clean up (status, stream): never budgeted
 
     def __init__(self, clock=time.time, path=None):
@@ -178,10 +181,15 @@ class Flood:
             finally:
                 self._close(fd, False)
 
+    def limits(self, chat) -> tuple:
+        """(rate, burst) of this chat's bucket: groups (negative ids) get the tighter group budget."""
+        return (self.GROUP_RATE, self.GROUP_BURST) if str(chat).startswith("-") else (self.RATE, self.BURST)
+
     def _tokens(self, chat) -> float:
         now = self.clock()
-        tokens, at = self.bucket.get(chat, (self.BURST, now))
-        tokens = min(self.BURST, tokens + max(0.0, now - at) * self.RATE)
+        rate, burst = self.limits(chat)
+        tokens, at = self.bucket.get(chat, (burst, now))
+        tokens = min(burst, tokens + max(0.0, now - at) * rate)
         self.bucket[chat] = (tokens, now)
         return tokens
 
@@ -194,7 +202,7 @@ class Flood:
                 tokens = self._tokens(chat)
                 if cosmetic and cost and tokens < cost:
                     return False
-                self.bucket[chat] = (max(-self.BURST, tokens - cost), self.clock())
+                self.bucket[chat] = (max(-self.limits(chat)[1], tokens - cost), self.clock())
                 return True
             finally:
                 self._close(fd, bool(cost))
@@ -210,7 +218,7 @@ class Flood:
                     log.warning("flood wait %s s: chat %s (%s); cosmetic calls skipped, real sends wait",
                                 retry_after, chat, method)
                 self.until[chat] = max(self.until.get(chat, 0.0), now + retry_after)
-                self.bucket[chat] = (-self.BURST, now)  # come back slowly
+                self.bucket[chat] = (-self.limits(chat)[1], now)  # come back slowly
             finally:
                 self._close(fd, True)
 

@@ -57,26 +57,32 @@ def post(bot, chat, thread, prompt, silent=False, show=None) -> dict:
     text = text if len(text) <= POSTED else text[:POSTED] + "…"
     m = bot.call("sendMessage", chat_id=chat, message_thread_id=thread, text=text,
                  disable_notification=silent or None, link_preview_options={"is_disabled": True})
-    return {"message_id": m["message_id"], "chat": {"id": chat, "type": "private"}, "from": {"id": chat},
+    return {"message_id": m["message_id"], "chat": {"id": chat, "type": "private" if chat > 0 else "supergroup"},
+            "from": {"id": chat},
             "message_thread_id": thread, "date": int(time.time()), "text": prompt}
 
 
 LAST_MSG = 2147483647  # int32 max: a message that doesn't exist -> Telegram opens the topic at its last message
-LINK_RE = re.compile(r"^(?:https?://)?t\.me/[^/\s]+/(\d+)(?:/\d+)?/?$")
+LINK_RE = re.compile(r"^(?:https?://)?t\.me/(?:c/\d+|[^/\s]+)/(\d+)(?:/\d+)?/?$")
 
 
-def topic_link(name, thread) -> str:
+def topic_link(name, thread, group=None) -> str:
     """Link that opens the topic at its last message (`/<thread>` alone opens only the creation message
-    in the main chat view, `/<thread>/<thread>` the topic's first message)."""
+    in the main chat view, `/<thread>/<thread>` the topic's first message). Group mode: `t.me/c/<internal id>`
+    (the chat id without its -100 prefix; members only)."""
+    if group is not None:
+        g = str(group)
+        return f"https://t.me/c/{g[4:] if g.startswith('-100') else g.lstrip('-')}/{thread}/{LAST_MSG}"
     return f"https://t.me/{name}/{thread}/{LAST_MSG}" if name else ""
 
 
-def link(bot, thread) -> str:
-    return topic_link(bot_username(bot), thread)
+def link(bot, thread, cfg=None) -> str:
+    group = config.group_id(cfg or {})
+    return topic_link(None if group is not None else bot_username(bot), thread, group)
 
 
 def thread_of(ref) -> int:
-    """Topic id from an id or a topic link: `t.me/<bot>/<thread>[/<msg>]`."""
+    """Topic id from an id or a topic link: `t.me/<bot>/<thread>[/<msg>]`, `t.me/c/<chat>/<thread>[/<msg>]`."""
     s = str(ref).strip()
     m = LINK_RE.match(s) or re.fullmatch(r"(\d+)", s)
     if not m:
@@ -111,7 +117,7 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
         topic["quiet"] = True
     msg = post(bot, chat, thread, prompt, silent, show)
     enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg, "topic": topic})
-    return {"thread": thread, "link": link(bot, thread), "message_id": msg["message_id"], "cwd": str(path)}
+    return {"thread": thread, "link": link(bot, thread, cfg), "message_id": msg["message_id"], "cwd": str(path)}
 
 
 def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False) -> dict:

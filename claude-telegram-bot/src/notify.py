@@ -47,7 +47,10 @@ def cli_bot(cfg: dict) -> Bot:
 
 
 def owner_chat(cfg: dict) -> int:
-    """Private chat id == the owner's user id: pinned in config, else learned by the bot (state.json)."""
+    """The bot's home chat. Group mode: config group_id. Else the private chat (id == the owner's user id):
+    pinned in config, else learned by the bot (state.json)."""
+    if config.group_id(cfg) is not None:
+        return config.group_id(cfg)
     if cfg.get("owner_id"):
         return int(cfg["owner_id"])
     state = config.STATE_DIR / "state.json"
@@ -171,6 +174,12 @@ def topic_id(bot, chat: int, key: str, fresh=False, cfg=None):
     changed. None = topics unavailable."""
     want = spec(cfg or {}, key)
     data = _load()
+    if data.get("chat") != chat:  # cached ids belong to another chat (switched to/from group mode): start over
+        if data.get("chat") is not None:
+            data.pop("topics", None)
+            data.pop("meta", None)
+        data["chat"] = chat
+        _save(data)
     topics = data.setdefault("topics", {})
     meta = data.setdefault("meta", {})
     if not fresh and topics.get(key):
