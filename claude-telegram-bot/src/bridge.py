@@ -60,6 +60,7 @@ class Bridge:
         self.allowed = config.allowed_users(cfg)
         self.ignored = {}  # source -> last log time (group mode: ignored chats / users)
         self.username = None  # from getMe in serve(): /cmd@other_bot in a group is not ours
+        self.bot_id = None  # from getMe in serve(): the bot's own updates (topic created by spawn, ...) are dropped
         self.draft_ok = self.group is None  # sendMessageDraft is private-chat only: groups stream by edits
         self.stopping = False
         self.owner = cfg.get("owner_id") or self.store.owner_id
@@ -254,11 +255,18 @@ class Bridge:
         """Group mode: only the configured group, only allowed_users (no bots, channels, anonymous admins).
         Anything else is ignored silently; one log line per source per IGNORED_LOG."""
         frm = msg.get("from") or {}
+        if self.bot_id and frm.get("id") == self.bot_id:
+            return False  # own message (e.g. the service message of a topic spawn created): not a stranger
         if chat.get("id") != self.group:
             why, src = f"chat {chat.get('id')} ({chat.get('type')}) is not the configured group", f"chat {chat.get('id')}"
         elif msg.get("sender_chat"):
-            why, src = f"sent on behalf of chat {msg['sender_chat'].get('id')}", f"sender_chat {msg['sender_chat'].get('id')}"
-        elif not frm or frm.get("is_bot") or frm.get("id") not in self.allowed:
+            sc = msg["sender_chat"].get("id")
+            why = ("anonymous admin (sent as the group): post as yourself" if sc == self.group
+                   else f"sent on behalf of chat {sc}")
+            src = f"sender_chat {sc}"
+        elif frm.get("is_bot"):
+            why, src = f"bot {frm.get('id')} (@{frm.get('username')})", f"user {frm.get('id')}"
+        elif not frm or frm.get("id") not in self.allowed:
             why, src = f"user {frm.get('id')} is not in allowed_users", f"user {frm.get('id')}"
         else:
             return True
@@ -495,6 +503,7 @@ class Bridge:
     def serve(self):
         me = self.bot.call("getMe")
         self.username = me.get("username")
+        self.bot_id = me.get("id")
         if self.group is not None:
             log.info("bot @%s up; group mode: chat %s, allowed users %s", self.username, self.group,
                      sorted(self.allowed) or "none (fail closed: set allowed_users)")

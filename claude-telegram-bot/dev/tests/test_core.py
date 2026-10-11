@@ -1837,6 +1837,24 @@ class GroupMode(unittest.TestCase):
                 b.handle(self.msg(9, chat=-100999))
             self.assertEqual(len([x for x in cm.output if "ignored" in x]), 2)
 
+    def test_own_updates_dropped_silently_others_named(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.bot_id = 4242
+            with self.assertLogs("claude-tg", "INFO") as cm:
+                own = self.msg(1, uid=4242)
+                own["message"]["from"]["is_bot"] = True
+                b.handle(own)
+                other = self.msg(2, uid=777)
+                other["message"]["from"].update(is_bot=True, username="x_bot")
+                b.handle(other)
+                b.handle(self.msg(3, **{"sender_chat": {"id": self.G}}))
+            out = "\n".join(cm.output)
+            self.assertNotIn("4242", out)
+            self.assertIn("bot 777 (@x_bot)", out)
+            self.assertIn("anonymous admin", out)
+            self.assertEqual(b.collected, [])
+
     def test_empty_allowed_users_fails_closed(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d, dict(config.DEFAULTS, group_id=self.G, allowed_users=[]))
