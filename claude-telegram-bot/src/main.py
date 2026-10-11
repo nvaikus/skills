@@ -106,6 +106,9 @@ def main(argv=None):
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
     g.add_argument("--markdown", "--md", action="store_true", help="text is markdown (converted like bot answers)")
     s.add_argument("--silent", action="store_true", help="no sound / vibration")
+    s.add_argument("--mention", action="append", metavar="ID=NAME",
+                   help="group mode: mention this user at {who} in the text (else in front): @username via "
+                        "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
     s.add_argument("--file", action="append", metavar="PATH",
                    help="send a file (repeatable; <= 50 MB): mp4/mov/m4v as streaming video, jpg/png/webp as photo, "
                         "else as document")
@@ -122,6 +125,9 @@ def main(argv=None):
     s = sub.add_parser("spawn", help="new topic + claude session started with PROMPT (args or stdin)",
                        description=INBOX + " Output: {thread, link, message_id, cwd}.")
     s.add_argument("--title", required=True, help="topic name")
+    s.add_argument("--mention", action="append", metavar="ID=NAME",
+                   help="group mode: mention this user at {who} in the posted line (else in front): @username via "
+                        "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
     s.add_argument("--cwd", help="working dir of the topic's session (default: config default_cwd)")
     s.add_argument("--icon", help="topic icon emoji (getForumTopicIconStickers); kept as the topic's base icon")
     s.add_argument("--system", metavar="TEXT|@FILE",

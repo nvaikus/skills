@@ -17,6 +17,7 @@ sendDocument; text becomes the caption when it fits, else a message before the f
 new ids take their place - send first, so a failed send never leaves the topic empty. A refused delete (400: too
 old, already gone) is a warning and is forgotten; a transient one (network, 5xx) keeps its id under KEY for the
 next try. `notify-delete KEY` deletes and forgets without sending."""
+import html
 import json
 import os
 import sys
@@ -207,6 +208,44 @@ def topic_id(bot, chat: int, key: str, fresh=False, cfg=None):
     meta[key] = want
     _save(data)
     return thread
+
+
+MENTION_TTL = 86400
+
+
+def mention(bot, cfg: dict, spec: str):
+    """`ID=Name` (or `ID`) -> (text, needs_html). Group mode: '@username' when the member has one (getChatMember,
+    cached a day), else a text_mention by id (notifies without a username). Private-chat mode: just the name."""
+    uid, _, name = str(spec).partition("=")
+    uid, name = uid.strip(), name.strip() or uid.strip()
+    group = config.group_id(cfg)
+    if group is None or not uid.lstrip("-").isdigit():
+        return name, False
+
+    def fetch():
+        try:
+            return (bot.call("getChatMember", _retries=0, _timeout=15, chat_id=group, user_id=int(uid))
+                    .get("user") or {}).get("username")
+        except TgError:
+            return None
+    user = cached(f"username:{group}:{uid}", MENTION_TTL, fetch)
+    if user:
+        return "@" + user, False
+    return f'<a href="tg://user?id={int(uid)}">{html.escape(name)}</a>', True
+
+
+def with_mentions(bot, cfg: dict, text: str, mode: str, specs) -> tuple:
+    """Put the mentions of `specs` at `{who}` in text (else in front): (text, mode). A text_mention or a non-plain
+    text turns the whole message into HTML (plain text escaped)."""
+    if not isinstance(specs, (list, tuple)) or not specs:
+        return text, mode
+    ms = [mention(bot, cfg, s) for s in specs]
+    if mode == "md":
+        text, mode = fmt.md_to_html(text), "html"
+    elif mode == "plain" and any(h for _, h in ms):
+        text, mode = html.escape(text, quote=False), "html"
+    who = ", ".join(m for m, _ in ms)
+    return (text.replace("{who}", who) if "{who}" in text else f"{who} {text}"), mode
 
 
 def chunks(text: str, mode: str) -> list:
@@ -427,6 +466,7 @@ def main(cfg: dict, a) -> int:
     topic, thread = target(a)
     try:
         bot = cli_bot(cfg)
+        text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None))
         if files:
             r = send_files(bot, cfg, files, text, mode, a.silent, topic, a.button, thread, g)
         else:

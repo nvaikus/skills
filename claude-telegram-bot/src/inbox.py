@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import config
 from .botapi import Skipped, TgError
-from .notify import NotifyError, bot_username, cli_bot, icon_id, owner_chat
+from .notify import NotifyError, bot_username, cli_bot, icon_id, owner_chat, with_mentions
 
 POSTED = 3900  # visible copy of a prompt; the full text travels in the inbox file
 
@@ -50,12 +50,15 @@ def pending_files(thread=None) -> list:
     return out
 
 
-def post(bot, chat, thread, prompt, silent=False, show=None) -> dict:
+def post(bot, chat, thread, prompt, silent=False, show=None, cfg=None, mention=None) -> dict:
     """The prompt as a visible bot message in the topic (or `show`, a short human line standing in for it:
-    claude still gets the full prompt); its id becomes the request key in the bot."""
+    claude still gets the full prompt); its id becomes the request key in the bot. `mention`: ["ID=Name"] put at
+    `{who}` of the posted line (notify.with_mentions)."""
     text = (show or prompt).strip()
     text = text if len(text) <= POSTED else text[:POSTED] + "…"
+    text, mode = with_mentions(bot, cfg or {}, text, "plain", mention)
     m = bot.call("sendMessage", chat_id=chat, message_thread_id=thread, text=text,
+                 parse_mode="HTML" if mode == "html" else None,
                  disable_notification=silent or None, link_preview_options={"is_disabled": True})
     return {"message_id": m["message_id"], "chat": {"id": chat, "type": "private" if chat > 0 else "supergroup"},
             "from": {"id": chat},
@@ -98,7 +101,8 @@ def read_system(arg):
     return arg.strip()
 
 
-def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False) -> dict:
+def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False,
+          mention=None) -> dict:
     path = Path(os.path.expanduser(cwd or cfg["default_cwd"])).resolve()
     if not path.is_dir():
         raise NotifyError(f"cwd is not a directory: {path}")
@@ -115,7 +119,7 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
         topic["system"] = system
     if quiet:
         topic["quiet"] = True
-    msg = post(bot, chat, thread, prompt, silent, show)
+    msg = post(bot, chat, thread, prompt, silent, show, cfg, mention)
     enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg, "topic": topic})
     return {"thread": thread, "link": link(bot, thread, cfg), "message_id": msg["message_id"], "cwd": str(path)}
 
@@ -207,7 +211,8 @@ def main(cfg: dict, a) -> int:
             return 0 if r["live"] else 1
         bot = cli_bot(cfg)
         if a.cmd == "spawn":
-            r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet)
+            r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet,
+                      getattr(a, "mention", None))
         elif a.cmd == "send":
             r = send(bot, cfg, thread_of(a.thread), _text(a), a.silent, a.show, a.quiet)
         else:

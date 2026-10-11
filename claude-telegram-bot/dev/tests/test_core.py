@@ -2035,3 +2035,39 @@ class SetupText(unittest.TestCase):
             stdin.isatty.return_value = False
             with self.assertRaisesRegex(service.Fail, "TTY"):
                 service.setup(self.cfg(), token_stdin=False)
+
+
+class Mention(unittest.TestCase):
+    G = -1003
+
+    class Bot:
+        def __init__(self, users):
+            self.users, self.calls = users, []
+
+        def call(self, method, **p):
+            self.calls.append(method)
+            if p["user_id"] not in self.users:
+                raise TgError("getChatMember", 400, "Bad Request: user not found")
+            return {"user": {"id": p["user_id"], "username": self.users[p["user_id"]]}}
+
+    def run_(self, users, text, specs, mode="plain", cfg=None):
+        from src import notify
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = self.Bot(users)
+            out = notify.with_mentions(bot, cfg or dict(config.DEFAULTS, group_id=self.G), text, mode, specs)
+            notify.with_mentions(bot, cfg or dict(config.DEFAULTS, group_id=self.G), text, mode, specs)
+            return out, bot.calls
+
+    def test_username_plain_and_cached(self):
+        (t, mode), calls = self.run_({1: "nik"}, "👤 {who} — нужно решение <x>", ["1=Никита"])
+        self.assertEqual((t, mode), ("👤 @nik — нужно решение <x>", "plain"))
+        self.assertEqual(calls, ["getChatMember"])
+
+    def test_no_username_falls_back_to_text_mention_html(self):
+        (t, mode), _ = self.run_({1: "nik"}, "a <b> {who}", ["1=Никита", "2=Саша"])
+        self.assertEqual(mode, "html")
+        self.assertEqual(t, 'a &lt;b&gt; @nik, <a href="tg://user?id=2">Саша</a>')
+
+    def test_private_mode_names_and_prefix(self):
+        (t, mode), calls = self.run_({}, "текст", ["1=Никита"], cfg=dict(config.DEFAULTS))
+        self.assertEqual((t, mode, calls), ("Никита текст", "plain", []))
