@@ -1,5 +1,6 @@
 """One `claude -p` process: argv, scrubbed env, streamed events, user lines on stdin, kill on /stop."""
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -7,7 +8,10 @@ import threading
 import uuid
 from pathlib import Path
 
+from . import config
 from .streamjson import Parser
+
+log = logging.getLogger("claude-tg")
 
 # Never inherited by claude: systemd credential dir, our own knobs, nested-session markers.
 DROP = ("CREDENTIALS_DIRECTORY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
@@ -27,6 +31,40 @@ def child_env(token: str, extra: dict, connectors: bool = True) -> dict:
     if local_bin not in path.split(":"):
         env["PATH"] = f"{local_bin}:{path}"
     return env
+
+
+class ChildEnv:
+    """child_env with env_files re-read when they change (mtime/size): a rotated secret reaches the next spawn
+    without a bot restart. A file that turns missing/unreadable keeps its last good values (warned once)."""
+
+    def __init__(self, token: str, files, connectors: bool = True):
+        self._token, self._files, self._connectors = token, list(files or []), connectors
+        self._cache = {}  # path -> (stat key, values)
+        self._bad = set()
+
+    def _read(self, f) -> dict:
+        try:
+            st = Path(f).expanduser().stat()
+            key = (st.st_mtime_ns, st.st_size)
+            hit = self._cache.get(f)
+            if hit and hit[0] == key:
+                return hit[1]
+            vals = config.read_env_file(f)
+        except (OSError, UnicodeDecodeError) as e:
+            if f not in self._bad:
+                self._bad.add(f)
+                log.warning("env_file %s unreadable (%s): %s", f, type(e).__name__,
+                            "keeping last values" if f in self._cache else "skipped")
+            return self._cache.get(f, (None, {}))[1]
+        self._bad.discard(f)
+        self._cache[f] = (key, vals)
+        return vals
+
+    def get(self) -> dict:
+        extra = {}
+        for f in self._files:
+            extra.update(self._read(f))
+        return child_env(self._token, extra, self._connectors)
 
 
 PERMISSION_MODES = ("bypass", "auto", "default", "acceptEdits")

@@ -13,6 +13,8 @@ DEFAULTS = {
     "zip": None,          # optional postal code: sharper calculated shipping
     "done_steps": [],     # setup steps the user confirmed: account, keyset, deletion
     "browser_session": None,  # playwright-cli session for account commands (None = "ebay")
+    "browser_display": None,  # X display for the headed browser when env has none, e.g. ":99" (always-on Xvfb)
+    "browser_view_url": None,  # where the user sees that browser remotely (noVNC link): exit-5 texts point there
 }
 ENV = {"market": "EBAY_MARKET", "ship_to": "EBAY_SHIP_TO", "zip": "EBAY_ZIP"}
 

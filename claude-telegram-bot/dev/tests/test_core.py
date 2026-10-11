@@ -364,7 +364,11 @@ class FriendlyUi(unittest.TestCase):
     def test_elapsed_and_lang_fallback(self):
         self.assertEqual(ui.status_line("ru", "work", 9.9), "⚙️ Работаю…")
         self.assertEqual(ui.status_line("ru", "work", 17), "⚙️ Работаю… · 15 с")
-        self.assertEqual(ui.status_line("en", "work", 83), "⚙️ Working… · 1 min 20 s")
+        self.assertEqual(ui.status_line("ru", "work", 14), "⚙️ Работаю…")
+        self.assertEqual(ui.status_line("en", "work", 44), "⚙️ Working… · 30 s")  # 15 s steps under 1 min
+        self.assertEqual(ui.status_line("en", "work", 83), "⚙️ Working… · 1 min")  # 30 s steps under 2 min
+        self.assertEqual(ui.status_line("en", "work", 95), "⚙️ Working… · 1 min 30 s")
+        self.assertEqual(ui.status_line("en", "work", 179), "⚙️ Working… · 2 min")  # then whole minutes
         self.assertEqual(ui.lang({"ui_lang": "de"}), "en")
         self.assertEqual(ui.reason("\nAPI Error: 529 overloaded\ntrace…"), "API Error: 529 overloaded")
 
@@ -411,12 +415,12 @@ class FriendlyUi(unittest.TestCase):
         clock[0] = 3.5
         st.tick()
         self.assertEqual(calls[-1][1]["text"], "✍️ Пишу ответ…")  # visible status is edited, not deleted
-        clock[0] = 12.0
+        clock[0] = 16.0
         st.set("work")
         st.tick()
-        self.assertEqual(calls[-1][1]["text"], "⚙️ Работаю… · 10 с")
+        self.assertEqual(calls[-1][1]["text"], "⚙️ Работаю… · 15 с")
         n = len(calls)
-        clock[0] = 12.5
+        clock[0] = 16.5
         st.tick()
         self.assertEqual(len(calls), n)  # unchanged text: no edit
         st.close()
@@ -450,6 +454,7 @@ class FriendlyUi(unittest.TestCase):
         w = object.__new__(bridge.Worker)
         w.b, w.chat, w.thread = mock.Mock(guard=None), 1, 50
         w.noticed = w.tripped = False
+        w.b.hushed.return_value = False
         w.ilock, w.interim, w.posted, w.stream_id = threading.Lock(), "Отдаю тиммейту.", "", 88
         w.st = mock.Mock()
         w.post_interim()
@@ -458,6 +463,91 @@ class FriendlyUi(unittest.TestCase):
         w.b.quiet.assert_called_once_with("deleteMessage", chat_id=1, message_id=88)  # edit-mode draft replaced
         self.assertEqual((w.posted, w.stream_id), ("Отдаю тиммейту.", None))
         w.st.below.assert_called()
+
+    def test_quiet_topic_folds_interim_text_into_the_status(self):
+        w = object.__new__(bridge.Worker)
+        w.b, w.chat, w.thread = mock.Mock(guard=None), 1, 50
+        w.b.hushed.return_value = True
+        w.noticed = w.tripped = False
+        w.ilock, w.interim, w.posted, w.stream_id = threading.Lock(), "Читаю ответ продавца.", "", None
+        st, clock, calls = self.status()
+        w.st = st
+        st.tool(streamjson.Event("tool", "🔧 Bash: x", name="Bash"))
+        w.post_interim()
+        w.b.send_answer.assert_not_called()  # no separate message
+        self.assertEqual(w.posted, "")  # the final answer is never skipped as a duplicate
+        clock[0] = 3.0
+        st.tick()
+        self.assertEqual(calls[-1][0][0], "sendMessage")
+        self.assertEqual(calls[-1][1]["text"], "Читаю ответ продавца.\n\n⚙️ Работаю…")
+        st.note("Дописываю импорты. " * 30)
+        clock[0] = 3.5
+        st.tick()  # a new progress line edits at once, the same message
+        self.assertEqual(calls[-1][0][0], "editMessageText")
+        self.assertTrue(calls[-1][1]["text"].startswith("Дописываю импорты."))
+        self.assertLessEqual(len(calls[-1][1]["text"].split("\n\n")[0]), bridge.Status.MEMO)
+        st.close()
+        self.assertEqual(calls[-1][0], ("deleteMessage",))  # gone when the answer lands
+
+    def test_quiet_command_and_flag(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = TopicCommands.bridge(self, d)
+            self.assertFalse(b.hushed(50))
+            TopicCommands.cmd(self, b, "/quiet")
+            self.assertTrue(b.hushed(50))
+            TopicCommands.cmd(self, b, "/quiet off")
+            self.assertFalse(b.hushed(50))
+
+    def test_timer_alone_edits_at_most_every_min_edit_phase_changes_at_once(self):
+        st, clock, calls = self.status()
+        st.tool(streamjson.Event("tool", "🔧 Bash: x", name="Bash"))
+        clock[0] = 3.0
+        st.tick()
+        clock[0] = 14.0
+        st.tool(streamjson.Event("tool", "📖 Read: x", name="Read"))
+        st.tick()
+        self.assertEqual(calls[-1][1]["text"], "📖 Изучаю файлы…")  # phase change: at once
+        n = len(calls)
+        clock[0] = 15.0
+        st.tick()
+        self.assertEqual(len(calls), n)  # "· 15 с" waits MIN_EDIT after the last edit
+        clock[0] = 24.0
+        st.tick()
+        self.assertEqual(calls[-1][1]["text"], "📖 Изучаю файлы… · 15 с")
+
+    def test_detailed_batches_tool_edits(self):
+        st, clock, calls = self.status(detailed=True)
+        st.tool(streamjson.Event("tool", "🔧 Bash: a", name="Bash"))
+        clock[0] = 2.5
+        st.tick()  # first show: at once
+        for i, t in enumerate(("📖 Read: b", "🔎 Grep: c", "🔧 Bash: d")):
+            st.tool(streamjson.Event("tool", t, name=t.split()[1].rstrip(":")))
+            clock[0] = 3.0 + i
+            st.tick()
+        self.assertEqual(len(calls), 1)  # a burst of tools: no edit per tool
+        clock[0] = 2.5 + bridge.Status.VERBOSE_EDIT
+        st.tick()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[-1][1]["text"].splitlines(), ["🔧 Bash: a", "📖 Read: b", "🔎 Grep: c", "🔧 Bash: d"])
+
+    def test_typing_once_then_only_while_nothing_shows_progress(self):
+        w = object.__new__(bridge.Worker)
+        w.b, w.chat, w.thread = mock.Mock(), 1, 50
+        w.st, w.stream_id, w.last_draft = None, None, 0.0
+        self.assertFalse(w.shows_progress())
+        w.st = mock.Mock(id=77)
+        self.assertTrue(w.shows_progress())
+        done = mock.Mock()
+        done.is_set.side_effect = [False, False, False, True]
+        w._typing(done)
+        self.assertEqual(w.b.quiet.call_count, 1)  # turn start only: the status is visible after that
+        w.st, w.last_draft = mock.Mock(id=None), bridge.time.monotonic()
+        self.assertTrue(w.shows_progress())  # a fresh draft preview
+        w.last_draft -= 60
+        self.assertFalse(w.shows_progress())  # the draft died
+        done.is_set.side_effect = [False, False, True]
+        w._typing(done)
+        self.assertEqual(w.b.quiet.call_count, 3)
 
     def test_detailed_lists_tool_calls(self):
         st, clock, calls = self.status(detailed=True)
@@ -486,6 +576,9 @@ class Reactions(TopicCommands):
     def test_reactions_off_sends_none_but_stop_button_gets_text(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d)
+            b.react(1, 9, "👀")
+            self.assertEqual(b.bot.calls, [])  # off by default
+            b.cfg["reactions"] = True
             b.react(1, 9, "👀")
             self.assertEqual(b.bot.calls[-1][0], "setMessageReaction")
             b.cfg["reactions"], b.bot.calls = False, []
@@ -624,6 +717,11 @@ class Inject(TopicCommands):
 
     def answers(self, b):
         return [p["text"] for m, p in b.bot.calls if m == "sendMessage" and p.get("parse_mode")]
+
+    def bridge(self, d, fail=None):
+        b = super().bridge(d, fail)
+        b.cfg["reactions"] = True
+        return b
 
     def reacts(self, b, mid):
         return [p["reaction"][0]["emoji"] if p["reaction"] else None
@@ -834,7 +932,8 @@ class ServiceMode(unittest.TestCase):
     def test_user_unit_text(self):
         cfg = dict(config.DEFAULTS, token_file="/home/u/100%/token")
         t = service.unit_text(cfg, "user")
-        self.assertIn("LoadCredential=token:/home/u/100%%/token", t)  # % escaped for systemd
+        want = str(Path("/home/u/100%/token").resolve()).replace("%", "%%")  # macOS: /home -> /System/Volumes/Data
+        self.assertIn(f"LoadCredential=token:{want}", t)  # % escaped for systemd
         self.assertIn("WantedBy=default.target", t)
         self.assertNotIn("User=", t)
         self.assertNotIn(str(config.SYSTEM_TOKEN), t)
@@ -861,6 +960,195 @@ class ServiceMode(unittest.TestCase):
             with self.paths(d, system="someone-else"):  # another user's system bot on the same host
                 self.assertIsNone(service.installed_mode())
                 self.assertEqual(service.pick_mode(), "user")
+
+
+class FloodGate(unittest.TestCase):
+    """One 429 bans the whole chat: cosmetic calls are skipped locally, real sends wait it out (no cap)."""
+    def bot(self, replies):
+        clock = [0.0]
+        bot = botapi.Bot("tok")
+        bot.flood = botapi.Flood(clock=lambda: clock[0])
+        posts = []
+
+        def post(method, data, ctype, timeout):
+            posts.append(method)
+            r = replies.pop(0) if replies else {"message_id": 1}
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        def sleep(s):
+            clock[0] += s
+        return bot, clock, posts, mock.patch.object(bot, "_post", post), mock.patch.object(botapi.time, "sleep", sleep)
+
+    def test_flood_wait_skips_cosmetic_and_waits_out_real_sends(self):
+        ban = TgError("editMessageText", 429, "Too Many Requests: retry after 415", 415)
+        bot, clock, posts, p1, p2 = self.bot([ban])
+        with p1, p2, self.assertLogs("claude-tg", "WARNING") as logs:
+            with self.assertRaises(TgError):  # the real 429
+                bot.call("editMessageText", _retries=0, chat_id=1, message_id=5, text="x")
+            for _ in range(20):  # the threads keep ticking during the ban: no HTTP request at all
+                with self.assertRaises(botapi.Skipped):
+                    bot.call("editMessageText", _retries=0, chat_id=1, message_id=5, text="x")
+                with self.assertRaises(botapi.Skipped):
+                    bot.call("sendChatAction", _retries=0, chat_id=1, action="typing")
+            self.assertEqual(posts, ["editMessageText"])
+            self.assertEqual(bot.call("sendMessage", chat_id=1, text="answer"), {"message_id": 1})
+            self.assertGreaterEqual(clock[0], 415)  # waited the whole ban, not 30 s x retries
+            self.assertEqual(posts, ["editMessageText", "sendMessage"])
+            bot.call("getUpdates")  # no chat: never gated
+        self.assertEqual(len(logs.output), 2, logs.output)  # one line when it starts, one when it ends
+        self.assertIn("flood wait 415 s", logs.output[0])
+        self.assertIn("flood wait over", logs.output[1])
+
+    def test_real_send_retries_a_429_with_the_full_wait(self):
+        bot, clock, posts, p1, p2 = self.bot([TgError("sendMessage", 429, "retry after 120", 120)])
+        with p1, p2, self.assertLogs("claude-tg", "WARNING"):
+            self.assertEqual(bot.call("sendMessage", chat_id=1, text="a"), {"message_id": 1})
+        self.assertEqual(posts, ["sendMessage", "sendMessage"])
+        self.assertGreaterEqual(clock[0], 120)
+
+    def test_per_chat_budget_for_cosmetic_calls_real_sends_never_refused(self):
+        bot, clock, posts, p1, p2 = self.bot([])
+        with p1, p2:
+            sent = 0
+            for _ in range(40):  # 4 topics x 10 edits in the same second
+                try:
+                    bot.call("editMessageText", _retries=0, chat_id=1, message_id=5, text="x")
+                    sent += 1
+                except botapi.Skipped:
+                    pass
+            self.assertEqual(sent, botapi.Flood.BURST)
+            for _ in range(10):
+                bot.call("sendMessage", chat_id=1, text="answer")
+            bot.call("editMessageText", _retries=0, chat_id=2, message_id=5, text="x")  # another chat: own budget
+            bot.call("deleteMessage", _retries=0, chat_id=1, message_id=5)  # cleanup is never budgeted
+            self.assertFalse(bot.flood.ready(1))
+            clock[0] += 60
+            self.assertTrue(bot.flood.ready(1))
+        self.assertEqual(posts.count("sendMessage"), 10)
+
+    def test_status_keeps_its_change_while_the_chat_is_over_budget(self):
+        w = mock.Mock(chat=1, thread=50)
+        w.b.guard, w.b.calm.return_value = None, False
+        clock = [0.0]
+        st = bridge.Status(w, False, "en", clock=lambda: clock[0], ticker=False)
+        clock[0] = 5
+        st.tick()
+        w.b.quiet.assert_not_called()
+        self.assertIsNone(st.shown)
+        w.b.calm.return_value = True
+        w.b.quiet.return_value = {"message_id": 9}
+        st.tick()
+        self.assertEqual(w.b.quiet.call_args[0][0], "sendMessage")
+
+    def test_quiet_does_not_log_skipped_calls_and_retries_deletes_after_the_wait(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(config, "STATE_DIR", Path(d)):
+                b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1), "tok")
+            b.bot.flood.hit(1, 30, "sendMessage")
+            with mock.patch.object(b.bot, "_post") as post, mock.patch.object(bridge.threading, "Timer") as timer, \
+                    mock.patch.object(bridge.log, "info") as info:
+                self.assertIsNone(b.quiet("editMessageText", chat_id=1, message_id=5, text="x"))
+                timer.assert_not_called()
+                b.quiet("deleteMessage", chat_id=1, message_id=5)
+            post.assert_not_called()
+            info.assert_not_called()
+            self.assertGreater(timer.call_args[0][0], 30)
+            self.assertEqual(timer.call_args[0][3], {"chat_id": 1, "message_id": 5})
+
+
+class SharedFlood(unittest.TestCase):
+    """The bot and CLI processes share one flood state file (STATE_DIR/flood.json)."""
+    def test_wait_and_budget_cross_processes(self):
+        with tempfile.TemporaryDirectory() as d:
+            clock = [1000.0]
+            bot_side = botapi.Flood(clock=lambda: clock[0], path=Path(d) / "flood.json")
+            cli_side = botapi.Flood(clock=lambda: clock[0], path=Path(d) / "flood.json")
+            for _ in range(int(botapi.Flood.BURST)):
+                self.assertTrue(bot_side.take(1, "editMessageText", True))
+            self.assertFalse(cli_side.take(1, "editMessageForumTopic", True))  # the bot spent the budget
+            self.assertTrue(cli_side.take(1, "sendMessage", False))  # real sends are never refused
+            with self.assertLogs("claude-tg", "WARNING"):
+                cli_side.hit(1, 300, "sendMessage")  # a 429 seen by the CLI
+            self.assertGreater(bot_side.left(1), 299)
+            self.assertFalse(bot_side.ready(1))
+            clock[0] += 301
+            with self.assertLogs("claude-tg", "WARNING") as logs:
+                self.assertEqual(bot_side.left(1), 0.0)
+            self.assertIn("flood wait over", logs.output[0])
+            self.assertEqual(cli_side.left(1), 0.0)
+            (Path(d) / "flood.json").write_text("garbage")
+            self.assertEqual(cli_side.left(1), 0.0)  # a broken file never breaks sending
+
+    def cli(self, d):
+        bot = botapi.Bot("tok", state_dir=d, on_wait=mock.Mock())
+        clock = [time_now()]
+        bot.flood.clock = lambda: clock[0]
+        posts = []
+
+        def post(method, data, ctype, timeout):
+            posts.append(method)
+            return {"message_id": 1}
+
+        def sleep(s):
+            clock[0] += s
+        return bot, clock, posts, mock.patch.object(bot, "_post", post), mock.patch.object(botapi.time, "sleep", sleep)
+
+    def test_cli_skips_cosmetic_and_waits_real_sends_during_the_bots_wait(self):
+        from src import inbox
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot, clock, posts, p1, p2 = self.cli(d)
+            with self.assertLogs("claude-tg", "WARNING"):
+                botapi.Flood(clock=lambda: clock[0], path=Path(d) / "flood.json").hit(1, 120, "editMessageText")
+            with p1, p2, mock.patch("sys.stderr"), self.assertLogs("claude-tg", "WARNING"):
+                r = inbox.topic_icon(bot, dict(config.DEFAULTS, owner_id=1), 50, "off")
+                self.assertTrue(r["skipped"])
+                self.assertEqual(posts, [])
+                bot.call("sendMessage", chat_id=1, text="hi")
+                self.assertEqual(posts, ["sendMessage"])
+                self.assertGreaterEqual(clock[0] - time_now(), 119)
+                bot.on_wait.assert_called_once()
+                bot.flood.hit(1, 10, "sendMessage")
+                bot.upload("sendDocument", "document", Path(__file__), chat_id=1)  # uploads wait too
+                self.assertEqual(posts, ["sendMessage", "sendDocument"])
+
+    def test_fail_line_is_a_real_send_waiting_out_the_flood(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(config, "STATE_DIR", Path(d)):
+                b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1), "tok")
+            bot, clock, posts, p1, p2 = self.cli(d)
+            b.bot = bot
+            with p1, p2, self.assertLogs("claude-tg", "WARNING"):
+                bot.flood.hit(1, 60, "editMessageText")
+                b.fail(1, 50, "boom.")
+            self.assertEqual(posts, ["sendMessage"])
+
+
+def time_now():
+    import time
+    return time.time()
+
+
+class LookupCache(unittest.TestCase):
+    """Sticker list and bot username are cached in STATE_DIR/cache.json."""
+    def test_icons_and_username_hit_the_api_once(self):
+        from src import inbox, notify
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = Inbox.Bot()
+            for _ in range(3):
+                self.assertEqual(notify.icon_id(bot, "📋"), "222")
+                self.assertEqual(inbox.link(bot, 5), "https://t.me/my_bot/5/2147483647")
+            with mock.patch("sys.stderr"):
+                self.assertIsNone(notify.icon_id(bot, "🦄"))  # fresh cache: no refetch for an unknown emoji
+            methods = [m for m, _ in bot.calls]
+            self.assertEqual((methods.count("getForumTopicIconStickers"), methods.count("getMe")), (1, 1))
+            data = json.loads((Path(d) / "cache.json").read_text())
+            data["stickers"]["at"] -= notify.MISS_TTL + 1
+            (Path(d) / "cache.json").write_text(json.dumps(data))
+            with mock.patch("sys.stderr"):
+                self.assertIsNone(notify.icon_id(bot, "🦄"))  # an hour later: one refetch
+            self.assertEqual([m for m, _ in bot.calls].count("getForumTopicIconStickers"), 2)
 
 
 class FastConnect(unittest.TestCase):
@@ -1104,7 +1392,7 @@ class Notify(unittest.TestCase):
             a = mock.Mock(file=None, text=["hi"], html=False, markdown=False, silent=False, button=None,
                           thread=5, main_chat=False, topic=None, replace="dg")
             bot = FakeBot(fail={"sendMessage": "Bad Request: chat not found"})
-            with mock.patch.object(self.n, "Bot", lambda *_: bot), mock.patch.object(config, "read_token",
+            with mock.patch.object(self.n, "Bot", lambda *_, **__: bot), mock.patch.object(config, "read_token",
                                                                                      lambda c: "t"), \
                     mock.patch("sys.stderr"):
                 self.assertEqual(self.n.main(dict(config.DEFAULTS, owner_id=7), a), 1)
@@ -1345,6 +1633,22 @@ class LocalApiSecrets(unittest.TestCase):
             f.write_text("export A=plain\nexport B=a\\ b\\&c\nC='x y'\nexport D=\"q\"\n# x\nE=\n")
             self.assertEqual(config.read_env_file(str(f)), {"A": "plain", "B": "a b&c", "C": "x y", "D": "q", "E": ""})
 
+    def test_env_files_rotation_reaches_next_spawn(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "secrets.env"
+            f.write_text("export S=old\n")
+            with mock.patch.object(config, "STATE_DIR", Path(d)):
+                b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1, env_files=[str(f)]), "tok")
+            self.assertEqual(b.env["S"], "old")
+            f.write_text("export S=rotated\n")
+            os.utime(f, ns=(1, 2_000_000_000_000_000_000))  # mtime may not tick within a test
+            self.assertEqual(b.env["S"], "rotated")  # no restart
+            f.unlink()
+            with self.assertLogs("claude-tg", "WARNING") as logs:
+                self.assertEqual(b.env["S"], "rotated")  # gone/unreadable: last good values, no crash
+                self.assertEqual(b.env["S"], "rotated")
+            self.assertEqual(len(logs.output), 1)  # warned once
+
     def test_server_argv_keeps_secrets_out(self):
         from src import localapi
         cfg = dict(config.DEFAULTS, local_api_url="http://127.0.0.1:8081", local_api_bin="/x/telegram-bot-api")
@@ -1380,7 +1684,7 @@ class Inbox(unittest.TestCase):
             FakeRun.runs = []
             bot = self.Bot()
             r = self.ib.spawn(bot, self.cfg(), "Задача", d, "сделай X", icon="📋", system="manager role")
-            self.assertEqual((r["thread"], r["link"], r["message_id"]), (400, "https://t.me/my_bot/400", 77))
+            self.assertEqual((r["thread"], r["link"], r["message_id"]), (400, "https://t.me/my_bot/400/2147483647", 77))
             create = [p for m, p in bot.calls if m == "createForumTopic"][0]
             self.assertEqual((create["name"], create["icon_custom_emoji_id"]), ("Задача", "222"))
             posted = [p for m, p in bot.calls if m == "sendMessage"][0]
@@ -1419,6 +1723,28 @@ class Inbox(unittest.TestCase):
             until(lambda: b.workers[50].run is None)
             b.workers[50].close()
 
+    def test_show_line_stands_in_for_the_prompt_and_quiet_flag_travels(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            bot = self.Bot()
+            self.ib.spawn(bot, self.cfg(), "#3 RAM", d, "Задача #3: длинный промпт", show="▶️ #3 RAM — взял в работу",
+                          quiet=True)
+            self.ib.send(bot, self.cfg(), 50, "Дождались: сырой заголовок письма", show="📬 #3 RAM", quiet=True)
+            posted = [p["text"] for m, p in bot.calls if m == "sendMessage"]
+            self.assertEqual(posted, ["▶️ #3 RAM — взял в работу", "📬 #3 RAM"])  # the prompts never show
+            b = TopicCommands.bridge(self, d)
+            b.drain_inbox()
+            self.assertTrue(b.hushed(400) and b.hushed(50))
+            until(lambda: len(FakeRun.runs) == 2 and all(r.lines for r in FakeRun.runs))
+            self.assertEqual(sorted(r.lines[0] for r in FakeRun.runs),
+                             ["Дождались: сырой заголовок письма", "Задача #3: длинный промпт"])
+            for r in FakeRun.runs:
+                r.stop()
+            for t in (400, 50):
+                until(lambda t=t: b.workers[t].run is None)
+                b.workers[t].close()
+
     def test_alive_from_proc_env_and_pending(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             proc = Path(d) / "proc"
@@ -1444,7 +1770,16 @@ class Inbox(unittest.TestCase):
             with self.assertRaises(self.ib.NotifyError):
                 self.ib.topic_icon(bot, self.cfg(), 50, "🦄")
         self.assertEqual(self.ib.thread_of("https://t.me/my_bot/400"), 400)
+        self.assertEqual(self.ib.thread_of("https://t.me/my_bot/400/400"), 400)
+        self.assertEqual(self.ib.thread_of("https://t.me/my_bot/400/2147483647"), 400)
         self.assertEqual(self.ib.thread_of(" 12 "), 12)
+        with self.assertRaises(self.ib.NotifyError):
+            self.ib.thread_of("https://example.com/x")
+
+    def test_topic_link_opens_at_last_message(self):
+        self.assertEqual(self.ib.topic_link("my_bot", 400), "https://t.me/my_bot/400/2147483647")
+        self.assertEqual(self.ib.thread_of(self.ib.topic_link("my_bot", 400)), 400)
+        self.assertEqual(self.ib.topic_link(None, 400), "")
 
     def test_icon_command_stores_base_icon(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):

@@ -17,16 +17,18 @@ S = {
         "ph.think": "🧠 Thinking…", "ph.read": "📖 Reading files…", "ph.search": "🔎 Searching…",
         "ph.work": "⚙️ Working…", "ph.edit": "✏️ Making changes…", "ph.web": "🌐 Searching the web…",
         "ph.agent": "👥 Bringing in a helper…", "ph.plan": "📝 Making a plan…", "ph.write": "✍️ Writing the answer…",
-        "sec": "{s} s", "min": "{m} min {s} s",
+        "sec": "{s} s", "min": "{m} min {s} s", "mins": "{m} min",
         "help": "Each topic is its own Claude Code session. Write in a topic (or in All messages: a new topic is "
                 "created). Photos, files and voice notes work.\n\n"
                 "/cd <path> - working directory (starts a new session)\n/new - new session\n"
                 "/stop - stop the running task\n/status - session info\n"
                 "/verbose - detailed progress (tool calls) on/off\n"
+                "/quiet - quiet topic on/off: only the final answer stays, progress lives in the status line\n"
                 "/rename <title> - rename the topic\n/icon <emoji> - topic icon (/icon - list, /icon off - remove)\n/delete - delete the topic (the Claude session file stays on disk)",
         "cmd.new": "Start a new Claude session in this topic", "cmd.stop": "Stop the running Claude in this topic",
         "cmd.status": "Session, cwd, running?", "cmd.cd": "Set working directory: /cd <path>",
-        "cmd.verbose": "Detailed progress on/off", "cmd.rename": "Rename this topic: /rename <title>",
+        "cmd.verbose": "Detailed progress on/off", "cmd.quiet": "Quiet topic: only the final answer stays",
+        "cmd.rename": "Rename this topic: /rename <title>",
         "cmd.delete": "Delete this topic and forget its session", "cmd.help": "How this bot works",
         "in_topic": "/{cmd} works inside a topic.",
         "write_in_topic": "Please write inside a topic: each topic is a separate Claude session.",
@@ -43,6 +45,8 @@ S = {
         "cd_ok": "📁 Folder: {path}\nA new session starts with the next message.",
         "verbose_on": "🔍 Detailed progress on: tool calls are shown.",
         "verbose_off": "✨ Detailed progress off: short status only.",
+        "quiet_on": "🤫 Quiet topic: progress shows in the status line and disappears; only the final answer stays.",
+        "quiet_off": "💬 Quiet off: text between steps is posted as messages again.",
         "restart_rerun": "↻ The bot restarted mid-run - running this message again.",
         "restart_resend": "⚠️ The bot restarted and this message was not answered. Please resend it.",
         "restart_ok": "♻️ Bot restarted: {rev}",
@@ -76,16 +80,18 @@ S = {
         "ph.think": "🧠 Думаю…", "ph.read": "📖 Изучаю файлы…", "ph.search": "🔎 Ищу…",
         "ph.work": "⚙️ Работаю…", "ph.edit": "✏️ Вношу правки…", "ph.web": "🌐 Ищу в интернете…",
         "ph.agent": "👥 Подключаю помощника…", "ph.plan": "📝 Составляю план…", "ph.write": "✍️ Пишу ответ…",
-        "sec": "{s} с", "min": "{m} мин {s} с",
+        "sec": "{s} с", "min": "{m} мин {s} с", "mins": "{m} мин",
         "help": "Каждая тема - отдельная сессия Claude Code. Пишите в теме (или во «Всех сообщениях» - тогда "
                 "создастся новая тема). Можно слать фото, файлы и голосовые.\n\n"
                 "/cd <путь> - рабочая папка (начинает новую сессию)\n/new - новая сессия\n"
                 "/stop - остановить текущую задачу\n/status - информация о сессии\n"
                 "/verbose - подробный ход работы вкл/выкл\n"
+                "/quiet - тихая тема вкл/выкл: остаётся только итоговый ответ, ход работы - в строке статуса\n"
                 "/rename <название> - переименовать тему\n/icon <эмодзи> - иконка темы (/icon - список, /icon off - убрать)\n/delete - удалить тему (файл сессии Claude останется)",
         "cmd.new": "Новая сессия Claude в этой теме", "cmd.stop": "Остановить Claude в этой теме",
         "cmd.status": "Сессия, папка, идёт ли работа", "cmd.cd": "Рабочая папка: /cd <путь>",
-        "cmd.verbose": "Подробный ход работы вкл/выкл", "cmd.rename": "Переименовать тему: /rename <название>",
+        "cmd.verbose": "Подробный ход работы вкл/выкл", "cmd.quiet": "Тихая тема: остаётся только итоговый ответ",
+        "cmd.rename": "Переименовать тему: /rename <название>",
         "cmd.delete": "Удалить тему и забыть сессию", "cmd.help": "Как работает бот",
         "in_topic": "/{cmd} работает внутри темы.",
         "write_in_topic": "Пишите, пожалуйста, внутри темы: каждая тема - отдельная сессия Claude.",
@@ -103,6 +109,8 @@ S = {
         "cd_ok": "📁 Папка: {path}\nСо следующего сообщения начнётся новая сессия.",
         "verbose_on": "🔍 Подробный режим включён: видны все шаги.",
         "verbose_off": "✨ Подробный режим выключен: только короткий статус.",
+        "quiet_on": "🤫 Тихая тема: ход работы виден в строке статуса и исчезает, остаётся только итоговый ответ.",
+        "quiet_off": "💬 Тихий режим выключен: текст между шагами снова приходит сообщениями.",
         "restart_rerun": "↻ Бот перезапустился во время ответа - выполняю это сообщение заново.",
         "restart_resend": "⚠️ Бот перезапустился, и на это сообщение не ответил. Пришлите его ещё раз.",
         "restart_ok": "♻️ Бот перезапущен: {rev}",
@@ -150,12 +158,15 @@ def tool_phase(name: str) -> str:
 
 
 def elapsed(lng: str, sec: float) -> str:
-    """Rounded down to 5 s so the line changes (and is edited) at most every 5 s."""
-    s = int(sec) // 5 * 5
-    return t(lng, "sec", s=s) if s < 60 else t(lng, "min", m=s // 60, s=s % 60)
+    """Coarse steps so the timer alone edits the status rarely: 15 s under 1 min, 30 s under 2 min, then minutes."""
+    s = int(sec)
+    s = s // 15 * 15 if s < 60 else s // 30 * 30 if s < 120 else s // 60 * 60
+    if s < 60:
+        return t(lng, "sec", s=s)
+    return t(lng, "min", m=s // 60, s=s % 60) if s % 60 else t(lng, "mins", m=s // 60)
 
 
-def status_line(lng: str, phase: str, sec: float, show_after: float = 10.0) -> str:
+def status_line(lng: str, phase: str, sec: float, show_after: float = 15.0) -> str:
     """One short line: phase phrase + a subtle elapsed time once the run takes a while."""
     line = t(lng, "ph." + phase)
     return f"{line} · {elapsed(lng, sec)}" if sec >= show_after else line

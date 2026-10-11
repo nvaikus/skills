@@ -25,7 +25,7 @@ DEFAULTS = {
     "claudeai_connectors": True,  # False = ENABLE_CLAUDEAI_MCP_SERVERS=false for claude (no claude.ai connectors)
     "ui_lang": "en",             # bot-facing language: "en" | "ru"
     "status_style": "friendly",  # "friendly" = one short status line; "detailed" = tool calls (per topic: /verbose)
-    "reactions": True,           # False = no status reactions on the owner's messages (text/typing/status stay)
+    "reactions": False,          # True = status reactions on the owner's messages (👀 ✍ 👍 💔 👌)
     "permission_mode": "bypass",  # bypass = --dangerously-skip-permissions; auto | default | acceptEdits
     "protected_paths": [],       # leak filter (guard.py): files whose verbatim text never goes out; [] = off
     "protect_min_words": 12,     # consecutive matching words that count as a leak

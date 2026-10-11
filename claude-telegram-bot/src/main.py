@@ -122,11 +122,21 @@ def main(argv=None):
     s.add_argument("--system", metavar="TEXT|@FILE",
                    help="appended to claude's system prompt on every run of this topic (topic role)")
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
+    s.add_argument("--show", metavar="TEXT",
+                   help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
+    s.add_argument("--quiet", action="store_true",
+                   help="make the topic quiet (/quiet): text between steps stays in the status line, only the final "
+                        "answer is posted")
     s.add_argument("prompt", nargs="*")
     s = sub.add_parser("send", help="PROMPT into an existing topic as if the owner wrote it",
                        description=INBOX + " A live run takes it at once (stdin); else the topic's session resumes.")
     s.add_argument("--thread", required=True, metavar="ID|LINK")
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
+    s.add_argument("--show", metavar="TEXT",
+                   help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
+    s.add_argument("--quiet", action="store_true",
+                   help="make the topic quiet (/quiet): text between steps stays in the status line, only the final "
+                        "answer is posted")
     s.add_argument("prompt", nargs="*")
     s = sub.add_parser("alive", help="is a claude run live (or queued) in a topic? exit 0 yes, 1 no",
                        description="Live = a process with CLAUDE_TG_RUN_TOPIC=<thread> (/proc), a pending request "

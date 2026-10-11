@@ -51,7 +51,7 @@ def login(cfg, market=None):
     r = browser.run(cfg, "login", {}, market)
     if not r.get("logged_in"):
         raise Waiting(f"log in to eBay in the Chrome window that just opened (browser session "
-                      f"'{browser.session(cfg)}'), then rerun `ebay login`")
+                      f"'{browser.session(cfg)}'){browser.view_hint(cfg)}, then rerun `ebay login`")
     return {"logged_in": True, "session": browser.session(cfg), "site": browser.domain(cfg, market)}
 
 

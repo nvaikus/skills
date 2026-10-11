@@ -21,9 +21,23 @@ JS = Path(__file__).resolve().parent / "js"
 SESSION = "ebay"
 TIMEOUTS = {"nav": 60000, "el": 20000, "verify": 30000}  # ms: page load, one control, an outcome to show up
 RUN_TIMEOUT = 240  # s: whole action incl. a dump; the browser waits above are each bounded
-CAPTCHA = ("eBay shows a captcha in the ebay Chrome window: the user solves it there (tell him now), then rerun; "
+CAPTCHA = ("eBay shows a captcha in the ebay Chrome window: the user solves it there{where} (tell him now), then rerun; "
            "slow down - it follows bursts of automated page loads")
-NOT_LOGGED_IN = "not logged in to eBay in the ebay browser: run `ebay login` (the user signs in once in the Chrome window)"
+NOT_LOGGED_IN = "not logged in to eBay in the ebay browser: run `ebay login` (the user signs in once in the Chrome window{where})"
+
+
+def view_hint(cfg):
+    """Remote view of the browser (config browser_view_url) for exit-5 texts; '' when the user sits at this machine."""
+    url = cfg.get("browser_view_url")
+    return (f", which runs on this host: send the user the link {url} (opens the live browser screen,"
+            " also on a phone), wait for his \"done\"") if url else ""
+
+
+def use_display(cfg):
+    """Headless Linux host with an always-on virtual display: point the browser at config browser_display."""
+    if (sys.platform.startswith("linux") and cfg.get("browser_display")
+            and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))):
+        os.environ["DISPLAY"] = cfg["browser_display"]
 
 
 def session(cfg):
@@ -76,7 +90,8 @@ def ensure_open(name, url="about:blank"):
     if r.returncode != 0:
         hint = ""
         if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            hint = (" (headless host, no DISPLAY: browser actions need the user's desktop machine;"
+            hint = (" (headless host, no DISPLAY: set config browser_display to an always-on Xvfb display"
+                    " (+ browser_view_url for a noVNC link), or use the user's desktop machine;"
                     " seller replies also arrive as eBay notification emails)")
         raise CliError(f"could not open the browser: {_reason(r.stderr or r.stdout)}{hint}")
     return True
@@ -106,6 +121,7 @@ def _dump_text(res):
 def run(cfg, action, params, market=None):
     """Run js/<action>.js in the ebay browser session -> result dict (status ok)."""
     name = session(cfg)
+    use_display(cfg)
     ensure_open(name)
     dumps = paths.sub("browser", "dumps")
     params = {**params, "domain": domain(cfg, market), "dumpDir": str(dumps), "T": TIMEOUTS}
@@ -126,9 +142,9 @@ def run(cfg, action, params, market=None):
     if st == "ok":
         return res
     if st == "login":
-        raise Waiting(NOT_LOGGED_IN)
+        raise Waiting(NOT_LOGGED_IN.format(where=view_hint(cfg)))
     if st == "captcha":
-        raise Waiting(CAPTCHA)
+        raise Waiting(CAPTCHA.format(where=view_hint(cfg)))
     if st == "usage":
         raise UsageError(res.get("error"))
     txt = _dump_text(res)

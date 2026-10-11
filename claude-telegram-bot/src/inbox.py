@@ -1,10 +1,10 @@
 """Scripts -> running bot: `claude-tg spawn | send | alive | topic-icon`.
 
 The bot owns state.json, so a script never writes it. A prompt for a topic is posted into the topic as a bot
-message (the owner sees what was asked), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
+message (the owner sees what was asked, or a short `--show` line standing in for it), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
 (`Bridge.drain_inbox`, every second) turns each file into an owner message of that topic: same queue, same
 resume, same mid-run stdin injection. Files wait while the bot is down. Topic settings (cwd, title, base icon,
-appended system prompt) travel in the same file and are applied by the bot before the prompt runs.
+appended system prompt, quiet flag) travel in the same file and are applied by the bot before the prompt runs.
 
 Liveness (`alive`): a claude process whose env carries CLAUDE_TG_RUN_TOPIC=<thread> (/proc, Linux), a pending
 request of that topic in state.json, or a queued inbox file for it."""
@@ -17,8 +17,8 @@ import uuid
 from pathlib import Path
 
 from . import config
-from .botapi import Bot, TgError
-from .notify import NotifyError, icon_id, owner_chat
+from .botapi import Skipped, TgError
+from .notify import NotifyError, bot_username, cli_bot, icon_id, owner_chat
 
 POSTED = 3900  # visible copy of a prompt; the full text travels in the inbox file
 
@@ -50,26 +50,35 @@ def pending_files(thread=None) -> list:
     return out
 
 
-def post(bot, chat, thread, prompt, silent=False) -> dict:
-    """The prompt as a visible bot message in the topic; its id becomes the request key in the bot."""
-    text = prompt if len(prompt) <= POSTED else prompt[:POSTED] + "…"
+def post(bot, chat, thread, prompt, silent=False, show=None) -> dict:
+    """The prompt as a visible bot message in the topic (or `show`, a short human line standing in for it:
+    claude still gets the full prompt); its id becomes the request key in the bot."""
+    text = (show or prompt).strip()
+    text = text if len(text) <= POSTED else text[:POSTED] + "…"
     m = bot.call("sendMessage", chat_id=chat, message_thread_id=thread, text=text,
                  disable_notification=silent or None, link_preview_options={"is_disabled": True})
     return {"message_id": m["message_id"], "chat": {"id": chat, "type": "private"}, "from": {"id": chat},
             "message_thread_id": thread, "date": int(time.time()), "text": prompt}
 
 
+LAST_MSG = 2147483647  # int32 max: a message that doesn't exist -> Telegram opens the topic at its last message
+LINK_RE = re.compile(r"^(?:https?://)?t\.me/[^/\s]+/(\d+)(?:/\d+)?/?$")
+
+
+def topic_link(name, thread) -> str:
+    """Link that opens the topic at its last message (`/<thread>` alone opens only the creation message
+    in the main chat view, `/<thread>/<thread>` the topic's first message)."""
+    return f"https://t.me/{name}/{thread}/{LAST_MSG}" if name else ""
+
+
 def link(bot, thread) -> str:
-    try:
-        name = bot.call("getMe").get("username")
-    except TgError:
-        name = None
-    return f"https://t.me/{name}/{thread}" if name else ""
+    return topic_link(bot_username(bot), thread)
 
 
 def thread_of(ref) -> int:
-    """Topic id from an id or a link ending in /<id>."""
-    m = re.search(r"(\d+)/?$", str(ref).strip())
+    """Topic id from an id or a topic link: `t.me/<bot>/<thread>[/<msg>]`."""
+    s = str(ref).strip()
+    m = LINK_RE.match(s) or re.fullmatch(r"(\d+)", s)
     if not m:
         raise NotifyError(f"not a topic id or link: {ref!r}")
     return int(m.group(1))
@@ -83,7 +92,7 @@ def read_system(arg):
     return arg.strip()
 
 
-def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False) -> dict:
+def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False) -> dict:
     path = Path(os.path.expanduser(cwd or cfg["default_cwd"])).resolve()
     if not path.is_dir():
         raise NotifyError(f"cwd is not a directory: {path}")
@@ -98,15 +107,20 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False) ->
         topic["icon"] = cid
     if system:
         topic["system"] = system
-    msg = post(bot, chat, thread, prompt, silent)
+    if quiet:
+        topic["quiet"] = True
+    msg = post(bot, chat, thread, prompt, silent, show)
     enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg, "topic": topic})
     return {"thread": thread, "link": link(bot, thread), "message_id": msg["message_id"], "cwd": str(path)}
 
 
-def send(bot, cfg, thread, prompt, silent=False) -> dict:
+def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False) -> dict:
     chat = owner_chat(cfg)
-    msg = post(bot, chat, thread, prompt, silent)
-    enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg})
+    msg = post(bot, chat, thread, prompt, silent, show)
+    item = {"op": "prompt", "thread": thread, "chat": chat, "msg": msg}
+    if quiet:
+        item["topic"] = {"quiet": True}
+    enqueue(item)
     return {"thread": thread, "message_id": msg["message_id"]}
 
 
@@ -160,8 +174,11 @@ def topic_icon(bot, cfg, thread, arg) -> dict:
         cid = icon_id(bot, a)
         if not cid:
             raise NotifyError(f"{a} is not a topic icon (getForumTopicIconStickers)")
-    try:
-        bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=cid)
+    try:  # cosmetic: skipped (not waited) while the chat is in a flood wait or over its budget
+        bot.call("editForumTopic", _retries=0, chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=cid)
+    except Skipped as e:
+        print(f"claude-tg topic-icon: not set, {e.description}", file=sys.stderr)
+        return {"thread": thread, "icon": cid or None, "skipped": True}
     except TgError as e:
         if "NOT_MODIFIED" not in (e.description or "").upper():
             raise
@@ -182,11 +199,11 @@ def main(cfg: dict, a) -> int:
             r = alive(thread_of(a.thread))
             print(json.dumps(r))
             return 0 if r["live"] else 1
-        bot = Bot(config.read_token(cfg))
+        bot = cli_bot(cfg)
         if a.cmd == "spawn":
-            r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent)
+            r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet)
         elif a.cmd == "send":
-            r = send(bot, cfg, thread_of(a.thread), _text(a), a.silent)
+            r = send(bot, cfg, thread_of(a.thread), _text(a), a.silent, a.show, a.quiet)
         else:
             r = topic_icon(bot, cfg, thread_of(a.thread), a.icon)
     except (NotifyError, OSError) as e:

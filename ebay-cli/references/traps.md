@@ -23,6 +23,7 @@
 
 ## Account (cart, msg, login)
 - Needs `playwright-cli` (npm `@playwright/cli`) and Chrome. Session `ebay` (config `browser_session` / env `EBAY_BROWSER_SESSION`); a separate session = separate profile = separate login.
+- Headless Linux server (no desktop): config `browser_display` (e.g. `":99"`) = an always-on Xvfb display used when env has no `DISPLAY`; `browser_view_url` = the user's remote view of it (noVNC link, tailnet-only). With the URL set, exit-5 texts carry it: send the user that link, wait for "done", rerun. Never headless Chrome (captcha wall), never copy a profile from another machine (eBay sees a new device anyway).
 - One action at a time per session: two parallel `ebay cart`/`msg` calls drive the same tab.
 - Exit 5 "captcha": eBay challenges after bursts of automated page loads; the user solves it in the Chrome window. Space out calls; don't loop.
 - Signed-in check = cookie `ebay` with `sin=in`; an expired login that keeps the cookie shows up as a redirect to `signin.*` - also exit 5.
@@ -31,5 +32,4 @@
 - `cart rm ID` removes every line of that id, all variations.
 - Seller user id comes from the Browse API (listing pages show store slugs, not ids); without keys the CLI clicks "contact seller" to read it. `--seller` skips both.
 - Message times are the site's local strings (`Heute 18:41`, `Gestern`); `from` = `me` or the seller id. A seller reply shows in `msg list` as `last_by=them`. eBay auto-translates the seller's messages into the site language: `msg list --item` text = translation, `-j` field `original` = what the seller wrote.
-- `msg send` does not retry. After exit 1 the message may still have gone out: `ebay msg list --item ID` before resending.
 - Failures leave `~/.claude/ebay/browser/dumps/<step>-<ts>.png` + `.txt` (URL, title, ARIA snapshot).

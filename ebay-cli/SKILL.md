@@ -1,6 +1,6 @@
 ---
 name: ebay-cli
-description: Buyer-side eBay search for agents through eBay's official Browse API (no scraping), one stdlib CLI on macOS, Linux and Windows. Search listings with price, condition, auction/fixed/best-offer, sort and category filters and shipping priced for the user's own country; open a listing as a compact card (shipping, returns, seller, item specifics, variations); find category ids; save searches and rerun them to get only new listings and price drops (cron-ready). Guided onboarding of the user's free developer keys in chat. In the user's own logged-in browser (playwright-cli): add/list/remove cart items and message a listing's seller, then read the replies. Use when a task is about buying or finding something on eBay. NOT for selling, checkout/paying, bidding, offers, or sold-price history. Triggers - "find on eBay", "search eBay for", "how much is X on eBay", "cheapest X that ships to me", "look at this eBay listing", an ebay.* /itm/ link, "watch eBay for X", "alert me when a new X is listed", "eBay deal", "put it in my eBay cart", "ask the seller", "did the seller answer", "ebay".
+description: Buyer-side eBay search for agents through eBay's official Browse API (no scraping), one stdlib CLI on macOS, Linux and Windows. Search listings with price, condition, buying-format, sort and category filters and shipping priced for the user's country; open a listing as a compact card; find category ids; save searches and rerun them to get only new listings and price drops (cron-ready). Guided onboarding of the user's free developer keys in chat. In the user's own logged-in browser (playwright-cli): add/list/remove cart items and message a listing's seller, then read the replies. Use when a task is about buying or finding something on eBay. NOT for selling, checkout/paying, bidding, offers, or sold-price history. Triggers - "find on eBay", "search eBay for", "how much is X on eBay", "cheapest X that ships to me", "look at this eBay listing", an ebay.* /itm/ link, "watch eBay for X", "alert me when a new X is listed", "eBay deal", "put it in my eBay cart", "ask the seller", "did the seller answer", "ebay".
 ---
 
 # ebay-cli
@@ -26,7 +26,7 @@ ebay msg list                                        # inbox, last_by=them = ans
 
 ## Account (browser)
 
-`cart`, `msg`, `login` drive a headed Chrome (playwright-cli session `ebay`, persistent profile) logged in as the user. Exit 5 = a human step: not signed in (run `ebay login`) or an eBay captcha; tell the user at once what to do in the Chrome window, rerun after he says done. `msg send` is not idempotent: never rerun it after an unclear failure, check `ebay msg list --item ID` first. On exit 1 read the dump (`.png` + `.txt`) the error names before retrying.
+`cart`, `msg`, `login` drive a headed Chrome (playwright-cli session `ebay`, persistent profile) logged in as the user. Exit 5 = a human step: not signed in (run `ebay login`) or an eBay captcha; tell the user at once what to do in the Chrome window (on a headless server the error carries a remote-view link: send it), rerun after he says done. `msg send` is not idempotent and does not retry: after exit 1 or any unclear failure the message may already be out, never rerun it before `ebay msg list --item ID`. On exit 1 read the dump (`.png` + `.txt`) the error names before retrying.
 
 ## Contract
 

@@ -6,7 +6,8 @@ EPILOG = """examples:
   ebay login                 # logged in -> one row; else opens the sign-in page, exit 5
   ebay login --market EBAY_GB
 
-Exit 5 = the user must sign in in the Chrome window that opened (tell him at once), then rerun.
+Exit 5 = the user must sign in in the Chrome window that opened (tell him at once; on a headless server
+send the remote-view link from the error, config browser_view_url), then rerun.
 Browser: playwright-cli session 'ebay' (config browser_session / env EBAY_BROWSER_SESSION), headed,
 persistent profile; the login survives restarts. Never asks for or stores the password.
 """

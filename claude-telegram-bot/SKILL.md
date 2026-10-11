@@ -15,8 +15,8 @@ claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after eve
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat] [--replace KEY]   # bot -> owner; stdin if no TEXT
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
-claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [PROMPT]   # new topic + session; stdin if no PROMPT
-claude-tg send --thread ID|LINK [--silent] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
+claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [PROMPT]   # new topic + session; stdin if no PROMPT
+claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
@@ -37,12 +37,12 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## Bot behavior (what the owner sees)
 
 - One topic = one session; a message in "All messages" creates a new topic. Topics run in parallel. A message sent while Claude works in that topic goes into the running session at once (stdin): answered in its own turn even while a background helper runs, or folded into the current turn; it queues only while the process is exiting.
-- Reactions 👀 accepted, ✍ working, 👍 done, 💔 error, 👌 stopped (config `reactions: false` = none; errors stay visible as text); typing indicator; answer streamed via `sendMessageDraft` with a stop button, then sent as HTML, long answers also as `answer.md`.
-- Status (config `status_style`): `friendly` (default) = one edited line by activity ("🧠 Thinking…", "📖 Reading files…", "⚙️ Working… · 15 s"), no tool names/paths, not sent if the answer starts within 2 s; `detailed` = tool calls list. `/verbose [on|off]` switches one topic. Errors = one "😕 …" line; full detail in logs and in verbose mode.
+- Reactions off by default; config `reactions: true` turns on 👀 accepted, ✍ working, 👍 done, 💔 error, 👌 stopped (errors stay visible as text either way); typing indicator (at turn start, then only while no status/draft is on screen); answer streamed via `sendMessageDraft` with a stop button, then sent as HTML, long answers also as `answer.md`.
+- Status (config `status_style`): `friendly` (default) = one edited line by activity ("🧠 Thinking…", "📖 Reading files…", "⚙️ Working… · 15 s"; timer in 15 s / 30 s / 1 min steps, timer-only edits ≥ 10 s apart), no tool names/paths, not sent if the answer starts within 2 s; `detailed` = tool calls list, at most one edit per 6 s. `/verbose [on|off]` switches one topic. `/quiet [on|off]` (or `spawn/send --quiet`): text blocks between tool calls go into the status message (top line, edited, deleted with it) instead of separate messages; only the final answer stays - it must be self-contained. Errors = one "😕 …" line; full detail in logs and in verbose mode. Status edits, drafts and typing share a per-chat budget (Telegram limits are per chat across topics): with many parallel topics they update less often; after a 429 they pause until the flood wait ends while answers and error lines wait and are still delivered (log: `flood wait N s` / `flood wait over`). The flood state lives in `STATE_DIR/flood.json`, shared with CLI calls (`notify`, `spawn`, `send`, `topic-icon`): during a wait `topic-icon` is skipped (stderr note, `"skipped": true`), sends wait.
 - Bot language: `ui_lang` `en` | `ru` (status, commands, /help, errors).
 - Auto-named topics get a ≤5-word title after the first answer (`title_model`, default haiku).
 - Photos/files → `~/.local/share/claude-tg/files/<thread>/`, paths passed to claude. Over 20 MB: needs the local Bot API server (`local_api_url`), else skipped: owner gets why + workaround, claude a note; rest of the message runs. Voice/audio/video notes → model-cli `asr` (config `stt_models`, free first) → "🎙 transcript" → claude.
-- In-topic commands: `/cd <path>` (validates; starts a new session - sessions are tied to their cwd), `/new`, `/stop`, `/status` (incl. background tasks), `/verbose`, `/rename <title>` (auto-title never overrides it), `/icon <emoji>|off` (only `getForumTopicIconStickers` emojis; no arg lists them), `/delete` (topic + mapping + saved files; the Claude session file stays), `/help`.
+- In-topic commands: `/cd <path>` (validates; starts a new session - sessions are tied to their cwd), `/new`, `/stop`, `/status` (incl. background tasks), `/verbose`, `/quiet`, `/rename <title>` (auto-title never overrides it), `/icon <emoji>|off` (only `getForumTopicIconStickers` emojis; no arg lists them), `/delete` (topic + mapping + saved files; the Claude session file stays), `/help`.
 - A command typed in All messages is answered there; the topic the client wraps it in is deleted.
 - Restart-safe: accepted requests are kept in `state.json` until answered; after a restart queued ones run, cut ones re-run with a "↻" note (older than 1 h: 💔 + "resend").
 - A topic deleted in the Telegram client sends the bot nothing: its mapping is dropped on the first failed send there.
@@ -60,8 +60,8 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 
 ## spawn / send (scripts driving sessions)
 
-- Need the running service: the prompt is posted into the topic as a bot message (the owner sees it), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
-- `spawn` prints `{thread, link, message_id, cwd}`; `link` = `https://t.me/<bot>/<thread>`. `--system` = per-topic role appended to claude's system prompt on every run of that topic.
+- Need the running service: the prompt is posted into the topic as a bot message (the owner sees it; `--show TEXT` posts that short human line instead, claude still gets the full prompt), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
+- `spawn` prints `{thread, link, message_id, cwd}`; `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs.
 - `alive` = a process with `CLAUDE_TG_RUN_TOPIC=<thread>`, a pending request or an inbox file. A finished turn ends the process: idle between turns is normal.
 - Status-only lines into a topic (no claude turn): `notify --thread ID --silent`.
 

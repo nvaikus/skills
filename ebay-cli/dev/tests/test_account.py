@@ -1,12 +1,13 @@
 """Account commands (cart, msg, login) with a mocked playwright-cli. Run: python3 -m unittest discover -s dev/tests"""
 import json
+import os
 import re
 import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from support import ROOT, fixture, run  # noqa: E402  (sets the test environment first)
+from support import ROOT, fixture, run, write_config  # noqa: E402  (sets the test environment first)
 from test_cli import Base  # noqa: E402
 
 from src.api import browser  # noqa: E402
@@ -121,6 +122,22 @@ class TestBrowser(AccountBase):
         self.pw(results={"login": {"status": "ok", "logged_in": True}})
         rc, out, _ = run("login", "-j")
         self.assertEqual((rc, json.loads(out)["logged_in"]), (0, True))
+
+    def test_remote_display_and_view_url(self):
+        write_config(market="EBAY_DE", browser_display=":99", browser_view_url="https://box.ts.net/vnc.html")
+        self.pw(results={"cart_list": {"status": "login"}, "login": {"status": "ok", "logged_in": False}})
+        env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+        with mock.patch.dict("os.environ", env, clear=True), mock.patch.object(browser.sys, "platform", "linux"):
+            rc, _, err = run("cart", "list")
+            self.assertEqual(os.environ.get("DISPLAY"), ":99")
+        self.assertEqual(rc, 5)
+        self.assertIn("https://box.ts.net/vnc.html", err)
+        rc, _, err = run("login")
+        self.assertEqual(rc, 5)
+        self.assertIn("https://box.ts.net/vnc.html", err)
+        with mock.patch.dict("os.environ", {"DISPLAY": ":0"}):
+            run("cart", "list")
+            self.assertEqual(os.environ["DISPLAY"], ":0")
 
 
 class TestCart(AccountBase):

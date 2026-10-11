@@ -27,12 +27,12 @@
 | `claude_bin` | PATH, then `~/.local/bin/claude` | claude executable |
 | `claude_args` | `[]` | extra args for every run, e.g. `["--model", "opus"]` |
 | `title_model` | `haiku` | model for topic titles |
-| `env_files` | `[]` | `KEY=VALUE` files loaded into the bot and claude env - the service does not source shell rc files, so API keys (e.g. model-cli's `HF_TOKEN`, `OPENROUTER_API_KEY`) go here |
+| `env_files` | `[]` | `KEY=VALUE` files loaded into the bot and claude env; re-read on change at each claude spawn, so a rotated secret needs no restart (`local-api serve` reads them at its start) - the service does not source shell rc files, so API keys (e.g. model-cli's `HF_TOKEN`, `OPENROUTER_API_KEY`) go here |
 | `stt_models` | `[""]` | model-cli asr models tried in order; `""` = model-cli's default (HF whisper) |
 | `claudeai_connectors` | true | false = `ENABLE_CLAUDEAI_MCP_SERVERS=false` for claude: no claude.ai account connectors (Gmail, Drive…), so unauthenticated ones stop showing up in answers |
 | `ui_lang` | `en` | bot-facing language: `en` \| `ru` |
 | `status_style` | `friendly` | `friendly` = one short activity line; `detailed` = tool calls + thinking (debug). Per topic: `/verbose` |
-| `reactions` | true | false = no status reactions (👀 ✍ 👍 💔 👌) on the owner's messages; typing, status line, draft and error text stay |
+| `reactions` | false | true = status reactions (👀 ✍ 👍 💔 👌) on the owner's messages; typing, status line, draft and error text stay either way |
 | `stt_paid` | false | allow paid STT (`--paid`); e.g. add `openrouter:google/gemini-2.5-flash-lite` (fractions of a cent per note) |
 | `permission_mode` | `bypass` | `bypass` = `--dangerously-skip-permissions`; `auto` \| `default` \| `acceptEdits` → `--permission-mode <v>`. `auto` = classifier-gated tools, works headless on Sonnet/Opus; Haiku silently falls back to `default` (`doctor` WARN). A denied call → one "🚫 not allowed" line per tool per turn, logged; claude goes on |
 | `protected_paths` | `[]` | leak filter: dirs/files/globs (`~`, `$VAR` expanded) whose text must never go out verbatim. Any answer, draft, status, notify text or file quoting ≥ `protect_min_words` consecutive words of them → replaced by a "hidden" notice, logged as `leak blocked topic … quotes <file>`; files under these paths are never sent. Paraphrase passes. Index rebuilt on change (checked at run start); `doctor` shows its size. An unlistable dir (`--x`) indexes nothing: list its readable files explicitly |

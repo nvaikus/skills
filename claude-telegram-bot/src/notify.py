@@ -20,6 +20,7 @@ next try. `notify-delete KEY` deletes and forgets without sending."""
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import config, fmt, guard, ui
@@ -36,6 +37,13 @@ PHOTO = {".jpg", ".jpeg", ".png", ".webp"}
 
 class NotifyError(Exception):
     pass
+
+
+def cli_bot(cfg: dict) -> Bot:
+    """Bot for a CLI process: shares the bot's flood state (STATE_DIR/flood.json), notes a wait on stderr."""
+    def note(left):
+        print(f"claude-tg: chat in a Telegram flood wait, sending in {left:.0f} s", file=sys.stderr)
+    return Bot(config.read_token(cfg), state_dir=config.STATE_DIR, on_wait=note)
 
 
 def owner_chat(cfg: dict) -> int:
@@ -81,16 +89,71 @@ def spec(cfg: dict, key: str) -> dict:
     return {"name": v.get("name") or key, "icon": v.get("icon") or None}
 
 
+STICKERS_TTL, ME_TTL, MISS_TTL = 7 * 86400, 30 * 86400, 3600  # MISS: an unknown emoji refetches at most hourly
+
+
+def _cache_file() -> Path:
+    return config.STATE_DIR / "cache.json"
+
+
+def cached(key: str, ttl: float, fetch, now=None):
+    """Value of `fetch()` remembered in STATE_DIR/cache.json for `ttl` s (Bot API lookups that rarely change:
+    topic icon stickers, the bot's username). Any file error = just fetch."""
+    p, now = _cache_file(), time.time() if now is None else now
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, ValueError):
+        data = {}
+    hit = data.get(key) if isinstance(data, dict) else None
+    if isinstance(hit, dict) and now - hit.get("at", 0) < ttl:
+        return hit["value"]
+    value = fetch()
+    data = data if isinstance(data, dict) else {}
+    data[key] = {"at": now, "value": value}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"cache.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False))
+        os.replace(tmp, p)
+    except OSError:
+        pass
+    return value
+
+
+def _cache_age(key: str) -> float:
+    try:
+        return time.time() - json.loads(_cache_file().read_text())[key]["at"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return float("inf")
+
+
+def bot_username(bot):
+    """The bot's @username (for topic links), cached; None when getMe fails."""
+    try:
+        return cached("username", ME_TTL, lambda: bot.call("getMe").get("username"))
+    except TgError:
+        return None
+
+
 def icon_id(bot, icon):
-    """custom_emoji_id for an icon given as emoji or id; None (with a warning) when unknown."""
+    """custom_emoji_id for an icon given as emoji or id; None (with a warning) when unknown.
+    The sticker list is cached (STICKERS_TTL); an emoji missing from it refetches once the cache is > 1 h old."""
     if not icon:
         return None
     if str(icon).isdigit():
         return str(icon)
+    want = str(icon).rstrip("\ufe0f")
+
+    def fetch():
+        return [{"emoji": s.get("emoji", ""), "custom_emoji_id": s["custom_emoji_id"]}
+                for s in bot.call("getForumTopicIconStickers")]
     try:
-        for s in bot.call("getForumTopicIconStickers"):
-            if s.get("emoji", "").rstrip("\ufe0f") == str(icon).rstrip("\ufe0f"):
-                return s["custom_emoji_id"]
+        for ttl in (STICKERS_TTL, 0):
+            if ttl == 0 and _cache_age("stickers") < MISS_TTL:
+                break
+            for s in cached("stickers", ttl, fetch):
+                if s.get("emoji", "").rstrip("\ufe0f") == want:
+                    return s["custom_emoji_id"]
     except TgError as e:
         print(f"claude-tg notify: no topic icons ({e.description})", file=sys.stderr)
         return None
@@ -337,7 +400,7 @@ def delete_main(cfg: dict, a) -> int:
         print("claude-tg notify-delete: give a KEY or --id", file=sys.stderr)
         return 2
     try:
-        return forget(Bot(config.read_token(cfg)), cfg, a.key, a.id or [])
+        return forget(cli_bot(cfg), cfg, a.key, a.id or [])
     except NotifyError as e:
         print(f"claude-tg notify-delete: {e}", file=sys.stderr)
         return 2
@@ -354,11 +417,11 @@ def main(cfg: dict, a) -> int:
         text, mode = ui.t(ui.lang(cfg), "leak"), "plain"
     topic, thread = target(a)
     try:
-        token = config.read_token(cfg)
+        bot = cli_bot(cfg)
         if files:
-            r = send_files(Bot(token), cfg, files, text, mode, a.silent, topic, a.button, thread, g)
+            r = send_files(bot, cfg, files, text, mode, a.silent, topic, a.button, thread, g)
         else:
-            r = send(Bot(token), cfg, text, mode, a.silent, topic, a.button, thread)
+            r = send(bot, cfg, text, mode, a.silent, topic, a.button, thread)
     except NotifyError as e:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 2
@@ -366,6 +429,6 @@ def main(cfg: dict, a) -> int:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 1
     if getattr(a, "replace", None):
-        replace(Bot(token), a.replace, r)
+        replace(bot, a.replace, r)
     print(json.dumps(r))
     return 3 if r.get("blocked") else 0

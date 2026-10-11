@@ -11,12 +11,12 @@ import time
 from pathlib import Path
 
 from . import config, fmt, guard, inbox, media, runner, ui
-from .botapi import Bot, TgError
+from .botapi import Bot, Skipped, TgError
 from .store import GENERAL, Store
 
 log = logging.getLogger("claude-tg")
 
-COMMANDS = ["new", "stop", "status", "cd", "verbose", "rename", "icon", "delete", "help"]
+COMMANDS = ["new", "stop", "status", "cd", "verbose", "quiet", "rename", "icon", "delete", "help"]
 RESTARTED = ("[The bridge restarted while you were answering this message. Your partial work may already be in "
              "this session: check before repeating side effects.]\n\n")
 RERUN_MAX_AGE = 3600  # older unfinished requests are not re-run after a restart: the user is told to resend
@@ -37,13 +37,10 @@ TITLE_PROMPT = (
 class Bridge:
     def __init__(self, cfg: dict, token: str):
         self.cfg = cfg
-        self.bot = Bot(token)
+        self.bot = Bot(token, state_dir=config.STATE_DIR)  # flood state shared with CLI calls
         self.big = Bot(token, cfg["local_api_url"]) if cfg.get("local_api_url") else None  # files > 20 MB
         self.store = Store(config.STATE_DIR / "state.json", cfg["default_cwd"])
-        extra = {}
-        for f in cfg["env_files"]:
-            extra.update(config.read_env_file(f))
-        self.env = runner.child_env(token, extra, cfg["claudeai_connectors"])
+        self.child_env = runner.ChildEnv(token, cfg["env_files"], cfg["claudeai_connectors"])
         self.claude = config.claude_bin(cfg)
         self.workers = {}
         self.bursts = {}  # thread (GENERAL too) -> [msgs] still collecting, see collect()
@@ -54,6 +51,11 @@ class Bridge:
         self.owner = cfg.get("owner_id") or self.store.owner_id
         self.lang = ui.lang(cfg)
         self.guard = guard.from_config(cfg)  # outbound leak filter; None = off
+
+    @property
+    def env(self) -> dict:
+        """Env for a child (claude, STT): env_files re-read on change, so rotated secrets apply without restart."""
+        return self.child_env.get()
 
     def s(self, key, **kw):
         return ui.t(self.lang, key, **kw)
@@ -79,6 +81,11 @@ class Bridge:
         v = self.store.topic(thread).get("verbose")
         return v if v is not None else self.cfg.get("status_style") == "detailed"
 
+    def hushed(self, thread) -> bool:
+        """Quiet topic (/quiet, `spawn/send --quiet`): text between tool calls goes into the status message
+        instead of separate messages, so only the final answer stays in the topic."""
+        return bool(self.store.topic(thread).get("quiet"))
+
     def fail(self, chat, thread, why, detail=""):
         """Friendly one-liner for the owner; the detail only in verbose mode (and always in logs)."""
         if detail:
@@ -88,17 +95,30 @@ class Bridge:
             text += "\n\n" + detail
         if self.leak(text, thread):
             text = self.s("leak")
-        self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, text=text[:fmt.LIMIT],
-                   link_preview_options={"is_disabled": True})
+        try:  # a real send: waits out a flood wait, never dropped
+            self.say(chat, thread, text[:fmt.LIMIT])
+        except TgError as e:
+            log.warning("error line not sent: %s", e)
 
     # ---------- telegram helpers (cosmetic calls never retry, never raise) ----------
     def quiet(self, method, **p):
         try:
             return self.bot.call(method, _retries=0, **p)
-        except TgError as e:
-            if not self.gone(e, p.get("message_thread_id")) and "not modified" not in e.description:
-                log.info("%s", e)
+        except Skipped:
+            if method == "deleteMessage":  # a stale status / stream message must still go: retry after the wait
+                t = threading.Timer(self.bot.flood.left(p.get("chat_id")) + 1, self.quiet, (method,), p)
+                t.daemon = True
+                t.start()
             return None
+        except TgError as e:
+            if e.code != 429 and not self.gone(e, p.get("message_thread_id")) and "not modified" not in e.description:
+                log.info("%s", e)  # 429: Bot.flood logs the start and end of a wait once
+            return None
+
+    def calm(self, chat, method="editMessageText") -> bool:
+        """A cosmetic call to this chat would go out now (no flood wait, budget left)."""
+        flood = getattr(self.bot, "flood", None)
+        return flood is None or flood.ready(chat, method)
 
     def gone(self, e: TgError, thread) -> bool:
         """Topic deleted in the client (no update is sent for that): forget it on the first failed send."""
@@ -117,7 +137,7 @@ class Bridge:
         log.info("topic %s forgotten: %s", thread, why)
 
     def react(self, chat, mid, emoji):
-        if not self.cfg.get("reactions", True):
+        if not self.cfg.get("reactions", False):
             return
         self.quiet("setMessageReaction", chat_id=chat, message_id=mid,
                    reaction=[{"type": "emoji", "emoji": emoji}] if emoji else [])
@@ -172,7 +192,7 @@ class Bridge:
             for w in list(self.workers.values()):
                 if w.draft_id == draft:
                     w.stop(drop_queue=False)
-                    if not self.cfg.get("reactions", True):  # no 👌 then: confirm the stop button in text
+                    if not self.cfg.get("reactions", False):  # no 👌 then: confirm the stop button in text
                         self.quiet("sendMessage", chat_id=w.chat, message_thread_id=w.thread or None,
                                    text=self.s("stopped"))
             return
@@ -322,6 +342,10 @@ class Bridge:
             on = {"on": True, "off": False}.get(arg.lower(), not self.detailed(thread))
             self.store.update(thread, verbose=on)
             self.say(chat, thread, self.s("verbose_on" if on else "verbose_off"))
+        elif cmd == "quiet":
+            on = {"on": True, "off": False}.get(arg.lower(), not self.hushed(thread))
+            self.store.update(thread, quiet=on)
+            self.say(chat, thread, self.s("quiet_on" if on else "quiet_off"))
         elif cmd == "cd":
             if not arg:
                 return self.say(chat, thread, self.s("cd_show", cwd=t["cwd"]))
@@ -721,7 +745,7 @@ class Worker:
                     self.denied(ev)
                 elif ev.kind == "text":
                     self.st.set("write")
-                    if now - self.last_draft >= 1.0 and ev.text.strip():
+                    if now - self.last_draft >= 1.0 and ev.text.strip() and self.b.calm(self.chat):
                         self.last_draft = now
                         self.stream_id = self._stream(ev.text, self.stream_id)
                 elif ev.kind == "text_end":
@@ -824,6 +848,11 @@ class Worker:
             if self.stream_id:
                 self.b.quiet("deleteMessage", chat_id=self.chat, message_id=self.stream_id)
                 self.stream_id = None
+            if self.b.hushed(self.thread):  # quiet topic: one progress line in the status, gone with it
+                if self.st:
+                    self.st.note(text)
+                self.tripped = False
+                return
             try:
                 self.answer(text)
                 self.posted = text
@@ -878,9 +907,21 @@ class Worker:
         sent = b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread, text=tail)
         return sent and sent["message_id"]
 
+    DRAFT_TTL = 25  # a sendMessageDraft preview stays up ~30 s
+
+    def shows_progress(self) -> bool:
+        """A status message, an edit-mode stream message or a fresh draft is on screen: typing adds nothing."""
+        st = self.st
+        return bool((st and st.id) or self.stream_id
+                    or (self.last_draft and time.monotonic() - self.last_draft < self.DRAFT_TTL))
+
     def _typing(self, done: threading.Event):
+        """Once at turn start (covers the status DELAY), then every 4 s only while nothing else shows progress."""
+        first = True
         while not done.is_set():
-            self.b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread, action="typing")
+            if first or not self.shows_progress():
+                self.b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread, action="typing")
+            first = False
             done.wait(4)
 
     def rename(self, question, answer):
@@ -904,16 +945,18 @@ class Worker:
 class Status:
     """The run's one in-place status message, rendered by a ticker thread (so elapsed time moves while a
     tool runs silently). friendly: one short phase line; detailed (/verbose): tool calls + thinking.
-    Nothing is sent if the answer starts within DELAY; edits are throttled to MIN_EDIT except phase changes."""
-    DELAY, MIN_EDIT, TICK, IDLE = 2.0, 3.0, 0.5, 3.0
+    Nothing is sent if the answer starts within DELAY. friendly: a phase / memo change edits at once, anything
+    else (the elapsed timer) waits MIN_EDIT; detailed: every change waits VERBOSE_EDIT (one edit per tool burst)."""
+    DELAY, MIN_EDIT, VERBOSE_EDIT, TICK, IDLE, MEMO = 2.0, 10.0, 6.0, 0.5, 3.0, 300
 
     def __init__(self, worker, detailed: bool, lang: str, clock=time.monotonic, ticker=True):
         self.w, self.detailed, self.lang, self.clock = worker, detailed, lang, clock
         self.t0 = clock()
         self.phase, self.tools, self.snippet = "think", [], ""
         self.agents = False  # a helper was launched: silence after text = waiting for it
+        self.memo = ""  # quiet topic: the last interim text block, shown above the phase line
         self.text_done = None  # clock when a text block ended with nothing after it yet
-        self.id = self.shown = self.shown_phase = None
+        self.id = self.shown = self.shown_phase = self.shown_memo = None
         self.at = 0.0
         self.lock, self.done = threading.Lock(), threading.Event()
         if ticker:
@@ -940,6 +983,11 @@ class Status:
     def text_end(self):
         self.text_done = self.clock()
 
+    def note(self, text):
+        """Quiet topic: an interim text block becomes the top line of this message (edited, deleted at the end)."""
+        line = " ".join(text.split())
+        self.memo = line if len(line) <= self.MEMO else line[:self.MEMO - 1] + "…"
+
     def below(self):
         """A message was posted under the status: drop it so the next tick re-sends it at the bottom."""
         with self.lock:
@@ -948,6 +996,10 @@ class Status:
             self.id = self.shown = None
 
     def render(self, now) -> str:
+        body = self._render(now)
+        return f"{self.memo}\n\n{body}" if self.memo and body else body
+
+    def _render(self, now) -> str:
         if self.detailed:
             tools = self.tools
             body = "\n".join(tools[-8:])
@@ -971,12 +1023,19 @@ class Status:
             now = self.clock()
             if self.done.is_set() or now - self.t0 < self.DELAY:
                 return
-            phase, body = self.phase, self.render(now)
-            if body == self.shown or not (phase != self.shown_phase or now - self.at >= self.MIN_EDIT):
+            phase, memo, body = self.phase, self.memo, self.render(now)
+            if body == self.shown:
+                return
+            gap = now - self.at
+            if self.id is not None and not (gap >= self.VERBOSE_EDIT if self.detailed else
+                                            phase != self.shown_phase or memo != self.shown_memo
+                                            or gap >= self.MIN_EDIT):
                 return
             b, chat = self.w.b, self.w.chat
+            if not b.calm(chat):  # chat over budget / flood wait: keep the change, a later tick sends the latest
+                return
             raw = body
-            if self.detailed and b.guard and b.leak(body, self.w.thread):  # thinking snippets are model text
+            if (self.detailed or memo) and b.guard and b.leak(body, self.w.thread):  # snippets/memo = model text
                 body = b.s("leak")
             if not body:
                 if self.id:
@@ -990,7 +1049,7 @@ class Status:
                     sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread, text=body,
                                    reply_markup=kb)
                     self.id = sent and sent["message_id"]
-            self.shown, self.shown_phase, self.at = raw, phase, now
+            self.shown, self.shown_phase, self.shown_memo, self.at = raw, phase, memo, now
 
     def _loop(self):
         while not self.done.wait(self.TICK):

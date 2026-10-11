@@ -309,7 +309,7 @@ def _report(cfg, topic, key, **kw):
     st = config.STATE_DIR / "state.json"
     try:
         owner = cfg.get("owner_id") or json.loads(st.read_text()).get("owner_id")
-        Bot(config.read_token(cfg)).call("sendMessage", chat_id=owner, message_thread_id=int(topic),
+        Bot(config.read_token(cfg), state_dir=config.STATE_DIR).call("sendMessage", chat_id=owner, message_thread_id=int(topic),
                                          text=ui.t(ui.lang(cfg), key, **kw))
     except (OSError, ValueError, TgError) as e:
         print(f"# restart report to topic {topic} failed: {e}", file=sys.stderr)
