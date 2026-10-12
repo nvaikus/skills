@@ -586,7 +586,7 @@ class Reactions(TopicCommands):
                 b.react(1, 9, e)
             self.assertEqual(b.bot.calls, [])
             w = mock.Mock(draft_id=5, chat=1, thread=50)
-            b.workers[50] = w
+            b.workers["50"] = w
             b.handle({"stopped_message_generation": {"draft_id": 5}})
             w.stop.assert_called_once_with(drop_queue=False)
             self.assertEqual([(m, p["text"]) for m, p in b.bot.calls], [("sendMessage", b.s("stopped"))])
@@ -670,7 +670,7 @@ class FakeRun:
 
     def __init__(self, argv, cwd, env):
         import queue
-        self.argv, self.ev, self.lines = argv, queue.Queue(), []
+        self.argv, self.env, self.ev, self.lines = argv, env, queue.Queue(), []
         self.open, self.stopped, self.stderr = True, False, []
         FakeRun.runs.append(self)
 
@@ -1459,7 +1459,7 @@ class Notify(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             (Path(d) / "notify.json").write_text('{"replace": {"dg": {"chat": 7, "message_ids": [9]}}}')
             a = mock.Mock(file=None, text=["hi"], html=False, markdown=False, silent=False, button=None,
-                          thread=5, main_chat=False, topic=None, replace="dg")
+                          thread=5, chat=None, main_chat=False, topic=None, replace="dg")
             bot = FakeBot(fail={"sendMessage": "Bad Request: chat not found"})
             with mock.patch.object(self.n, "Bot", lambda *_, **__: bot), mock.patch.object(config, "read_token",
                                                                                      lambda c: "t"), \
@@ -1772,8 +1772,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual(run.argv[run.argv.index("--append-system-prompt") + 1], "manager role")
             self.assertIn("77", b.store.pending())  # request key = the posted message
             run.stop()
-            until(lambda: b.workers[400].run is None)
-            b.workers[400].close()
+            until(lambda: b.workers["400"].run is None)
+            b.workers["400"].close()
 
     def test_send_goes_into_a_live_run_and_bad_files_are_set_aside(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
@@ -1789,8 +1789,8 @@ class Inbox(unittest.TestCase):
             self.assertEqual(FakeRun.runs[0].lines[1], "второе")
             self.assertEqual(len(list((Path(d) / "inbox" / "bad").glob("*.json"))), 1)
             FakeRun.runs[0].stop()
-            until(lambda: b.workers[50].run is None)
-            b.workers[50].close()
+            until(lambda: b.workers["50"].run is None)
+            b.workers["50"].close()
 
     def test_show_line_stands_in_for_the_prompt_and_quiet_flag_travels(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
@@ -1811,8 +1811,8 @@ class Inbox(unittest.TestCase):
             for r in FakeRun.runs:
                 r.stop()
             for t in (400, 50):
-                until(lambda t=t: b.workers[t].run is None)
-                b.workers[t].close()
+                until(lambda t=t: b.workers[str(t)].run is None)
+                b.workers[str(t)].close()
 
     def test_alive_from_proc_env_and_pending(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
@@ -1966,7 +1966,7 @@ class GroupMode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d)
             w = mock.Mock(st=mock.Mock(id=77), run=True)
-            b.workers[55] = w
+            b.workers["55"] = w
             b.button({"id": "q", "from": {"id": 333}, "data": "stop", "message": {"message_id": 77, "chat": {"id": self.G}}})
             w.stop.assert_not_called()
             b.button({"id": "q", "from": {"id": self.B}, "data": "stop", "message": {"message_id": 77, "chat": {"id": -100999}}})
@@ -1983,9 +1983,16 @@ class GroupMode(unittest.TestCase):
             self.assertEqual(b.bot.calls, [])
             b.handle(ev(-100999))
             self.assertEqual(b.bot.calls, [("leaveChat", {"chat_id": -100999})])
-            p = self.bridge(d, dict(config.DEFAULTS, owner_id=1))  # private mode never leaves anything
-            p.handle(ev(-100999))
+            p = self.bridge(d, dict(config.DEFAULTS, owner_id=1, owner_groups={"x": -100777}))
+            p.handle(ev(-100777))  # private mode: an owner group stays
+            own = ev(-100888)
+            own["my_chat_member"]["from"]["id"] = 1  # added by the owner: stays (id logged for owner_groups)
+            with self.assertLogs("claude-tg", "WARNING") as logs:
+                p.handle(own)
+            self.assertIn("-100888", "".join(logs.output))
             self.assertEqual(p.bot.calls, [])
+            p.handle(ev(-100999))  # added by someone else: left
+            self.assertEqual(p.bot.calls, [("leaveChat", {"chat_id": -100999})])
 
     def test_no_draft_streaming_in_groups(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
@@ -2078,6 +2085,142 @@ class GroupMode(unittest.TestCase):
         self.assertIn(f"chat\t{self.G}\tsupergroup\tStudio\tforum", lines)
         self.assertIn(f"user\t{self.A}\tAnn\t-\t{self.G}", lines)
         self.assertEqual(len(lines), 3)
+
+
+class OwnerGroups(unittest.TestCase):
+    """Private mode + owner_groups: extra forum groups where only the owner talks; topics keyed per chat."""
+    G, OWNER = -1001112223334, 1  # placeholder ids
+
+    def cfg(self, **kw):
+        return dict(config.DEFAULTS, owner_id=self.OWNER, owner_groups={"team": self.G}, **kw)
+
+    def bridge(self, d):
+        b = GroupMode.bridge(self, d, self.cfg())
+        b.owner = self.OWNER
+        return b
+
+    def msg(self, mid=9, chat=None, uid=None, thread=55, **kw):
+        return GroupMode.msg(self, mid, chat=self.G if chat is None else chat,
+                             uid=self.OWNER if uid is None else uid, thread=thread, **kw)
+
+    def test_config_keys_and_chat_refs(self):
+        c = self.cfg()
+        self.assertEqual(config.owner_groups(c), {"team": self.G})
+        self.assertEqual(config.owner_groups(dict(c, group_id=-100555)), {})  # group mode: ignored
+        self.assertEqual((config.topic_key(c, None, 5), config.topic_key(c, 1, 5)), ("5", "5"))
+        self.assertEqual(config.topic_key(c, self.G, 5), f"{self.G}:5")
+        self.assertEqual([config.chat_ref(c, r) for r in (None, "", "team", str(self.G), self.OWNER)],
+                         [None, None, self.G, self.G, None])
+        with self.assertRaises(ValueError):
+            config.chat_ref(c, "nope")
+        with self.assertRaises(ValueError):
+            config.chat_ref(c, -100999)
+
+    def test_only_the_owner_is_heard_in_an_owner_group(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.msg(1))
+            b.handle(self.msg(2, uid=333))                                    # another member
+            b.handle(self.msg(3, chat=-100999))                               # a group not in owner_groups
+            b.handle(self.msg(4, **{"sender_chat": {"id": self.G}}))          # anonymous admin
+            b.handle(self.msg(5, thread=None))                                # General
+            b.handle({"message": {"message_id": 6, "chat": {"id": 1, "type": "private"}, "from": {"id": 1},
+                                  "text": "dm", "date": 0}})
+            self.assertEqual([c for c in b.collected if c[0] == self.G], [(self.G, 55, 1), (self.G, bridge.GENERAL, 5)])
+            self.assertEqual([m for c, _, m in b.collected if c == 1], [6])  # the private chat as before
+
+    def test_same_thread_in_two_chats_stays_apart(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            b = TopicCommands.bridge(self, d)
+            b.cfg, b.groups, b.group_chats = self.cfg(), {"team": self.G}, {self.G}
+            b.store.update(55, session_id="home")
+            b.store.update(b.key(self.G, 55), session_id="grp")
+            self.assertEqual(b.store.topic(55)["session_id"], "home")
+            self.assertEqual(b.store.topic(f"{self.G}:55")["session_id"], "grp")
+            b.worker(self.G, 55).put([{"message_id": 7, "chat": {"id": self.G}, "from": {"id": 1}, "date": 0,
+                                       "text": "x"}])
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            run = FakeRun.runs[0]
+            self.assertEqual((run.env[config.RUN_TOPIC_ENV], run.env[config.RUN_CHAT_ENV]), ("55", str(self.G)))
+            self.assertIn(f"{self.G}:7", b.store.pending())  # message ids are per chat
+            self.assertNotIn("55", b.workers)
+            run.stop()
+            until(lambda: b.workers[f"{self.G}:55"].run is None)
+            b.workers[f"{self.G}:55"].close()
+
+    def test_old_pending_entries_without_topic_still_drop(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = Store(Path(d) / "s.json", "/tmp")
+            s.pend(9, thread=5, chat=1, msgs=[])  # written by an older bot
+            s.drop(5)
+            self.assertEqual(s.pending(), {})
+
+    def test_spawn_send_alive_icon_target_the_group(self):
+        from src import inbox
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(bridge.Worker, "rename"), mock.patch.object(runner, "Run", FakeRun):
+            FakeRun.runs = []
+            bot, c = Inbox.Bot(), self.cfg()
+            chat = inbox.target_chat(c, "team")
+            r = inbox.spawn(bot, c, "Task", d, "do X", chat=chat)
+            self.assertEqual((r["link"], r["chat"]), ("https://t.me/c/1112223334/400/2147483647", self.G))
+            self.assertTrue(all(p["chat_id"] == self.G for _, p in bot.calls if "chat_id" in p))
+            self.assertEqual(inbox.ref_of(r["link"]), (self.G, 400))
+            self.assertEqual(inbox.target_chat(c, None, r["link"]), self.G)  # the link carries the chat
+            self.assertEqual(inbox.target_chat(c, None, "400"), self.OWNER)
+            with self.assertRaises(inbox.NotifyError):
+                inbox.target_chat(c, "nope")
+            self.assertTrue(inbox.alive(400, Path(d) / "noproc", self.G, c)["live"])
+            self.assertFalse(inbox.alive(400, Path(d) / "noproc", None, c)["live"])  # home topic 400: idle
+            b = TopicCommands.bridge(self, d)
+            b.cfg, b.groups, b.group_chats = c, {"team": self.G}, {self.G}
+            b.drain_inbox()
+            self.assertEqual(b.store.topic(f"{self.G}:400")["title"], "Task")
+            self.assertNotIn("400", b.store.data["topics"])
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            FakeRun.runs[0].stop()
+            until(lambda: b.workers[f"{self.G}:400"].run is None)
+            b.workers[f"{self.G}:400"].close()
+
+    def test_proc_scan_tells_chats_apart(self):
+        from src import inbox
+        with tempfile.TemporaryDirectory() as d:
+            for pid, env in ((11, b"CLAUDE_TG_RUN_TOPIC=5\0"),
+                             (12, f"CLAUDE_TG_RUN_TOPIC=5\0CLAUDE_TG_RUN_CHAT={self.G}\0".encode())):
+                (Path(d) / str(pid)).mkdir()
+                (Path(d) / str(pid) / "environ").write_bytes(env)
+            self.assertEqual(inbox._proc_topics(Path(d), self.cfg()), {"5": [11], f"{self.G}:5": [12]})
+
+    def test_notify_run_chat_default_and_per_chat_topic_cache(self):
+        from src import notify
+        c = self.cfg()
+        a = mock.Mock(thread=None, chat=None, main_chat=False, topic=None)
+        run = {config.RUN_TOPIC_ENV: "55", config.RUN_CHAT_ENV: str(self.G)}
+        self.assertEqual(notify.target_chat(c, a, run), self.G)
+        self.assertIsNone(notify.target_chat(c, a, {config.RUN_TOPIC_ENV: "55"}))  # older bot: home
+        self.assertIsNone(notify.target_chat(c, mock.Mock(thread=None, chat=None, main_chat=False, topic="k"), run))
+        self.assertEqual(notify.target_chat(c, mock.Mock(thread="t.me/c/1112223334/9", chat=None), {}), self.G)
+        bot = Inbox.Bot()
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            (Path(d) / "notify.json").write_text(json.dumps({"chat": 1, "topics": {"Notifications": 12}}))
+            self.assertEqual(notify.topic_id(bot, self.G, "Notifications", cfg=c), 400)
+            self.assertEqual(notify.topic_id(bot, 1, "Notifications", cfg=c), 12)  # home cache untouched
+            self.assertEqual(json.loads((Path(d) / "notify.json").read_text())["chats"][str(self.G)]["topics"],
+                             {"Notifications": 400})
+
+    def test_restart_report_into_a_group_topic(self):
+        sent = []
+        with mock.patch.object(service, "Bot") as B, mock.patch.object(config, "read_token", lambda c: "tok"):
+            B.return_value.call = lambda m, **p: sent.append(p)
+            service._report(self.cfg(), f"{self.G}:55", "restart_ok", rev="abc", state="active")
+            service._report(self.cfg(), "56", "restart_ok", rev="abc", state="active")
+        self.assertEqual([(p["chat_id"], p["message_thread_id"]) for p in sent], [(self.G, 55), (1, 56)])
+
+    def test_no_drafts_in_owner_groups(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            self.assertTrue(self.bridge(d).draft_ok)  # the private chat keeps them; Worker skips them for chat < 0
 
 
 class SetupText(unittest.TestCase):

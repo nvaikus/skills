@@ -24,9 +24,10 @@ examples:
   claude-tg send --thread 123 "next step"   # prompt into a topic as if the owner wrote it (resumes / joins a run)
   claude-tg alive --thread 123              # exit 0 = a claude run is live or queued there, 1 = idle
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
+  claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
-  claude-tg chats            # group mode setup: group ids + sender ids from pending updates (service stopped)
+  claude-tg chats            # group setup: group ids + sender ids from pending updates (service stopped)
 """
 
 
@@ -68,6 +69,8 @@ def run(cfg):
 def main(argv=None):
     p = argparse.ArgumentParser(prog="claude-tg", description=TOP, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
+    CHAT = ("target chat: an owner group (config owner_groups name or id); default the home chat; a t.me/c/ topic "
+            "link implies its chat")
     s = sub.add_parser("setup", help="BotFather steps + save the token file")
     s.add_argument("--token-stdin", action="store_true", help="read the token from stdin (never pass it in argv)")
     sub.add_parser("doctor", help="check token, bot, Threaded Mode (private) or group + admin rights (group mode), claude, voice deps, service")
@@ -98,6 +101,7 @@ def main(argv=None):
                                    "--topic KEY resolves via config notify_topics. Replying there starts a claude "
                                    "session that sees the quoted notification. Prints {chat, thread, message_ids}. "
                                    "Exit 3 = a file was withheld by the leak guard.")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--replace", metavar="KEY",
                    help="after a successful send, delete the message(s) last sent with this KEY and remember the new "
                         "ones (STATE_DIR/notify.json); a delete that fails (too old, gone) only warns")
@@ -118,13 +122,14 @@ def main(argv=None):
     g.add_argument("--topic", metavar="KEY",
                    help="config notify_topics key, else a literal topic name (default: own topic inside a bot run, "
                         "else Notifications)")
-    g.add_argument("--thread", type=int, metavar="ID", help="send into this topic (message_thread_id)")
+    g.add_argument("--thread", metavar="ID|LINK", help="send into this topic (message_thread_id or topic link)")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
     INBOX = ("Needs the running bot: the prompt is posted into the topic as a bot message, then queued in "
              "STATE_DIR/inbox/ and run by the bot like an owner message (queued while it is down). Prints JSON.")
     s = sub.add_parser("spawn", help="new topic + claude session started with PROMPT (args or stdin)",
                        description=INBOX + " Output: {thread, link, message_id, cwd}.")
     s.add_argument("--title", required=True, help="topic name")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--mention", action="append", metavar="ID=NAME",
                    help="group mode: mention this user at {who} in the posted line (else in front): @username via "
                         "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
@@ -142,6 +147,7 @@ def main(argv=None):
     s = sub.add_parser("send", help="PROMPT into an existing topic as if the owner wrote it",
                        description=INBOX + " A live run takes it at once (stdin); else the topic's session resumes.")
     s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
     s.add_argument("--show", metavar="TEXT",
                    help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
@@ -153,8 +159,10 @@ def main(argv=None):
                        description="Live = a process with CLAUDE_TG_RUN_TOPIC=<thread> (/proc), a pending request "
                                    "of the topic in state.json, or an inbox file for it. Prints JSON.")
     s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s = sub.add_parser("topic-icon", help="set a topic's icon: emoji | off | base")
     s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
                                 "spawn --icon; none = off)")
     s = sub.add_parser("notify-delete", help="delete notifications sent with --replace KEY (or by message id)",
@@ -164,6 +172,7 @@ def main(argv=None):
                                    "2 = usage.")
     s.add_argument("key", nargs="*", help="--replace KEY(s)")
     s.add_argument("--id", type=int, action="append", metavar="MSG", help="message id in the owner chat (repeatable)")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
                        description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
                                    "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "

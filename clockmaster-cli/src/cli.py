@@ -24,7 +24,7 @@ usage: {APP} <command> [args]
         [--workdir DIR] [--timeout 30m|2h|none] [--keep N|unlimited]
         [--description TEXT] [--notify off|on|failure] [--sound off|NAME]
         [--group NAME] [--parallel N] [--queue N] [--catchup true|false]
-        [--disabled] [--force]
+        [--telegram_topic KEY] [--disabled] [--force]
                                 notify: banner when a run ends — failure (default)
                                 = failed/timeout/killed only, on = every run
                                 sound: macOS sound name (default Blow) or off
@@ -36,6 +36,8 @@ usage: {APP} <command> [args]
                                 is recorded as `skipped` and never runs
                                 catchup: false = a start missed while off or
                                 asleep is dropped, not run late (default true)
+                                telegram_topic: claude-tg topic key for this
+                                task (default: notify.yaml telegram_topic)
   edit <name> --KEY VALUE ...   change keys (same flags as add; '' = default)
                                 and sync
   show <name>                   one task: every setting in plain words
@@ -152,7 +154,7 @@ def _runs_at_once(t):
 
 
 FLAG_KEYS = ("schedule", "command", "workdir", "timeout", "keep", "description",
-             "notify", "sound", "group", "parallel", "queue", "catchup")
+             "notify", "sound", "group", "parallel", "queue", "catchup", "telegram_topic")
 
 
 def cmd_add(args):
@@ -215,6 +217,7 @@ def cmd_show(args):
         ("catchup", "yes (a missed start runs late)" if t.catchup else "no (a missed start is dropped)"),
         ("notify", t.notify), ("sound", t.sound),
         *([("group", t.group)] if t.group else []),
+        *([("telegram_topic", t.telegram_topic)] if t.telegram_topic else []),
         *([("description", t.description)] if t.description else []),
         ("last run", last_run(t.name)), ("file", str(t.path)),
     ]

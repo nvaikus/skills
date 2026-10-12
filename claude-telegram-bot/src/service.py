@@ -173,7 +173,7 @@ def install(cfg, force=None):
         _sudo(["tee", str(UNIT_PATH)], input=unit_text(cfg), text=True, stdout=subprocess.DEVNULL)
     _ctl(mode, "daemon-reload")
     _ctl(mode, "enable", config.SERVICE)
-    if not wait_idle(600):
+    if not wait_idle(600, cfg):
         print("# still busy after 600 s: unit updated, not restarted - `claude-tg restart` later", file=sys.stderr)
         return 1
     _ctl(mode, "restart", config.SERVICE)
@@ -202,17 +202,18 @@ def uninstall(cfg):
 
 
 def busy():
-    """(running, queued) topic ids from the bot's pending requests in state.json."""
+    """(running, queued) topic keys (config.topic_key strings) from the bot's pending requests in state.json."""
     try:
         pending = json.loads((config.STATE_DIR / "state.json").read_text()).get("pending", {})
     except (OSError, ValueError):
         return [], []
-    run = [e["thread"] for e in pending.values() if e.get("started")]
-    return run, [e["thread"] for e in pending.values() if not e.get("started")]
+    key = lambda e: str(e.get("topic", e["thread"]))
+    run = [key(e) for e in pending.values() if e.get("started")]
+    return run, [key(e) for e in pending.values() if not e.get("started")]
 
 
-def live_runs():
-    """Topic ids of claude processes the bot still runs. A run outlives its answer while background
+def live_runs(cfg=None):
+    """Topic keys of claude processes the bot still runs. A run outlives its answer while background
     teammates work, and its pending entry is gone by then: busy() alone would let a restart kill them."""
     mode = installed_mode() or "system"
     argv = ["systemctl"] + (["--user"] if mode == "user" else []) + ["show", "-p", "MainPID", "--value", config.SERVICE]
@@ -227,17 +228,24 @@ def live_runs():
             env = dict(kv.split("=", 1) for kv in (d / "environ").read_bytes().decode(errors="replace").split("\0") if "=" in kv)
         except (OSError, IndexError):
             continue
-        if config.RUN_TOPIC_ENV in env:
-            topics.append(env[config.RUN_TOPIC_ENV])
+        if env.get(config.RUN_TOPIC_ENV, "").isdigit():
+            chat = env.get(config.RUN_CHAT_ENV, "")
+            chat = int(chat) if chat.lstrip("-").isdigit() else None
+            topics.append(config.topic_key(cfg or {}, chat, env[config.RUN_TOPIC_ENV]))
     return topics
 
 
-def wait_idle(timeout: int) -> bool:
+def in_flight(cfg=None):
+    """(running, queued) topic keys: pending requests + live bot-run processes."""
+    run, queued = busy()
+    return run + [t for t in live_runs(cfg) if t not in run], queued
+
+
+def wait_idle(timeout: int, cfg=None) -> bool:
     end = time.monotonic() + timeout
     said = False
     while True:
-        run, queued = busy()
-        run = run + [t for t in live_runs() if t not in map(str, run)]
+        run, queued = in_flight(cfg)
         if not run and not queued:
             return True
         if time.monotonic() >= end:
@@ -249,10 +257,16 @@ def wait_idle(timeout: int) -> bool:
         time.sleep(2)
 
 
+RUN_ENV = (config.RUN_TOPIC_ENV, config.RUN_CHAT_ENV)  # the waiter is not part of the run that asked
+
+
 def restart(cfg, wait: int, report=None):
     """Restart only when idle. A cut run is re-run on start anyway, but its partial work may repeat."""
     _linux()
     topic = os.environ.get(config.RUN_TOPIC_ENV)
+    chat = os.environ.get(config.RUN_CHAT_ENV, "")
+    if topic and chat.lstrip("-").isdigit() and not config.home(cfg, int(chat)):
+        topic = f"{int(chat)}:{topic}"  # a run in an owner group: report there
     if wait is not None and topic:
         # called from a bot run: waiting here would wait for that very run (deadlock until --wait expires).
         # Hand off to a detached waiter that restarts once this run has answered and the bot is idle,
@@ -261,18 +275,18 @@ def restart(cfg, wait: int, report=None):
                 "--wait", str(max(wait, 3600)), "--report", topic]
         logf = config.STATE_DIR / "restart.log"
         # the waiter must leave the service cgroup: KillMode=control-group would kill it with the old bot
-        keep = [f"--setenv={k}={v}" for k, v in os.environ.items() if k.startswith("CLAUDE_TG_") and k != config.RUN_TOPIC_ENV]
+        keep = [f"--setenv={k}={v}" for k, v in os.environ.items() if k.startswith("CLAUDE_TG_") and k not in RUN_ENV]
         scoped = subprocess.run(["systemd-run", "--user", "--collect", "--quiet", f"--unit=claude-tg-restart-{os.getpid()}",
                                  f"-pStandardOutput=append:{logf}", f"-pStandardError=append:{logf}", *keep, *argv],
                                 env=_user_env(), capture_output=True, text=True)
         if scoped.returncode:  # no user manager: the restart still happens, only the report may be lost
-            env = {k: v for k, v in os.environ.items() if k != config.RUN_TOPIC_ENV}
+            env = {k: v for k, v in os.environ.items() if k not in RUN_ENV}
             log = open(logf, "a")
             subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         print(f"# called from bot topic {topic}: restart deferred until this run answers and the bot is idle; "
               f"the outcome is posted to the topic (log: {config.STATE_DIR / 'restart.log'})", file=sys.stderr)
         return 0
-    if wait is not None and not wait_idle(wait):
+    if wait is not None and not wait_idle(wait, cfg):
         if report:
             _report(cfg, report, "restart_busy", s=wait)
         raise Fail(f"still busy after {wait} s; `claude-tg restart --now` cuts the runs (they re-run after restart)")
@@ -304,12 +318,14 @@ def _revision():
 
 
 def _report(cfg, topic, key, **kw):
-    """Post a restart outcome into the topic that asked for it (works even if the bot itself is down)."""
+    """Post a restart outcome into the topic that asked for it (works even if the bot itself is down).
+    `topic` = thread (home chat) or `chat:thread` (an owner group)."""
     from . import ui
     from .notify import NotifyError, owner_chat
     try:
-        owner = owner_chat(cfg)  # group mode: the group
-        Bot(config.read_token(cfg), state_dir=config.STATE_DIR).call("sendMessage", chat_id=owner, message_thread_id=int(topic),
+        chat, _, thread = str(topic).rpartition(":")
+        owner = int(chat) if chat else owner_chat(cfg)  # group mode: the group
+        Bot(config.read_token(cfg), state_dir=config.STATE_DIR).call("sendMessage", chat_id=owner, message_thread_id=int(thread),
                                          text=ui.t(ui.lang(cfg), key, **kw))
     except (OSError, ValueError, TgError, NotifyError) as e:
         print(f"# restart report to topic {topic} failed: {e}", file=sys.stderr)
@@ -322,8 +338,7 @@ def status(cfg):
     else:
         argv = ["systemctl", "status", "--no-pager", "-n", "0", config.SERVICE]
     rc = subprocess.run(argv, env=_user_env()).returncode
-    run, queued = busy()
-    run = run + [t for t in live_runs() if t not in map(str, run)]
+    run, queued = in_flight(cfg)
     print(f"runs in flight: {len(run)}{f' (topics {sorted(run)})' if run else ''}; queued: {len(queued)}")
     return rc
 
@@ -366,6 +381,10 @@ def doctor(cfg) -> int:
                     "on" if me.get("has_topics_enabled") else "off -> @BotFather: Bot Settings -> Threads Settings")
             else:
                 rows_group(bot, me, config.group_id(cfg), row, rows)
+            for name, gid in config.owner_groups(cfg).items():
+                rows_group(bot, me, gid, row, rows, f"group {name}")
+            if config.group_id(cfg) is not None and cfg.get("owner_groups"):
+                rows.append("owner_groups\tWARN\tignored in group mode (group_id set)")
         except TgError as e:
             row("getMe", False, e.description)
     cb = config.claude_bin(cfg)
@@ -414,12 +433,17 @@ def doctor(cfg) -> int:
     return 1 if bad else 0
 
 
-def rows_group(bot, me, group, row, rows):
-    """doctor, group mode: the group is a forum supergroup and the bot can see every message + manage topics."""
+def rows_group(bot, me, group, row, rows, label="group"):
+    """doctor, group mode / each owner group: a forum supergroup where the bot sees every message + manages
+    topics."""
+    adm = label + "_admin" if label == "group" else label + " admin"
+    _row = row
+    row = lambda check, *a: _row(adm if check == "group_admin" else label, *a)
+    rows_warn = lambda text: rows.append(f"{adm}\tWARN\t{text}")
     try:
         chat = bot.call("getChat", _retries=0, _timeout=15, chat_id=group)
     except TgError as e:
-        return row("group", False, f"getChat {group}: {e.description} -> bot not in the group, or wrong group_id "
+        return row("group", False, f"getChat {group}: {e.description} -> bot not in the group, or wrong id "
                                    "(`claude-tg chats`)")
     title = chat.get("title", "?")
     if chat.get("type") != "supergroup" or not chat.get("is_forum"):
@@ -436,8 +460,8 @@ def rows_group(bot, me, group, row, rows):
         row("group_admin", bool(m.get("can_manage_topics")), "admin, can_manage_topics" if m.get("can_manage_topics")
             else "admin without Manage Topics -> edit the bot's admin rights")
     elif status in ("member", "restricted") and me.get("can_read_all_group_messages"):
-        rows.append("group_admin\tWARN\tnot admin (privacy mode off, so all messages arrive); topic create/rename "
-                    "needs Manage Topics -> make the bot admin")
+        rows_warn("not admin (privacy mode off, so all messages arrive); topic create/rename "
+                  "needs Manage Topics -> make the bot admin")
     elif status in ("member", "restricted"):
         row("group_admin", False, "not admin + privacy mode on: the bot sees only commands -> make it admin with "
                                   "Manage Topics (or @BotFather /setprivacy Disable, then re-add it)")
@@ -454,7 +478,9 @@ def chats(cfg) -> int:
     except TgError as e:
         if e.code == 409:
             print("claude-tg chats: the bot is polling (409): stop it first (`systemctl [--user] stop "
-                  f"{config.SERVICE}`), add/write in the group, run again, then start it", file=sys.stderr)
+                  f"{config.SERVICE}`), add/write in the group, run again, then start it. Private mode: the running "
+                  "bot logs the id of a group the owner adds it to (`claude-tg logs | grep owner_groups`)",
+                  file=sys.stderr)
         else:
             print(f"claude-tg chats: {e}", file=sys.stderr)
         return 1
@@ -473,6 +499,8 @@ def chats(cfg) -> int:
     for (cid, uid), f in users.items():
         name = " ".join(x for x in (f.get("first_name"), f.get("last_name")) if x)
         print(f"user\t{uid}\t{name}\t{'@' + f['username'] if f.get('username') else '-'}\t{cid}")
+    for name, gid in config.owner_groups(cfg).items():
+        print(f"owner_group\t{gid}\t{name}\t-\t-")
     if not seen:
         print(f"# no group in {len(ups)} pending update(s): add the bot to the group (or write there), run again",
               file=sys.stderr)

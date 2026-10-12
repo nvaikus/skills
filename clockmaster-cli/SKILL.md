@@ -13,7 +13,7 @@ CLI: `clockmaster.py` at the skill root (`clockmaster` wrapper). Everything goes
 clockmaster list                                   # every task: schedule in words, scheduler state, next + last run
 clockmaster add daily-report --schedule '0 9 * * 1-5' --command 'claude -p "/report" --session-id "$TASK_SESSION_ID"'
       [--workdir DIR] [--timeout 30m|2h|none] [--keep N|unlimited] [--description TEXT]
-      [--notify off|on|failure] [--sound off|NAME] [--group NAME] [--parallel N] [--queue N] [--disabled]
+      [--notify off|on|failure] [--sound off|NAME] [--group NAME] [--parallel N] [--queue N] [--telegram_topic KEY] [--disabled]
 clockmaster edit <name> --KEY VALUE ...             # same keys as add (+ --enabled true|false), then sync
 clockmaster show <name>                            # one task in plain words
 clockmaster run <name>                             # run now, live output (trigger manual)
@@ -30,7 +30,7 @@ Schedule = 5-field cron: minute hour day month weekday. `list` and the UI repeat
 ## Files
 
 - `~/.claude/clockmaster/` (env `CLOCKMASTER_HOME`): `tasks/<name>.yaml`, `runs/<name>/<run-id>/{meta.json,output.log}`, `ui.log`, `notify.yaml`, `notify.log`.
-- Task yaml = flat `key: value` lines: `schedule`, `command` (required); `workdir` (default home), `timeout` (2h), `keep` (250), `enabled`, `description`, `notify` (failure), `sound`, `group`, `parallel` (1), `queue` (20), `catchup` (true). File name = task name (kebab-case); `_*.yaml` ignored.
+- Task yaml = flat `key: value` lines: `schedule`, `command` (required); `workdir` (default home), `timeout` (2h), `keep` (250), `enabled`, `description`, `notify` (failure), `sound`, `group`, `parallel` (1), `queue` (20), `catchup` (true), `telegram_topic` (notify.yaml's). File name = task name (kebab-case); `_*.yaml` ignored.
 - Scheduler entries are generated: never edit them by hand, edit the yaml and `sync`.
 
 ## Rules

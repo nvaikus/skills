@@ -8,15 +8,15 @@ description: Runs a Telegram bot that bridges the owner's private chat (or a for
 ```
 claude-tg setup [--token-stdin]   # BotFather steps + token file ~/.config/claude-tg/token (600)
 claude-tg doctor                  # token, getMe, Threaded Mode (group mode: group, admin rights, allowed_users), claude, model-cli, service
-claude-tg chats                   # group mode setup: group ids + sender ids from pending updates (service stopped)
+claude-tg chats                   # group setup: group ids + sender ids from pending updates (service stopped)
 claude-tg install [--system|--user]   # systemd unit claude-tg; auto: system if `sudo -n` works, else user unit
 claude-tg uninstall               # removes whichever unit is installed
 claude-tg status | logs [-f] [-n N]    # status also shows runs in flight / queued
 claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after every update, never raw systemctl
 claude-tg run                     # foreground, for debugging (stop the service first)
-claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|--main-chat] [--replace KEY]   # bot -> owner; stdin if no TEXT
+claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY]   # bot -> owner; stdin if no TEXT
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
-claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [PROMPT]   # new topic + session; stdin if no PROMPT
+claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
@@ -41,6 +41,13 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Only `allowed_users` in that group are heard (empty list = nobody); everyone/everything else is ignored silently (one log line per source per hour). All allowed users are equal (commands, ⏹); `owner_id` is unused. The bot leaves any other group it is added to.
 - Topics, notify, spawn/send, restart reports all go to the group. Each prompt line is tagged `[From: Name (@user, id N)]`. Links: `https://t.me/c/<group id without -100>/<thread>/2147483647`.
 - Telegram allows ~20 messages/min per group: status updates are slower than in private, answers stream by message edits (no drafts).
+
+## Owner groups (private mode + extra forum groups)
+
+- When: one owner, topics of a project kept in their own forum group. Config `owner_groups`: `{"name": -100…}` (private mode only; ignored with `group_id`). Setup: `references/setup.md` (Owner groups).
+- In those groups only the owner is heard; anyone else, bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
+- `spawn` / `send` / `alive` / `topic-icon` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
+- Group limits apply there (no drafts, ~20 msg/min).
 
 ## Addressing people (every mode)
 
@@ -75,7 +82,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## spawn / send (scripts driving sessions)
 
 - Need the running service: the prompt is posted into the topic as a bot message (the owner sees it; `--show TEXT` posts that short human line instead, claude still gets the full prompt), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
-- `spawn` prints `{thread, link, message_id, cwd}`; `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs.
+- `spawn` prints `{thread, link, message_id, cwd}` (+ `chat` in an owner group, link `t.me/c/...`); `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs.
 - `alive` = a process with `CLAUDE_TG_RUN_TOPIC=<thread>`, a pending request or an inbox file. A finished turn ends the process: idle between turns is normal.
 - Status-only lines into a topic (no claude turn): `notify --thread ID --silent`.
 

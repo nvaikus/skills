@@ -6,8 +6,11 @@ message (the owner sees what was asked, or a short `--show` line standing in for
 resume, same mid-run stdin injection. Files wait while the bot is down. Topic settings (cwd, title, base icon,
 appended system prompt, quiet flag) travel in the same file and are applied by the bot before the prompt runs.
 
-Liveness (`alive`): a claude process whose env carries CLAUDE_TG_RUN_TOPIC=<thread> (/proc, Linux), a pending
-request of that topic in state.json, or a queued inbox file for it."""
+Liveness (`alive`): a claude process whose env carries CLAUDE_TG_RUN_TOPIC=<thread> (+ CLAUDE_TG_RUN_CHAT=<chat>;
+/proc, Linux), a pending request of that topic in state.json, or a queued inbox file for it.
+
+Target chat: the home chat, or an owner group (config owner_groups) given by `--chat NAME|ID` or implied by a
+`t.me/c/<chat>/<thread>` link. Topics are keyed by config.topic_key (thread ids collide across chats)."""
 import json
 import os
 import re
@@ -38,14 +41,15 @@ def enqueue(item: dict) -> Path:
     return path
 
 
-def pending_files(thread=None) -> list:
+def pending_files(key=None, cfg=None) -> list:
+    """Queued inbox files, oldest first; `key` (config.topic_key) = only that topic's."""
     out = []
     for p in sorted(inbox_dir().glob("*.json")) if inbox_dir().is_dir() else []:
         try:
             item = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
-        if thread is None or item.get("thread") == thread:
+        if key is None or _item_key(cfg or {}, item) == str(key):
             out.append((p, item))
     return out
 
@@ -79,18 +83,49 @@ def topic_link(name, thread, group=None) -> str:
     return f"https://t.me/{name}/{thread}/{LAST_MSG}" if name else ""
 
 
-def link(bot, thread, cfg=None) -> str:
+def _item_key(cfg, item):
+    try:
+        return config.topic_key(cfg, item.get("chat"), item.get("thread"))
+    except (TypeError, ValueError):
+        return None
+
+
+def link(bot, thread, cfg=None, chat=None) -> str:
+    """Topic link: home chat as before (bot link; group mode `t.me/c/<group>`), an owner group `t.me/c/<chat>`."""
     group = config.group_id(cfg or {})
+    if chat is not None and not config.home(cfg or {}, chat):
+        return topic_link(None, thread, chat)
     return topic_link(None if group is not None else bot_username(bot), thread, group)
 
 
 def thread_of(ref) -> int:
     """Topic id from an id or a topic link: `t.me/<bot>/<thread>[/<msg>]`, `t.me/c/<chat>/<thread>[/<msg>]`."""
+    return ref_of(ref)[1]
+
+
+def ref_of(ref) -> tuple:
+    """(chat or None, thread) from an id or a topic link; a `t.me/c/<internal id>/...` link gives chat -100<id>."""
     s = str(ref).strip()
     m = LINK_RE.match(s) or re.fullmatch(r"(\d+)", s)
     if not m:
         raise NotifyError(f"not a topic id or link: {ref!r}")
-    return int(m.group(1))
+    c = re.match(r"^(?:https?://)?t\.me/c/(\d+)/", s)
+    return (int("-100" + c.group(1)) if c else None), int(m.group(1))
+
+
+def target_chat(cfg, chat_arg=None, ref=None) -> int:
+    """Chat id for a CLI call: --chat NAME|ID, else the chat of a `t.me/c/` link, else the home chat (owner_chat).
+    Both given and different -> error; an unknown chat -> error."""
+    try:
+        want = config.chat_ref(cfg, chat_arg)
+        linked = ref_of(ref)[0] if ref is not None else None
+        linked = config.chat_ref(cfg, linked) if linked is not None else None
+    except ValueError as e:
+        raise NotifyError(str(e))
+    if chat_arg not in (None, "") and ref is not None and ref_of(ref)[0] is not None and want != linked:
+        raise NotifyError(f"--chat {chat_arg} does not match the link's chat {ref_of(ref)[0]}")
+    chat = want if chat_arg not in (None, "") else linked
+    return owner_chat(cfg) if chat is None else chat
 
 
 def read_system(arg):
@@ -102,11 +137,11 @@ def read_system(arg):
 
 
 def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False,
-          mention=None) -> dict:
+          mention=None, chat=None) -> dict:
     path = Path(os.path.expanduser(cwd or cfg["default_cwd"])).resolve()
     if not path.is_dir():
         raise NotifyError(f"cwd is not a directory: {path}")
-    chat = owner_chat(cfg)
+    chat = chat if chat is not None else owner_chat(cfg)
     extra = {}
     cid = icon_id(bot, icon) if icon else None
     if cid:
@@ -121,11 +156,12 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
         topic["quiet"] = True
     msg = post(bot, chat, thread, prompt, silent, show, cfg, mention)
     enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg, "topic": topic})
-    return {"thread": thread, "link": link(bot, thread, cfg), "message_id": msg["message_id"], "cwd": str(path)}
+    out = {"thread": thread, "link": link(bot, thread, cfg, chat), "message_id": msg["message_id"], "cwd": str(path)}
+    return out if config.home(cfg, chat) else dict(out, chat=chat)
 
 
-def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False) -> dict:
-    chat = owner_chat(cfg)
+def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False, chat=None) -> dict:
+    chat = chat if chat is not None else owner_chat(cfg)
     msg = post(bot, chat, thread, prompt, silent, show)
     item = {"op": "prompt", "thread": thread, "chat": chat, "msg": msg}
     if quiet:
@@ -134,12 +170,13 @@ def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False) -> dict
     return {"thread": thread, "message_id": msg["message_id"]}
 
 
-def _proc_topics(proc=Path("/proc")) -> dict:
-    """thread -> [pid] of processes started by the bot for that topic (env CLAUDE_TG_RUN_TOPIC)."""
+def _proc_topics(proc=Path("/proc"), cfg=None) -> dict:
+    """topic key -> [pid] of processes started by the bot for that topic (env CLAUDE_TG_RUN_TOPIC + _RUN_CHAT;
+    no chat = a run of an older bot: home chat)."""
     out = {}
     if not proc.is_dir():
         return out
-    key = (config.RUN_TOPIC_ENV + "=").encode()
+    topic, chat = (config.RUN_TOPIC_ENV + "=").encode(), (config.RUN_CHAT_ENV + "=").encode()
     for d in proc.iterdir():
         if not d.name.isdigit():
             continue
@@ -147,34 +184,41 @@ def _proc_topics(proc=Path("/proc")) -> dict:
             env = (d / "environ").read_bytes()
         except OSError:
             continue
+        t = c = None
         for kv in env.split(b"\0"):
-            if kv.startswith(key):
-                v = kv[len(key):].decode(errors="ignore")
-                if v.isdigit():
-                    out.setdefault(int(v), []).append(int(d.name))
-                break
+            if kv.startswith(topic):
+                t = kv[len(topic):].decode(errors="ignore")
+            elif kv.startswith(chat):
+                c = kv[len(chat):].decode(errors="ignore")
+        if t and t.isdigit():
+            c = int(c) if c and c.lstrip("-").isdigit() else None
+            out.setdefault(config.topic_key(cfg or {}, c, t), []).append(int(d.name))
     return out
 
 
-def alive(thread, proc=Path("/proc")) -> dict:
+def alive(thread, proc=Path("/proc"), chat=None, cfg=None) -> dict:
+    cfg = cfg or {}
+    key = config.topic_key(cfg, chat, thread)
     try:
         state = json.loads((config.STATE_DIR / "state.json").read_text())
     except (OSError, ValueError):
         state = {}
-    pend = [k for k, e in (state.get("pending") or {}).items() if e.get("thread") == thread]
-    pids = _proc_topics(proc).get(thread, [])
-    queued = len(pending_files(thread))
-    return {"thread": thread, "live": bool(pids or pend or queued), "pids": pids, "pending": len(pend),
-            "inbox": queued, "known": str(thread) in (state.get("topics") or {})}
+    pend = [k for k, e in (state.get("pending") or {}).items() if str(e.get("topic", e.get("thread"))) == key]
+    pids = _proc_topics(proc, cfg).get(key, [])
+    queued = len(pending_files(key, cfg))
+    out = {"thread": thread, "live": bool(pids or pend or queued), "pids": pids, "pending": len(pend),
+           "inbox": queued, "known": key in (state.get("topics") or {})}
+    return out if config.home(cfg, chat) else dict(out, chat=chat)
 
 
-def topic_icon(bot, cfg, thread, arg) -> dict:
+def topic_icon(bot, cfg, thread, arg, chat=None) -> dict:
     """emoji | off | base (the icon set by /icon or spawn --icon, kept in state.json; none = off)."""
-    chat = owner_chat(cfg)
+    chat = chat if chat is not None else owner_chat(cfg)
     a = (arg or "").strip()
     if a.lower() == "base":
         try:
-            t = json.loads((config.STATE_DIR / "state.json").read_text())["topics"].get(str(thread)) or {}
+            t = json.loads((config.STATE_DIR / "state.json").read_text())["topics"].get(
+                config.topic_key(cfg, chat, thread)) or {}
         except (OSError, ValueError, KeyError):
             t = {}
         cid = t.get("icon") or ""
@@ -205,18 +249,22 @@ def _text(a) -> str:
 def main(cfg: dict, a) -> int:
     name = f"claude-tg {a.cmd}"
     try:
+        ref = getattr(a, "thread", None)
+        chat_arg = getattr(a, "chat", None)
         if a.cmd == "alive":
-            r = alive(thread_of(a.thread))
+            chat = None if chat_arg in (None, "") and ref_of(ref)[0] is None else target_chat(cfg, chat_arg, ref)
+            r = alive(thread_of(ref), chat=chat, cfg=cfg)
             print(json.dumps(r))
             return 0 if r["live"] else 1
+        chat = target_chat(cfg, chat_arg, ref)
         bot = cli_bot(cfg)
         if a.cmd == "spawn":
             r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet,
-                      getattr(a, "mention", None))
+                      getattr(a, "mention", None), chat)
         elif a.cmd == "send":
-            r = send(bot, cfg, thread_of(a.thread), _text(a), a.silent, a.show, a.quiet)
+            r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
         else:
-            r = topic_icon(bot, cfg, thread_of(a.thread), a.icon)
+            r = topic_icon(bot, cfg, thread_of(ref), a.icon, chat)
     except (NotifyError, OSError) as e:
         print(f"{name}: {e}", file=sys.stderr)
         return 2
@@ -234,10 +282,11 @@ def apply(bridge, item: dict):
     thread, chat, msg = int(item["thread"]), int(item["chat"]), item["msg"]
     topic = item.get("topic") or {}
     if topic:
-        cur = bridge.store.topic(thread)
+        key = bridge.key(chat, thread)
+        cur = bridge.store.topic(key)
         if topic.get("cwd") and topic["cwd"] != cur["cwd"]:
             topic = dict(topic, session_id=None)  # sessions are per cwd
-        bridge.store.update(thread, **topic)
+        bridge.store.update(key, **topic)
     msg["_rx"] = time.time()
     bridge.worker(chat, thread).put([msg])
     return thread

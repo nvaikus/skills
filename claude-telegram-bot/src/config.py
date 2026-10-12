@@ -8,6 +8,7 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("CLAUDE_TG_CONFIG_DIR", "~/.config/claude-tg")).expanduser()
 STATE_DIR = Path(os.environ.get("CLAUDE_TG_STATE_DIR", "~/.local/share/claude-tg")).expanduser()
 RUN_TOPIC_ENV = "CLAUDE_TG_RUN_TOPIC"  # set in every bot-spawned claude: `restart` from inside a run defers
+RUN_CHAT_ENV = "CLAUDE_TG_RUN_CHAT"    # chat of that topic (thread ids collide across chats)
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SERVICE = "claude-tg"
 SYSTEM_TOKEN = Path("/etc/claude-tg/token")  # root-only copy read by systemd LoadCredential
@@ -37,6 +38,7 @@ DEFAULTS = {
     "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
     "group_id": None,            # group mode: forum supergroup chat id (-100...); None = owner's private chat
     "allowed_users": [],         # group mode: Telegram user ids allowed to drive the bot; [] = nobody (fail closed)
+    "owner_groups": {},          # private-owner mode: name -> forum supergroup id (-100...) where only the owner talks
     "people_aliases": {},        # user id -> extra names people call them by ("Sasha"): the addressing rule + header rewrite
 }
 
@@ -56,6 +58,47 @@ def allowed_users(cfg: dict) -> set:
         except (TypeError, ValueError):
             pass
     return out
+
+
+def owner_groups(cfg: dict) -> dict:
+    """Private-owner mode: extra forum supergroups (name -> chat id) the owner drives like the private chat.
+    Unparseable ids are dropped; group mode has none (its one group is group_id)."""
+    if group_id(cfg) is not None:
+        return {}
+    out = {}
+    for name, cid in (cfg.get("owner_groups") or {}).items():
+        try:
+            out[str(name)] = int(cid)
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def home(cfg: dict, chat) -> bool:
+    """chat is the bot's home chat: None, the owner's private chat (positive id) or the group-mode group."""
+    return chat is None or int(chat) > 0 or int(chat) == group_id(cfg)
+
+
+def topic_key(cfg: dict, chat, thread) -> str:
+    """state.json topic key: the thread id in the home chat (as before owner groups existed), `<chat>:<thread>` in
+    an owner group (thread ids collide across chats)."""
+    return str(int(thread)) if home(cfg, chat) else f"{int(chat)}:{int(thread)}"
+
+
+def chat_ref(cfg: dict, ref):
+    """--chat NAME|ID -> chat id; None = home chat. An id must be the home chat or a configured owner group."""
+    if ref in (None, ""):
+        return None
+    groups = owner_groups(cfg)
+    if str(ref) in groups:
+        return groups[str(ref)]
+    try:
+        cid = int(ref)
+    except (TypeError, ValueError):
+        cid = None
+    if cid is not None and (cid > 0 or cid in groups.values() or cid == group_id(cfg)):
+        return None if home(cfg, cid) else cid
+    raise ValueError(f"unknown chat {ref!r}: not a config owner_groups name/id ({', '.join(groups) or 'none set'})")
 
 
 def load() -> dict:

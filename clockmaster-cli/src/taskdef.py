@@ -14,7 +14,7 @@ from errors import NotFound, ValidationError
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 KEYS = ("schedule", "command", "workdir", "timeout", "keep", "enabled",
-        "description", "notify", "sound", "group", "parallel", "queue", "catchup")
+        "description", "notify", "sound", "group", "parallel", "queue", "catchup", "telegram_topic")
 REQUIRED = ("schedule", "command")
 NOTIFY_VALUES = ("off", "on", "failure")
 DEFAULT_NOTIFY = "failure"
@@ -139,6 +139,7 @@ class Task:
         self.parallel = parse_count(raw.get("parallel", str(DEFAULT_PARALLEL)), "parallel", 1)
         self.queue = parse_count(raw.get("queue", str(DEFAULT_QUEUE)), "queue", 0)
         self.catchup = parse_bool(raw.get("catchup", "true"), "catchup")
+        self.telegram_topic = raw.get("telegram_topic", "")  # overrides notify.yaml telegram_topic
         if self.group:
             check_name(self.group, "group")
 
@@ -257,7 +258,7 @@ def new_text(opts):
     proper but reads better quoted), other keys only when given."""
     lines = [f'schedule: "{opts["schedule"]}"', f"command: {quote(opts['command'])}"]
     for key in ("workdir", "timeout", "keep", "description", "notify", "sound", "group", "parallel", "queue",
-                "catchup"):
+                "catchup", "telegram_topic"):
         if opts.get(key) is not None:
             lines.append(f"{key}: {quote(opts[key])}")
     if opts.get("disabled"):

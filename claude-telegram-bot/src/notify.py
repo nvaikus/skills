@@ -10,7 +10,8 @@ so a new display name / icon in config edits the existing topic (editForumTopic)
 An unknown --topic is a literal name (key == name), as before.
 
 Target order: --thread ID > --main-chat > --topic KEY > $CLAUDE_TG_RUN_TOPIC (a bot-spawned claude: its own topic)
-> "Notifications". Files (--file): video -> sendVideo (streams inline), image -> sendPhoto, else / on error ->
+> "Notifications". `--chat NAME|ID` (config owner_groups) or a `t.me/c/` --thread link picks an owner group instead
+of the home chat; the run-topic default follows $CLAUDE_TG_RUN_CHAT. Files (--file): video -> sendVideo (streams inline), image -> sendPhoto, else / on error ->
 sendDocument; text becomes the caption when it fits, else a message before the files.
 
 --replace KEY: after a successful send, the messages stored under KEY (notify.json "replace") are deleted and the
@@ -176,14 +177,18 @@ def topic_id(bot, chat: int, key: str, fresh=False, cfg=None):
     changed. None = topics unavailable."""
     want = spec(cfg or {}, key)
     data = _load()
-    if data.get("chat") != chat:  # cached ids belong to another chat (switched to/from group mode): start over
-        if data.get("chat") is not None:
-            data.pop("topics", None)
-            data.pop("meta", None)
-        data["chat"] = chat
-        _save(data)
-    topics = data.setdefault("topics", {})
-    meta = data.setdefault("meta", {})
+    if chat in config.owner_groups(cfg or {}).values():  # an owner group: its own cache, the home one untouched
+        box = data.setdefault("chats", {}).setdefault(str(chat), {})
+    else:
+        box = data
+        if data.get("chat") != chat:  # cached ids belong to another chat (switched to/from group mode): start over
+            if data.get("chat") is not None:
+                data.pop("topics", None)
+                data.pop("meta", None)
+            data["chat"] = chat
+            _save(data)
+    topics = box.setdefault("topics", {})
+    meta = box.setdefault("meta", {})
     if not fresh and topics.get(key):
         have = meta.get(key) or {"name": key, "icon": None}  # pre-registry entries were created as their key
         if have != want:
@@ -340,7 +345,7 @@ def keyboard(buttons) -> dict:
 def target(a, env=None):
     """(topic key, thread id) from the CLI args; at most one is set, (None, None) = All messages."""
     if a.thread:
-        return None, a.thread
+        return None, _thread(a.thread)
     if a.main_chat:
         return None, None
     if a.topic:
@@ -351,12 +356,33 @@ def target(a, env=None):
     return DEFAULT_TOPIC, None
 
 
+def _thread(ref) -> int:
+    from .inbox import thread_of  # inbox imports this module
+    return thread_of(ref)
+
+
+def target_chat(cfg, a, env=None):
+    """Destination chat: --chat, else the chat of a `t.me/c/` --thread link, else - when the run-topic default
+    applies - $CLAUDE_TG_RUN_CHAT if it names a configured chat, else the home chat (None)."""
+    from .inbox import target_chat as pick
+    ref = getattr(a, "thread", None)
+    if getattr(a, "chat", None) or ref:
+        return pick(cfg, getattr(a, "chat", None), ref)
+    env = os.environ if env is None else env
+    if a.main_chat or a.topic or not env.get(config.RUN_TOPIC_ENV, "").isdigit():
+        return None
+    try:
+        return config.chat_ref(cfg, env.get(config.RUN_CHAT_ENV) or None)
+    except ValueError:
+        return None
+
+
 class _Dest:
     """Owner chat + thread; a cached topic deleted in the client is recreated once. An explicit thread is not."""
 
-    def __init__(self, bot, cfg, topic, thread):
+    def __init__(self, bot, cfg, topic, thread, chat=None):
         self.bot, self.cfg, self.topic = bot, cfg, topic
-        self.chat = owner_chat(cfg)
+        self.chat = owner_chat(cfg) if chat is None else chat
         self.thread = thread or (topic_id(bot, self.chat, topic, cfg=cfg) if topic else None)
 
     def do(self, fn):
@@ -384,12 +410,13 @@ def _messages(bot, dest, parts, silent, markup):
     return sent
 
 
-def send(bot, cfg: dict, text: str, mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None, thread=None) -> dict:
+def send(bot, cfg: dict, text: str, mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None, thread=None,
+         chat=None) -> dict:
     text = text.strip()
     if not text:
         raise NotifyError("empty text")
     markup = keyboard(buttons)
-    dest = _Dest(bot, cfg, topic, thread)
+    dest = _Dest(bot, cfg, topic, thread, chat)
     return dest.result(_messages(bot, dest, chunks(text, mode), silent, markup))
 
 
@@ -419,12 +446,12 @@ def method_for(f: Path):
 
 
 def send_files(bot, cfg: dict, paths, text="", mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None,
-               thread=None, guard=None) -> dict:
+               thread=None, guard=None, chat=None) -> dict:
     """Upload files; text = caption of the first file when it fits in one caption, else messages before them.
     Files the leak guard rejects are replaced by a notice (listed under "blocked")."""
     files = check_files(paths)
     markup = keyboard(buttons)
-    dest = _Dest(bot, cfg, topic, thread)
+    dest = _Dest(bot, cfg, topic, thread, chat)
     sent, blocked = [], []
     parts = chunks(text.strip(), mode) if text.strip() else []
     caption = parts[0] if len(parts) == 1 and len(parts[0][0]) <= CAPTION else None
@@ -487,7 +514,7 @@ def replace(bot, key: str, r: dict):
     _save(data)
 
 
-def forget(bot, cfg: dict, keys, ids) -> int:
+def forget(bot, cfg: dict, keys, ids, chat=None) -> int:
     """`claude-tg notify-delete`: delete the messages stored under KEYs and/or explicit ids in the owner chat.
     0 = all gone (unknown KEY = nothing to do), 1 = some not deleted (transient ones stay under their KEY)."""
     data = _load()
@@ -505,7 +532,7 @@ def forget(bot, cfg: dict, keys, ids) -> int:
         else:
             reps.pop(key)
     if ids:
-        failed += delete_ids(bot, owner_chat(cfg), ids, "notify-delete")[0]
+        failed += delete_ids(bot, owner_chat(cfg) if chat is None else chat, ids, "notify-delete")[0]
     _save(data)
     return 1 if failed else 0
 
@@ -515,7 +542,11 @@ def delete_main(cfg: dict, a) -> int:
         print("claude-tg notify-delete: give a KEY or --id", file=sys.stderr)
         return 2
     try:
-        return forget(cli_bot(cfg), cfg, a.key, a.id or [])
+        chat = None
+        if getattr(a, "chat", None):
+            from .inbox import target_chat as pick
+            chat = pick(cfg, a.chat)
+        return forget(cli_bot(cfg), cfg, a.key, a.id or [], chat)
     except NotifyError as e:
         print(f"claude-tg notify-delete: {e}", file=sys.stderr)
         return 2
@@ -530,14 +561,15 @@ def main(cfg: dict, a) -> int:
     if src:  # quotes a protected file (config protected_paths): the owner gets the notice instead
         print(f"claude-tg notify: blocked, quotes protected {src}", file=sys.stderr)
         text, mode = ui.t(ui.lang(cfg), "leak"), "plain"
-    topic, thread = target(a)
     try:
+        topic, thread = target(a)
+        chat = target_chat(cfg, a)
         bot = cli_bot(cfg)
         text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None))
         if files:
-            r = send_files(bot, cfg, files, text, mode, a.silent, topic, a.button, thread, g)
+            r = send_files(bot, cfg, files, text, mode, a.silent, topic, a.button, thread, g, chat)
         else:
-            r = send(bot, cfg, text, mode, a.silent, topic, a.button, thread)
+            r = send(bot, cfg, text, mode, a.silent, topic, a.button, thread, chat)
     except NotifyError as e:
         print(f"claude-tg notify: {e}", file=sys.stderr)
         return 2

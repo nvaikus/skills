@@ -3,6 +3,7 @@
 
     telegram: on
     telegram_topic: system            # optional; claude-tg notify_topics key or literal name; default: its default topic
+                                      # a task's own `telegram_topic:` key wins over this one
     claude_tg: ~/.local/bin/claude-tg  # optional; default: claude-tg on PATH, else ~/.local/bin/claude-tg
 
 Text = `<task> — ❌ failed in 1m 04s`, the last lines of the run's output in <pre>, a muted meta line.
@@ -54,6 +55,8 @@ def send(msg):
     cfg = settings()
     if not cfg:
         return
+    if getattr(msg.task, "telegram_topic", ""):
+        cfg["topic"] = msg.task.telegram_topic
     who = f"{msg.title} {msg.run_id}"
     try:
         p = subprocess.run(argv(cfg), input=text(msg), capture_output=True, text=True, timeout=TIMEOUT)

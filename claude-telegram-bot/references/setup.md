@@ -43,6 +43,7 @@
 | `notify_topics` | `{}` | `notify --topic KEY` registry: `{"mail": {"name": "Mail", "icon": "📝"}, "ci": "CI"}`. `icon` = an emoji from `getForumTopicIconStickers` (fixed set, e.g. 💬 💻 🤖 📣 📝 🔥 ❗) or its custom_emoji_id; anything else → no icon, warning. Keep emoji out of `name`: the client shows the icon beside it. Editing name/icon renames the cached topic on the next send (no new topic). Key `Notifications` = the default topic |
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 | `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
+| `owner_groups` | `{}` | private mode: name → forum supergroup id (`-100…`) where only the owner talks; CLI `--chat NAME`. Section below |
 | `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
 | `people_aliases` | `{}` | user id → extra names people call them by (`{"123": ["Al"]}`): addressing rule + `Name:` header rewrite (SKILL.md, Addressing people) |
 
@@ -66,6 +67,17 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 - Limits: ~20 messages/min per group, edits included. Cosmetic budget (status edits, typing, stream edits) 0.2/s, burst 3 (private: 0.5/s, burst 5); answers are never dropped. `sendMessageDraft` is private-only → answers stream as an edited message.
 - Topic links: `https://t.me/c/<group id without -100>/<thread>/2147483647` (members only).
 - Switching an existing bot between modes: notify topics are recreated in the new chat; old topic sessions in state.json point at the old chat - start from a fresh bot or clear `topics`.
+
+## Owner groups (private mode, extra forum groups)
+
+| step | who | action |
+|---|---|---|
+| 1 | user | Telegram: new group → settings → Topics on; add the bot as admin with Manage Topics |
+| 2 | agent | the bot logs `owner added the bot to chat <id> …` (`claude-tg logs`); or `claude-tg chats` with the service stopped |
+| 3 | agent | config `"owner_groups": {"<name>": <id>}` → `claude-tg restart` → `claude-tg doctor` (`group <name>`, `group <name> admin` ok) |
+
+- Topic state is keyed `"<chat>:<thread>"` for these groups; private-chat topics keep their plain keys.
+- A supergroup id changes when Telegram migrates a basic group: use the `-100…` id that `doctor` accepts.
 
 ## Files over 20 MB (optional local Bot API server)
 

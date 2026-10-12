@@ -52,12 +52,14 @@ class Bridge:
         self.store = Store(config.STATE_DIR / "state.json", cfg["default_cwd"])
         self.child_env = runner.ChildEnv(token, cfg["env_files"], cfg["claudeai_connectors"])
         self.claude = config.claude_bin(cfg)
-        self.workers = {}
-        self.bursts = {}  # thread (GENERAL too) -> [msgs] still collecting, see collect()
+        self.workers = {}  # topic key (config.topic_key) -> Worker
+        self.bursts = {}  # topic key (GENERAL too) -> [msgs] still collecting, see collect()
         self.timers = {}
         self.lock = threading.Lock()
         self.group = config.group_id(cfg)  # group mode: one forum supergroup, allowed_users instead of the owner
         self.allowed = config.allowed_users(cfg)
+        self.groups = config.owner_groups(cfg)  # private mode: extra forum groups only the owner talks in
+        self.group_chats = set(self.groups.values())
         self.ignored = {}  # source -> last log time (group mode: ignored chats / users)
         self.username = None  # from getMe in serve(): /cmd@other_bot in a group is not ours
         self.bot_id = None  # from getMe in serve(): the bot's own updates (topic created by spawn, ...) are dropped
@@ -66,6 +68,10 @@ class Bridge:
         self.owner = cfg.get("owner_id") or self.store.owner_id
         self.lang = ui.lang(cfg)
         self.guard = guard.from_config(cfg)  # outbound leak filter; None = off
+
+    def key(self, chat, thread) -> str:
+        """Topic key: thread id in the home chat, `<chat>:<thread>` in an owner group (thread ids collide)."""
+        return config.topic_key(self.cfg, chat, thread)
 
     @property
     def env(self) -> dict:
@@ -91,22 +97,22 @@ class Bridge:
             log.warning("leak blocked topic %s: quotes %s", thread, src)
         return bool(src)
 
-    def detailed(self, thread) -> bool:
+    def detailed(self, key) -> bool:
         """Per-topic /verbose wins over config status_style."""
-        v = self.store.topic(thread).get("verbose")
+        v = self.store.topic(key).get("verbose")
         return v if v is not None else self.cfg.get("status_style") == "detailed"
 
-    def hushed(self, thread) -> bool:
+    def hushed(self, key) -> bool:
         """Quiet topic (/quiet, `spawn/send --quiet`): text between tool calls goes into the status message
         instead of separate messages, so only the final answer stays in the topic."""
-        return bool(self.store.topic(thread).get("quiet"))
+        return bool(self.store.topic(key).get("quiet"))
 
     def fail(self, chat, thread, why, detail=""):
         """Friendly one-liner for the owner; the detail only in verbose mode (and always in logs)."""
         if detail:
             log.warning("topic %s: %s", thread, detail)
         text = self.s("err", why=why)
-        if detail and self.detailed(thread):
+        if detail and self.detailed(self.key(chat, thread)):
             text += "\n\n" + detail
         if self.leak(text, thread):
             text = self.s("leak")
@@ -126,7 +132,7 @@ class Bridge:
                 t.start()
             return None
         except TgError as e:
-            if e.code != 429 and not self.gone(e, p.get("message_thread_id")) and "not modified" not in e.description:
+            if e.code != 429 and not self.gone(e, p.get("chat_id"), p.get("message_thread_id")) and "not modified" not in e.description:
                 log.info("%s", e)  # 429: Bot.flood logs the start and end of a wait once
             return None
 
@@ -135,21 +141,21 @@ class Bridge:
         flood = getattr(self.bot, "flood", None)
         return flood is None or flood.ready(chat, method)
 
-    def gone(self, e: TgError, thread) -> bool:
+    def gone(self, e: TgError, chat, thread) -> bool:
         """Topic deleted in the client (no update is sent for that): forget it on the first failed send."""
         if thread and GONE.search(e.description or ""):
-            self.forget(thread, f"topic gone ({e.description})")
+            self.forget(self.key(chat, thread), f"topic gone ({e.description})")
             return True
         return False
 
-    def forget(self, thread, why):
+    def forget(self, key, why):
         with self.lock:
-            w = self.workers.pop(thread, None)
+            w = self.workers.pop(key, None)
         if w:
             w.close()
-        self.store.drop(thread)
-        shutil.rmtree(config.STATE_DIR / "files" / str(thread), ignore_errors=True)
-        log.info("topic %s forgotten: %s", thread, why)
+        self.store.drop(key)
+        shutil.rmtree(config.STATE_DIR / "files" / str(key), ignore_errors=True)
+        log.info("topic %s forgotten: %s", key, why)
 
     def react(self, chat, mid, emoji):
         if not self.cfg.get("reactions", False):
@@ -165,7 +171,7 @@ class Bridge:
         try:
             return self.bot.call("sendMessage", **p)
         except TgError as e:
-            self.gone(e, thread)
+            self.gone(e, chat, thread)
             raise
 
     def people(self) -> list:
@@ -193,7 +199,7 @@ class Bridge:
         if len(chunks) > MAX_CHUNKS:
             self.say(chat, thread, self.s("more_parts", n=len(chunks) - MAX_CHUNKS))
         if len(md) > FILE_OVER or len(chunks) > MAX_CHUNKS:
-            path = config.STATE_DIR / "files" / str(thread) / "answer.md"
+            path = config.STATE_DIR / "files" / self.key(chat, thread) / "answer.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(md)
             self.send_file(chat, thread, path)
@@ -228,6 +234,10 @@ class Bridge:
             if not msg or not self.admits(msg.get("chat") or {}, msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+        elif msg and (msg.get("chat") or {}).get("type") in ("group", "supergroup"):
+            if not self.owner_admits(msg["chat"], msg):
+                return
+            thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
         else:
             if not msg or msg["chat"]["type"] != "private" or "from" not in msg:
                 return
@@ -241,10 +251,10 @@ class Bridge:
             thread = msg.get("message_thread_id") or GENERAL
         chat = msg["chat"]["id"]
         msg["_rx"] = time.time()  # timing: Telegram date -> received -> claude spawned
-        self.note_topic(thread, msg)
+        self.note_topic(chat, thread, msg)
         if msg.get("forum_topic_created") or msg.get("forum_topic_edited"):
             return
-        if self.group is not None and any(k in msg for k in GROUP_SERVICE):
+        if chat < 0 and any(k in msg for k in GROUP_SERVICE):
             return  # joins, pins, title changes...: no prompt, and in General they would open a topic
         text = msg.get("text") or ""
         if text.startswith("/"):
@@ -253,7 +263,7 @@ class Bridge:
                     and (rt.get("forum_topic_created") or {}).get("is_name_implicit")):
                 # a command typed in All messages: the client wrapped it in a new topic - undo that
                 self.quiet("deleteForumTopic", chat_id=chat, message_thread_id=thread)
-                self.forget(thread, "command sent in All messages")
+                self.forget(self.key(chat, thread), "command sent in All messages")
                 thread = GENERAL
             return self.command(chat, thread, msg, text)
         self.react(chat, msg["message_id"], "👀")
@@ -284,12 +294,46 @@ class Bridge:
             log.info("ignored: %s", why)
         return False
 
+    def owner_admits(self, chat: dict, msg: dict) -> bool:
+        """Private mode, a group message: only a configured owner group, only the owner (no anonymous admin, no
+        bots). Anything else is ignored silently; one log line per source per IGNORED_LOG."""
+        frm = msg.get("from") or {}
+        if self.bot_id and frm.get("id") == self.bot_id:
+            return False  # own message (the service message of a topic spawn created)
+        cid = chat.get("id")
+        if cid not in self.group_chats:
+            why, src = (f"chat {cid} ({chat.get('type')}, {chat.get('title')!r}) is not in owner_groups"
+                        + (" (forum)" if chat.get("is_forum") else "")), f"chat {cid}"
+        elif msg.get("sender_chat"):
+            why, src = f"sent on behalf of chat {msg['sender_chat'].get('id')}: post as yourself", f"sender_chat {cid}"
+        elif self.owner is None or frm.get("id") != self.owner:
+            why, src = f"user {frm.get('id')} in owner group {cid} is not the owner", f"user {frm.get('id')}"
+        else:
+            return True
+        now = time.monotonic()
+        if now - self.ignored.get(src, -IGNORED_LOG) >= IGNORED_LOG:
+            self.ignored[src] = now
+            log.info("ignored: %s", why)
+        return False
+
     def membership(self, mcm: dict):
-        """Group mode: the bot was added to some other group -> leave it (it would ignore everything there)."""
+        """Added to a group that is not ours -> leave it (it would ignore everything there). Group mode: anything but
+        the group. Private mode: owner groups stay; a group the owner added the bot to stays too (logged with its id,
+        to put into owner_groups), any other is left."""
         chat = mcm.get("chat") or {}
         status = (mcm.get("new_chat_member") or {}).get("status")
-        if self.group is None or chat.get("id") == self.group or chat.get("type") == "private" \
-                or status not in ("member", "administrator", "restricted"):
+        if chat.get("type") == "private" or status not in ("member", "administrator", "restricted"):
+            return
+        if self.group is None:
+            by = (mcm.get("from") or {}).get("id")
+            if chat.get("id") in self.group_chats:
+                return
+            if self.owner is not None and by == self.owner:
+                return log.warning("owner added the bot to chat %s (%s, %r, %s): not in owner_groups yet -> add "
+                                   '"owner_groups": {"<name>": %s} to the config and restart', chat.get("id"),
+                                   chat.get("type"), chat.get("title"), "forum" if chat.get("is_forum") else
+                                   "topics off", chat.get("id"))
+        elif chat.get("id") == self.group:
             return
         log.warning("added to chat %s (%s) by user %s: not the configured group, leaving", chat.get("id"),
                     chat.get("type"), (mcm.get("from") or {}).get("id"))
@@ -311,24 +355,26 @@ class Bridge:
 
     def collect(self, chat, thread, msg):
         """Debounce per topic: every new message restarts the timer; the burst runs once, as one prompt."""
+        k = self.key(chat, thread)
         with self.lock:
-            msgs = self.bursts.setdefault(thread, [])
+            msgs = self.bursts.setdefault(k, [])
             msgs.append(msg)
-            old = self.timers.pop(thread, None)
+            old = self.timers.pop(k, None)
             if old:
                 old.cancel()
             wait = (FORWARD if any(m.get("forward_origin") for m in msgs)
                     else ALBUM if any(m.get("media_group_id") for m in msgs) else BURST)
-            t = self.timers[thread] = threading.Timer(wait, lambda: self.flush(chat, thread, t))
+            t = self.timers[k] = threading.Timer(wait, lambda: self.flush(chat, thread, t))
             t.daemon = True
             t.start()
 
     def flush(self, chat, thread, timer):
+        k = self.key(chat, thread)
         with self.lock:
-            if self.timers.get(thread) is not timer:  # superseded: fired while a newer message restarted it
+            if self.timers.get(k) is not timer:  # superseded: fired while a newer message restarted it
                 return
-            del self.timers[thread]
-            msgs = self.bursts.pop(thread, None)
+            del self.timers[k]
+            msgs = self.bursts.pop(k, None)
         if not msgs:
             return
         if thread == GENERAL:  # a burst sent in All messages -> one new topic for all of it
@@ -337,18 +383,19 @@ class Bridge:
                 return
         self.worker(chat, thread).put(msgs)
 
-    def note_topic(self, thread, msg):
+    def note_topic(self, chat, thread, msg):
         """Remember topic name and whether Telegram says it is implicit (auto-named)."""
         if thread == GENERAL:
             return
+        k = self.key(chat, thread)
         created = msg.get("forum_topic_created") or (msg.get("reply_to_message") or {}).get("forum_topic_created")
         edited = msg.get("forum_topic_edited")
-        t = self.store.topic(thread)
+        t = self.store.topic(k)
         if created and t["implicit"] is None:
-            log.info("topic %s created: %r implicit=%s", thread, created.get("name"), bool(created.get("is_name_implicit")))
-            self.store.update(thread, title=created.get("name"), implicit=bool(created.get("is_name_implicit")))
+            log.info("topic %s created: %r implicit=%s", k, created.get("name"), bool(created.get("is_name_implicit")))
+            self.store.update(k, title=created.get("name"), implicit=bool(created.get("is_name_implicit")))
         if edited and edited.get("name"):
-            self.store.update(thread, title=edited["name"], implicit=False)
+            self.store.update(k, title=edited["name"], implicit=False)
 
     def new_topic(self, chat, msg):
         seed = " ".join((msg.get("text") or msg.get("caption") or "New chat").split()[:5])[:40]
@@ -359,15 +406,16 @@ class Bridge:
             self.say(chat, None, self.s("write_in_topic"))
             return None
         thread = topic["message_thread_id"]
-        self.store.update(thread, title=seed, implicit=True)
-        log.info("topic %s auto-created from All messages", thread)
+        self.store.update(self.key(chat, thread), title=seed, implicit=True)
+        log.info("topic %s auto-created from All messages", self.key(chat, thread))
         return thread
 
     def worker(self, chat, thread):
+        k = self.key(chat, thread)
         with self.lock:
-            w = self.workers.get(thread)
+            w = self.workers.get(k)
             if w is None:
-                w = self.workers[thread] = Worker(self, chat, thread)
+                w = self.workers[k] = Worker(self, chat, thread)
             return w
 
     def command(self, chat, thread, msg, text):
@@ -381,8 +429,9 @@ class Bridge:
             return self.say(chat, thread, self.s("help"))
         if thread == GENERAL:
             return self.say(chat, None, self.s("in_topic", cmd=cmd))
-        w = self.workers.get(thread)
-        t = self.store.topic(thread)
+        k = self.key(chat, thread)
+        w = self.workers.get(k)
+        t = self.store.topic(k)
         if cmd == "rename":
             if not arg:
                 return self.say(chat, thread, self.s("rename_usage"))
@@ -390,7 +439,7 @@ class Bridge:
                 self.bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, name=arg[:128])
             except TgError as e:
                 return self.say(chat, thread, self.s("rename_fail", e=e.description))
-            self.store.update(thread, title=arg[:128], implicit=False)  # auto-title never overrides it
+            self.store.update(k, title=arg[:128], implicit=False)  # auto-title never overrides it
         elif cmd == "icon":
             self.set_icon(chat, thread, msg["message_id"], arg)
         elif cmd == "delete":
@@ -399,9 +448,9 @@ class Bridge:
             except TgError as e:
                 if not GONE.search(e.description or ""):
                     return self.say(chat, thread, self.s("delete_fail", e=e.description))
-            self.forget(thread, "/delete")
+            self.forget(k, "/delete")
         elif cmd == "new":
-            self.store.update(thread, session_id=None)
+            self.store.update(k, session_id=None)
             self.say(chat, thread, self.s("new", cwd=t["cwd"]))
         elif cmd == "stop":
             running = bool(w and w.run)
@@ -412,14 +461,14 @@ class Bridge:
             run = (self.s("yes" if w and w.run else "no") + (self.s("bg", n=w.bg) if w and w.run and w.bg else "")
                    + (self.s("queued", n=w.q.qsize()) if w and w.q.qsize() else ""))
             self.say(chat, thread, self.s("status", sid=t["session_id"] or self.s("new_next"), cwd=t["cwd"], run=run,
-                                          title=t["title"] or "?", verbose=self.s("yes" if self.detailed(thread) else "no")))
+                                          title=t["title"] or "?", verbose=self.s("yes" if self.detailed(k) else "no")))
         elif cmd == "verbose":
-            on = {"on": True, "off": False}.get(arg.lower(), not self.detailed(thread))
-            self.store.update(thread, verbose=on)
+            on = {"on": True, "off": False}.get(arg.lower(), not self.detailed(k))
+            self.store.update(k, verbose=on)
             self.say(chat, thread, self.s("verbose_on" if on else "verbose_off"))
         elif cmd == "quiet":
-            on = {"on": True, "off": False}.get(arg.lower(), not self.hushed(thread))
-            self.store.update(thread, quiet=on)
+            on = {"on": True, "off": False}.get(arg.lower(), not self.hushed(k))
+            self.store.update(k, quiet=on)
             self.say(chat, thread, self.s("quiet_on" if on else "quiet_off"))
         elif cmd == "cd":
             if not arg:
@@ -430,7 +479,7 @@ class Bridge:
             path = path.resolve()
             if not path.is_dir():
                 return self.say(chat, thread, self.s("cd_bad", path=path))
-            self.store.update(thread, cwd=str(path), session_id=None)
+            self.store.update(k, cwd=str(path), session_id=None)
             self.say(chat, thread, self.s("cd_ok", path=path))
         else:
             self.worker(chat, thread).put([msg])  # unknown /command: let Claude see it
@@ -451,13 +500,13 @@ class Bridge:
         except TgError as e:
             if "not modified" not in e.description:
                 return self.say(chat, thread, self.s("icon_fail", e=e.description))
-        self.store.update(thread, icon=cid or None)  # base icon: `claude-tg topic-icon base` restores it
+        self.store.update(self.key(chat, thread), icon=cid or None)  # base icon: `claude-tg topic-icon base` restores it
         self.react(chat, mid, "👌")
 
     # ---------- restart safety ----------
     def restore(self):
         """Re-run requests a previous process accepted but did not finish (restart, crash)."""
-        for key, e in sorted(self.store.pending().items(), key=lambda kv: int(kv[0])):
+        for key, e in sorted(self.store.pending().items(), key=lambda kv: int(kv[0].rpartition(":")[2])):
             msgs, chat, thread = e["msgs"], e["chat"], e["thread"]
             mid = msgs[-1]["message_id"]
             if time.time() - msgs[-1].get("date", 0) > RERUN_MAX_AGE:
@@ -516,17 +565,16 @@ class Bridge:
             log.info("bot @%s up; group mode: chat %s, allowed users %s", self.username, self.group,
                      sorted(self.allowed) or "none (fail closed: set allowed_users)")
         else:
-            log.info("bot @%s up; topics enabled: %s; owner: %s", self.username, me.get("has_topics_enabled"),
-                     self.owner or "first private-chat user")
+            log.info("bot @%s up; topics enabled: %s; owner: %s; owner groups: %s", self.username,
+                     me.get("has_topics_enabled"), self.owner or "first private-chat user",
+                     ", ".join(f"{n} {c}" for n, c in self.groups.items()) or "none")
             if not me.get("has_topics_enabled"):
                 log.warning("Threaded Mode is off: enable it in @BotFather (Bot Settings -> Threads)")
         self.quiet("setMyCommands", commands=[{"command": c, "description": self.s("cmd." + c)} for c in COMMANDS])
         self.restore()
         threading.Thread(target=self._inbox_loop, daemon=True, name="inbox").start()
         offset = None
-        kinds = ["message", "stopped_message_generation", "callback_query"]
-        if self.group is not None:
-            kinds.append("my_chat_member")  # added to a foreign group -> leave (membership)
+        kinds = ["message", "stopped_message_generation", "callback_query", "my_chat_member"]  # + leave (membership)
         while True:
             try:
                 ups = self.bot.call("getUpdates", _timeout=65, offset=offset, timeout=50, allowed_updates=kinds)
@@ -600,14 +648,24 @@ class Worker:
         self.tripped = self.noticed = False  # leak filter: block's drafts suppressed / notice posted this turn
         threading.Thread(target=self._loop, daemon=True, name=f"topic-{thread}").start()
 
+    @property
+    def key(self) -> str:
+        """state.json topic key (config.topic_key)."""
+        return self.b.key(self.chat, self.thread)
+
     def close(self):
         """Topic deleted: stop the run, drop the queue, end the thread."""
         self.closed = True
         self.stop(drop_queue=True)
         self.q.put(None)
 
+    def pk(self, mid) -> str:
+        """Pending-request key: the message id; in an owner group `chat:mid` (message ids are per chat)."""
+        return self.b.key(self.chat, mid)
+
     def put(self, msgs):
-        self.b.store.pend(msgs[-1]["message_id"], thread=self.thread, chat=self.chat, msgs=msgs, started=False)
+        self.b.store.pend(self.pk(msgs[-1]["message_id"]), thread=self.thread, chat=self.chat, topic=self.key,
+                          msgs=msgs, started=False)
         with self.lock:
             live = bool(self.run and self.run.open) and not self.closed
             if live:
@@ -626,7 +684,7 @@ class Worker:
                     continue
                 for m in msgs:
                     self.b.react(self.chat, m["message_id"], None)
-                self.b.store.unpend(msgs[-1]["message_id"])
+                self.b.store.unpend(self.pk(msgs[-1]["message_id"]))
                 dropped += 1
             except queue.Empty:
                 break
@@ -640,7 +698,7 @@ class Worker:
             if msgs is None or self.closed:
                 return
             with self.lock:
-                self.keys = [msgs[-1]["message_id"]]
+                self.keys = [self.pk(msgs[-1]["message_id"])]
             self.b.store.pend(self.keys[0], started=True)
             try:
                 self.process(msgs)
@@ -662,7 +720,7 @@ class Worker:
     # ---------- prompts ----------
     def prompt(self, msgs):
         b, parts, files = self.b, [], []
-        folder = config.STATE_DIR / "files" / str(self.thread)
+        folder = config.STATE_DIR / "files" / self.key
         notes = []
         who = None
         for m in msgs:
@@ -687,7 +745,7 @@ class Worker:
             if m.get("text") or m.get("caption"):
                 parts.append(m.get("text") or m.get("caption"))
         prompt = "\n\n".join(parts)
-        if msgs[-1].get("_restarted") and self.b.store.topic(self.thread)["session_id"]:
+        if msgs[-1].get("_restarted") and self.b.store.topic(self.key)["session_id"]:
             prompt = RESTARTED + prompt
         if files:
             prompt += "\n\nUser attached:\n" + "\n".join(str(Path(f).resolve()) for f in files)
@@ -719,17 +777,17 @@ class Worker:
             with self.inj:
                 prompt = self.build(msgs)
                 if prompt is None:
-                    return b.store.unpend(mid)
+                    return b.store.unpend(self.pk(mid))
                 with self.lock:
                     run, uid = self.run, None
                     if run and run.open and not self.closed:
-                        b.store.pend(mid, started=True)  # before send: a fast answer unpends it
+                        b.store.pend(self.pk(mid), started=True)  # before send: a fast answer unpends it
                         uid = run.send(prompt)
                         if uid:
                             self.sent[uid] = Batch(msgs, prompt)
-                            self.keys.append(mid)
+                            self.keys.append(self.pk(mid))
                         else:
-                            b.store.pend(mid, started=False)
+                            b.store.pend(self.pk(mid), started=False)
                 if uid:
                     b.react(self.chat, mid, "✍")
                     return log.info("topic %s: message %s went into the running claude", self.thread, mid)
@@ -738,7 +796,7 @@ class Worker:
         except Exception:
             log.exception("topic %s: injecting message %s failed", self.thread, mid)
             b.react(self.chat, mid, "💔")
-            b.store.unpend(mid)
+            b.store.unpend(self.pk(mid))
         finally:
             with self.lock:
                 self.preparing -= 1
@@ -764,7 +822,7 @@ class Worker:
         self.renamed = False
         left, lost = self.execute([Batch(msgs, prompt)])
         if lost and "No conversation found" in "".join(self.last_stderr) and not (self.closed or b.stopping):
-            b.store.update(thread, session_id=None)  # session file gone (other machine, cleaned up): start over
+            b.store.update(self.key, session_id=None)  # session file gone (other machine, cleaned up): start over
             b.say(chat, thread, b.s("session_lost"))
             left, lost = self.execute(left)
         tm = self.timing
@@ -775,7 +833,7 @@ class Worker:
             return
         for bt in left:
             b.react(chat, bt.key, "👌" if self.stopped else "💔")
-            b.store.unpend(bt.key)
+            b.store.unpend(self.pk(bt.key))
         if self.stopped:
             return
         if lost:
@@ -792,12 +850,12 @@ class Worker:
         b, chat, thread = self.b, self.chat, self.thread
         if b.guard:
             b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
-        t = b.store.topic(thread)
+        t = b.store.topic(self.key)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
         system = "\n\n".join(x for x in (t.get("system"), notify.people_prompt(b.people(), b.group is not None)) if x)
         argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"),
                                  system or None)
-        run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread)}))
+        run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread), config.RUN_CHAT_ENV: str(chat)}))
         self.stopped, self.last_stderr = False, run.stderr
         unsent = []
         with self.lock:
@@ -824,8 +882,8 @@ class Worker:
                     self.timing["model"] = ev.text
                     with self.lock:
                         self.idle = False
-                    if ev.session_id and ev.session_id != b.store.topic(thread)["session_id"]:
-                        b.store.update(thread, session_id=ev.session_id)
+                    if ev.session_id and ev.session_id != b.store.topic(self.key)["session_id"]:
+                        b.store.update(self.key, session_id=ev.session_id)
                 elif ev.kind == "user":
                     with self.lock:
                         bt = self.sent.pop(ev.text, None)
@@ -863,7 +921,7 @@ class Worker:
                                 self.seen.append(bt)
                         answered, self.seen, self.idle = self.seen, [], True
                     if ev.session_id:
-                        b.store.update(thread, session_id=ev.session_id)
+                        b.store.update(self.key, session_id=ev.session_id)
                     if ev.count:
                         log.info("topic %s: %d permission denial(s) this turn", thread, ev.count)
                     if not self.timing["results"] and t["session_id"] and ev.is_error and ev.num_turns == 0:
@@ -906,11 +964,11 @@ class Worker:
                 self.answer(ev.text)  # skipped if the idle ticker posted it already
             for bt in answered:
                 b.react(chat, bt.key, "👍")
-            if answered and not ev.hook and not self.renamed and b.store.topic(thread).get("implicit"):
+            if answered and not ev.hook and not self.renamed and b.store.topic(self.key).get("implicit"):
                 self.renamed = True
                 threading.Thread(target=self.rename, args=(answered[0].prompt, ev.text), daemon=True).start()
         for bt in answered:
-            b.store.unpend(bt.key)
+            b.store.unpend(self.pk(bt.key))
 
     def turn_begin(self):
         """A turn started: fresh status message, typing, draft."""
@@ -922,7 +980,7 @@ class Worker:
         self.denials = set()
         self.typing = threading.Event()
         threading.Thread(target=self._typing, args=(self.typing,), daemon=True).start()
-        self.st = Status(self, self.b.detailed(self.thread), self.b.lang)
+        self.st = Status(self, self.b.detailed(self.key), self.b.lang)
 
     def turn_end(self):
         if self.typing:
@@ -947,7 +1005,7 @@ class Worker:
             if self.stream_id:
                 self.b.quiet("deleteMessage", chat_id=self.chat, message_id=self.stream_id)
                 self.stream_id = None
-            if self.b.hushed(self.thread):  # quiet topic: one progress line in the status, gone with it
+            if self.b.hushed(self.key):  # quiet topic: one progress line in the status, gone with it
                 if self.st:
                     self.st.note(text)
                 self.tripped = False
@@ -990,7 +1048,7 @@ class Worker:
         if b.guard and b.leak(text, self.thread):
             self.tripped, text = True, b.s("leak")
         tail = text[-fmt.LIMIT:]
-        if b.draft_ok:
+        if b.draft_ok and self.chat > 0:  # drafts are private-chat only: owner groups stream by edits
             try:
                 b.bot.call("sendMessageDraft", _retries=0, chat_id=self.chat, message_thread_id=self.thread,
                            draft_id=self.draft_id, text=tail, can_stop=True)
@@ -1035,7 +1093,7 @@ class Worker:
             return
         try:
             b.bot.call("editForumTopic", chat_id=self.chat, message_thread_id=self.thread, name=title)
-            b.store.update(self.thread, title=title, implicit=False)
+            b.store.update(self.key, title=title, implicit=False)
             log.info("topic %s renamed: %r", self.thread, title)
         except TgError as e:
             log.warning("editForumTopic: %s", e)

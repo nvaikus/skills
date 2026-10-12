@@ -113,6 +113,17 @@ class Telegram(base.Case):
         self.assertIn("<b>job</b>", t)
         self.assertIn("exit", t)
 
+    def test_task_topic_wins(self):
+        t = taskdef.from_text("job", 'schedule: "0 9 * * *"\ncommand: x\ntelegram_topic: finance\n')
+        m = notify.Message(t, {"status": "failed", "durationSec": 1, "runId": "r"}, None)
+        cfg = {"telegram": "on", "telegram_topic": "system", "claude_tg": "/x/claude-tg"}
+        with mock.patch.object(notify, "config", return_value=cfg), \
+                mock.patch.object(telegram.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+            telegram.send(m)
+            telegram.send(msg())
+        self.assertEqual(run.call_args_list[0].args[0][-2:], ["--topic", "finance"])
+        self.assertEqual(run.call_args_list[1].args[0][-2:], ["--topic", "system"])
+
 
 if __name__ == "__main__":
     import unittest

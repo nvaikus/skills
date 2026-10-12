@@ -1,5 +1,6 @@
-"""Persistent state: owner + topic map `thread_id -> {session_id, cwd, title, implicit}` + pending
-requests `message_id -> {thread, chat, msgs, started}` (survive a restart; `claude-tg status` reads them).
+"""Persistent state: owner + topic map `key -> {session_id, cwd, title, implicit}` + pending
+requests `message_id -> {thread, chat, topic, msgs, started}`. key = config.topic_key: the thread id in the home chat,
+`<chat>:<thread>` in an owner group (entries written before owner groups have no `topic`: their thread is it) (survive a restart; `claude-tg status` reads them).
 One JSON file, atomic replace, guarded by a lock (topic workers write concurrently)."""
 import json
 import os
@@ -34,30 +35,30 @@ class Store:
             self.data["owner_id"] = uid
             self._save()
 
-    def topic(self, thread: int) -> dict:
+    def topic(self, key) -> dict:
         with self._lock:
-            t = self.data["topics"].get(str(thread))
+            t = self.data["topics"].get(str(key))
             if t is None:
                 t = {"session_id": None, "cwd": self.default_cwd, "title": None, "implicit": None}
             return dict(t)
 
-    def update(self, thread: int, **fields):
+    def update(self, key, **fields):
         with self._lock:
-            if str(thread) in self._gone:
-                return self.topic(thread)
-            t = self.topic(thread)
+            if str(key) in self._gone:
+                return self.topic(key)
+            t = self.topic(key)
             t.update(fields)
-            self.data["topics"][str(thread)] = t
+            self.data["topics"][str(key)] = t
             self._save()
             return dict(t)
 
-    def drop(self, thread: int):
+    def drop(self, key):
         with self._lock:
-            self._gone.add(str(thread))
-            gone = [k for k, e in self.pending().items() if e["thread"] == thread]
+            self._gone.add(str(key))
+            gone = [k for k, e in self.pending().items() if str(e.get("topic", e["thread"])) == str(key)]
             for k in gone:
                 self.data["pending"].pop(k)
-            if self.data["topics"].pop(str(thread), None) is not None or gone:
+            if self.data["topics"].pop(str(key), None) is not None or gone:
                 self._save()
 
     def pending(self) -> dict:

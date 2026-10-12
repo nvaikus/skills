@@ -42,6 +42,7 @@ telegram: on
 # claude_tg: ~/.local/bin/claude-tg   # default: on PATH, else ~/.local/bin/claude-tg (services have a bare PATH)
 ```
 
+- Per task: `telegram_topic: <key>` in the task yaml (`--telegram_topic KEY`) overrides notify.yaml's topic, so a domain job's failures land in its domain topic.
 - Text = `<task> — ❌ failed in 1m 04s`, the last 1500 chars of output.log in a code block, `exit · trigger · run` line.
 - Failed send → notify.log line.
 
