@@ -379,6 +379,10 @@ class Commands(unittest.TestCase):
         self.assertEqual((code, out), (0, "77\n"))
         self.assertEqual(client.sent, [(IVAN, "**hi**", None)])
 
+    def test_send_flag_between_target_and_text(self):
+        code, _, _, client = cli("send", "@ivan", "--reply-to", "5", "hi there")
+        self.assertEqual((code, client.sent), (0, [(IVAN, "hi there", None)]))
+
     def test_send_stdin(self):
         _, _, _, client = cli("send", "me", "-", stdin="from stdin\n")
         self.assertEqual(client.sent[0][:2], (ME, "from stdin\n"))

@@ -22,7 +22,7 @@ def _inline(s: str) -> str:
         return f"\x00{len(keep) - 1}\x00"
 
     s = re.sub(r"`([^`\n]+)`", lambda m: stash(f"<code>{esc(m.group(1))}</code>"), s)
-    s = re.sub(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)",
+    s = re.sub(r"\[([^\]\n]+)\]\((https?://[^)\s]+|tg://user\?id=\d+)\)",
                lambda m: stash(f'<a href="{html.escape(m.group(2))}">{esc(m.group(1))}</a>'), s)
     s = esc(s)
     s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)

@@ -58,3 +58,4 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 
 - `python3 -m unittest discover -s dev/tests` — offline, pure modules.
 - Live: `claude-tg doctor`; end-to-end = message the bot from the owner account (tg-cli can do it), check the reply lands in the same topic.
+- Addressing: `notify.people` (group: allowed_users / private: owner, cached `member:<chat>:<uid>`) → `people_prompt` appended to `--append-system-prompt` in `execute`, `address` rewrites `Name:` headers in `send_answer`. Lookup failures = [] (never block a run). `fmt.md_to_html` passes `tg://user?id=N` links (text mention).

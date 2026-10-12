@@ -98,7 +98,7 @@ def main(argv=None):
             hint = f"; did you mean: {', '.join(close)}" if close else "; see tg-cli --help"
             raise UsageError(f"unknown command {name!r}{hint}")
         mod = importlib.import_module(registry.COMMANDS[name][0])
-        args = _parser(name, mod, account).parse_args(rest)
+        args = _parser(name, mod, account).parse_intermixed_args(rest)  # "send C --reply-to N TEXT"
         trace = trace or args.trace
         ctx = Context(args, Writer(args.json, args.fields, not args.no_header), config.load())
         rc = mod.run(ctx, args) or 0

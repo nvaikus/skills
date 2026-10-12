@@ -42,6 +42,12 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Topics, notify, spawn/send, restart reports all go to the group. Each prompt line is tagged `[From: Name (@user, id N)]`. Links: `https://t.me/c/<group id without -100>/<thread>/2147483647`.
 - Telegram allows ~20 messages/min per group: status updates are slower than in private, answers stream by message edits (no drafts).
 
+## Addressing people (every mode)
+
+- Telegram notifies only on a mention. Every run gets an addressing rule appended to its system prompt: the people (group: `allowed_users` via getChatMember; private: the owner via getChat; a day in `cache.json`) with their mention (`@username`, else a `[Name](tg://user?id=N)` text mention) and names + config `people_aliases`.
+- Group: whoever a message asks for something is addressed only by mention, never "Name:". Any mode: a final message that waits on a person starts with the mention(s) + the ask - one message, no separate ping; a tracked task also records the wait (`tasks needs --who`).
+- Safety net: an answer line opening with a known name as a header (`Name:`, `**Name:**`) is rewritten to the mention (not in code fences).
+
 ## Bot behavior (what the owner sees)
 
 - One topic = one session; a message in "All messages" creates a new topic. Topics run in parallel. A message sent while Claude works in that topic goes into the running session at once (stdin): answered in its own turn even while a background helper runs, or folded into the current turn; it queues only while the process is exiting.

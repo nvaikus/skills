@@ -37,6 +37,7 @@ DEFAULTS = {
     "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
     "group_id": None,            # group mode: forum supergroup chat id (-100...); None = owner's private chat
     "allowed_users": [],         # group mode: Telegram user ids allowed to drive the bot; [] = nobody (fail closed)
+    "people_aliases": {},        # user id -> extra names people call them by ("Sasha"): the addressing rule + header rewrite
 }
 
 

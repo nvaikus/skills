@@ -44,6 +44,7 @@
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 | `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
 | `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
+| `people_aliases` | `{}` | user id → extra names people call them by (`{"123": ["Al"]}`): addressing rule + `Name:` header rewrite (SKILL.md, Addressing people) |
 
 Restart after edits or skill updates: `claude-tg restart` (waits until no run is active).
 

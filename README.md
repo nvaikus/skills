@@ -22,6 +22,8 @@ Every skill is a top-level folder `<name>/`: `SKILL.md`, plus for CLI skills the
 | [agent-messaging](agent-messaging/SKILL.md) | Direct SendMessage between agents of one session: addressing, delivery at turn boundaries, waiting, reporting to the lead, briefing a team |
 | [step-by-step](step-by-step/SKILL.md) | One-decision-at-a-time planning cadence: short proposals, a yes before the next, auto-exit once the plan is agreed |
 | [atlassian-cli](atlassian-cli/SKILL.md) | Jira and Confluence Cloud via Atlassian's acli: help-first discovery, a markdown ⇄ ADF converter for descriptions and comments, REST recipes for attachments and custom fields, one wrapper per site |
+| [grafana-cli](grafana-cli/SKILL.md) | Grafana via its official CLI gcx: setup on desktops and headless hosts, dashboard export/import, datasource queries (ClickHouse, Prometheus, SQL), raw API, org traps |
+| [clickhouse-cli](clickhouse-cli/SKILL.md) | ClickHouse via the official `clickhouse client` / `clickhouse local`: named connections with env passwords, formats, typed parameters, file load/export, remote servers and Cloud |
 
 ## Install
 

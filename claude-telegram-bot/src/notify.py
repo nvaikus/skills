@@ -20,6 +20,7 @@ next try. `notify-delete KEY` deletes and forgets without sending."""
 import html
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -247,6 +248,72 @@ def with_mentions(bot, cfg: dict, text: str, mode: str, specs) -> tuple:
     who = ", ".join(m for m, _ in ms)
     return (text.replace("{who}", who) if "{who}" in text else f"{who} {text}"), mode
 
+
+
+def people(bot, cfg: dict, owner=None) -> list:
+    """Who the bot talks to: group mode = allowed_users (getChatMember), private mode = the owner (getChat); a day
+    in the cache. [{id, handle, names}]: handle '@username', else a markdown text mention (no username)."""
+    group = config.group_id(cfg)
+    uids = sorted(config.allowed_users(cfg)) if group is not None else [owner] if owner else []
+    aliases = cfg.get("people_aliases") or {}
+    out = []
+    for uid in uids:
+        def fetch(uid=uid):
+            if group is not None:
+                u = bot.call("getChatMember", _retries=0, _timeout=15, chat_id=group, user_id=int(uid)).get("user")
+            else:
+                u = bot.call("getChat", _retries=0, _timeout=15, chat_id=int(uid))
+            return {k: (u or {}).get(k) for k in ("username", "first_name", "last_name")}
+        try:
+            u = cached(f"member:{group or 'private'}:{uid}", MENTION_TTL, fetch)
+        except TgError:
+            continue  # unknown here (not a member, chat not started): nobody to address
+        first, last = (u.get("first_name") or "").strip(), (u.get("last_name") or "").strip()
+        names = [n for n in (first, last, f"{first} {last}".strip()) if n]
+        names += [str(a).strip() for a in aliases.get(str(uid), aliases.get(uid, [])) if str(a).strip()]
+        names = list(dict.fromkeys(names))
+        if not names and not u.get("username"):
+            continue
+        label = names[0] if names else str(uid)
+        handle = "@" + u["username"] if u.get("username") else f"[{label}](tg://user?id={int(uid)})"
+        out.append({"id": int(uid), "handle": handle, "names": names or [label]})
+    return out
+
+
+def people_prompt(ps: list, group: bool) -> str:
+    """The addressing rule for claude (--append-system-prompt): Telegram notifies only on a mention."""
+    if not ps:
+        return ""
+    lines = "\n".join(f"- {' / '.join(p['names'])}: {p['handle']}" for p in ps)
+    if group:
+        return ("You answer in a Telegram group shared by several people. Their mentions:\n" + lines + "\n"
+                "Address a person only by their mention above (e.g. \"" + ps[0]["handle"] + ", нужно от тебя: …\"), "
+                "never by a bare or bold name (\"Name:\"): Telegram notifies only on a mention. A final message that "
+                "waits on someone (a decision, an action, an answer) starts with their mention(s) and the ask - one "
+                "message, no separate ping. If the work is a tracked task, also record the wait "
+                "(`tasks needs <ref> --who <name> --action …`).")
+    return ("You answer in a Telegram chat with " + ps[0]["names"][0] + " (" + ps[0]["handle"] + "). A final message "
+            "that waits on them (a decision, an action, an answer) starts with " + ps[0]["handle"] + " and the ask: "
+            "the mention notifies even in a muted chat and marks the message as waiting on them. No mention in other "
+            "messages. If the work is a tracked task, also record the wait (`tasks needs <ref> --action …`).")
+
+
+def address(text: str, ps: list) -> str:
+    """A line opening with a person's name as a header ("Name:", "**Name:**") -> their mention, so it notifies."""
+    names = sorted({n for p in ps for n in p["names"]}, key=len, reverse=True)
+    if not names or not text:
+        return text
+    by = {n.casefold(): p["handle"] for p in reversed(ps) for n in p["names"]}
+    head = re.compile(r"^(?P<lead>[ \t]*(?:[-*•][ \t]+)?)(?:\*\*|__)?(?P<name>" + "|".join(map(re.escape, names))
+                      + r")(?:[ \t]*:[ \t]*(?:\*\*|__)|(?:\*\*|__)[ \t]*:|[ \t]*:)[ \t]*", re.I)
+    out, fence = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        elif not fence:
+            line = head.sub(lambda m: m["lead"] + by[m["name"].casefold()] + ", ", line, count=1)
+        out.append(line)
+    return "\n".join(out)
 
 def chunks(text: str, mode: str) -> list:
     """[(text, parse_mode)] within Telegram's limit. mode: plain | html | md."""

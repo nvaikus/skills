@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, fmt, guard, inbox, media, runner, ui
+from . import config, fmt, guard, inbox, media, notify, runner, ui
 from .botapi import Bot, Skipped, TgError
 from .store import GENERAL, Store
 
@@ -168,8 +168,16 @@ class Bridge:
             self.gone(e, thread)
             raise
 
+    def people(self) -> list:
+        """Who claude addresses here (notify.people); [] when the lookup fails - the answer still goes out."""
+        try:
+            return notify.people(self.bot, self.cfg, self.owner)
+        except Exception as e:  # noqa: BLE001 - cosmetic: never block a run or an answer
+            log.warning("people lookup: %s", e)
+            return []
+
     def send_answer(self, chat, thread, md: str):
-        md = md.strip() or self.s("empty")
+        md = notify.address(md.strip(), self.people()) or self.s("empty")
         chunks = fmt.split_md(md)
         for i, chunk in enumerate(chunks[:MAX_CHUNKS]):
             html = fmt.md_to_html(chunk)
@@ -786,8 +794,9 @@ class Worker:
             b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
         t = b.store.topic(thread)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
+        system = "\n\n".join(x for x in (t.get("system"), notify.people_prompt(b.people(), b.group is not None)) if x)
         argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"),
-                                 t.get("system"))
+                                 system or None)
         run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread)}))
         self.stopped, self.last_stderr = False, run.stderr
         unsent = []

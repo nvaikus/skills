@@ -1180,6 +1180,75 @@ class FastConnect(unittest.TestCase):
             self.assertEqual([t for t in tried if t[0] == "connect"], [("connect", 2)])  # IPv4 first now
 
 
+
+class People(unittest.TestCase):
+    """Addressing rule: whoever the bot asks for something is mentioned (group: allowed_users, private: owner)."""
+    G = -1004
+
+    class Bot:
+        def __init__(self, users):
+            self.users, self.calls = users, []
+
+        def call(self, method, **p):
+            self.calls.append(method)
+            uid = p.get("user_id", p.get("chat_id"))
+            if uid not in self.users:
+                raise TgError(method, 400, "Bad Request: user not found")
+            u = dict(self.users[uid], id=uid)
+            return {"user": u} if method == "getChatMember" else u
+
+    def people(self, users, cfg, owner=None):
+        from src import notify
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = self.Bot(users)
+            ps = notify.people(bot, cfg, owner)
+            notify.people(bot, cfg, owner)
+            return ps, bot.calls
+
+    def test_group_people_with_aliases_cached(self):
+        cfg = dict(config.DEFAULTS, group_id=self.G, allowed_users=[1, 2, 3], people_aliases={"2": ["Саша"]})
+        ps, calls = self.people({1: {"username": "nik", "first_name": "Nikita"},
+                                 2: {"first_name": "Alexandra", "last_name": "Z"}}, cfg)
+        self.assertEqual(ps, [{"id": 1, "handle": "@nik", "names": ["Nikita"]},
+                              {"id": 2, "handle": "[Alexandra](tg://user?id=2)",
+                               "names": ["Alexandra", "Z", "Alexandra Z", "Саша"]}])
+        self.assertEqual(calls, ["getChatMember"] * 3 + ["getChatMember"])  # failed lookup (3) is not cached
+
+    def test_private_owner_via_get_chat(self):
+        ps, calls = self.people({7: {"username": "own", "first_name": "Own"}}, dict(config.DEFAULTS), owner=7)
+        self.assertEqual((ps, calls), ([{"id": 7, "handle": "@own", "names": ["Own"]}], ["getChat"]))
+
+    def test_prompt_group_and_private(self):
+        from src import notify
+        ps = [{"id": 1, "handle": "@nik", "names": ["Nikita", "Никита"]}, {"id": 2, "handle": "@sa", "names": ["Саша"]}]
+        g = notify.people_prompt(ps, True)
+        self.assertIn("- Nikita / Никита: @nik", g)
+        self.assertIn("starts with their mention(s) and the ask", g)
+        self.assertIn("tasks needs", g)
+        self.assertIn("starts with @nik and the ask", notify.people_prompt(ps[:1], False))
+        self.assertEqual(notify.people_prompt([], True), "")
+
+    def test_address_rewrites_name_headers_only(self):
+        from src import notify
+        ps = [{"id": 1, "handle": "@nik", "names": ["Никита"]}, {"id": 2, "handle": "@sa", "names": ["Саша", "Sasha"]}]
+        md = ("Итог.\n\n**Саша:** выбери цвет\nНикита: проверь план\n- **sasha**: ок?\nСаша сказала да\n"
+              "```\nСаша: code\n```")
+        self.assertEqual(notify.address(md, ps), "Итог.\n\n@sa, выбери цвет\n@nik, проверь план\n- @sa, ок?\n"
+                                                 "Саша сказала да\n```\nСаша: code\n```")
+        self.assertEqual(notify.address("x", []), "x")
+
+    def test_text_mention_link_renders(self):
+        self.assertEqual(fmt.md_to_html("[Саша](tg://user?id=5), hi"), '<a href="tg://user?id=5">Саша</a>, hi')
+
+    def test_bridge_appends_rule_and_rewrites_answer(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = bridge.Bridge(dict(config.DEFAULTS, group_id=self.G, allowed_users=[1]), "tok")
+            b.bot = FakeBot()
+            b.people = lambda: [{"id": 1, "handle": "@nik", "names": ["Никита"]}]
+            b.send_answer(self.G, 5, "**Никита:** реши")
+            self.assertEqual(b.bot.calls[-1][1]["text"], "@nik, реши")
+
+
 if __name__ == "__main__":
     unittest.main()
 
