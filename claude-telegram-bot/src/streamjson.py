@@ -28,7 +28,8 @@ def hook_reason(text: str) -> str:
 
 @dataclass
 class Event:
-    kind: str                 # session | turn | thinking | tool | text | text_end | result | user | bg | denied
+    kind: str                 # session | turn | thinking | tool | text | text_end | result | user | bg | denied |
+                              # done (a top-level background task ended: a notification turn usually follows)
     text: str = ""            # tool line / streamed text or thinking so far / final result / session model /
                               # user: uuid of our stdin line claude just took in
     session_id: Optional[str] = None
@@ -94,6 +95,8 @@ class Parser:
             return [Event("session", d.get("model") or "", d.get("session_id"))]
         if t == "system" and d.get("subtype") == "background_tasks_changed":  # full list, top-level tasks only
             return [Event("bg", count=len(d.get("tasks") or []))]
+        if t == "system" and d.get("subtype") == "task_notification" and not sub and not d.get("owned_by_subagent"):
+            return [Event("done", d.get("status") or "")]  # after the bg change, before the notification turn
         if t == "command_lifecycle" and d.get("state") == "started":
             self.started = d.get("command_uuid") or ""
             return []

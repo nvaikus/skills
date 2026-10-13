@@ -640,6 +640,7 @@ class Worker:
         self.sent, self.seen = {}, []  # uuid -> Batch written to stdin / batches claude took in since the last result
         self.preparing = self.bg = 0  # injected batches still being built / background tasks running
         self.idle = False  # a turn ended (result) and no new one started
+        self.ticks = 0  # session/user/result events of the current process (expect_turn fallback)
         self.ilock = threading.Lock()  # post_interim runs from the event loop and the status ticker
         self.interim = self.posted = ""  # ended text block not yet posted / last posted one
         self.stream_id = self.st = self.typing = None
@@ -802,8 +803,33 @@ class Worker:
                 self.preparing -= 1
             self.maybe_close()
 
+    def expect_turn(self):
+        """A background task ended (caller holds `self.lock`). Between turns claude answers it with a
+        notification turn: `idle` drops so stdin stays open until that turn's `result` (closing now lets claude
+        run the turn, then exit ~5 s after it, orphaning any task the turn starts). A task killed without a
+        follow-up turn would keep the process forever: if no session/user/result event comes within
+        `TURN_GRACE`, `idle` comes back and `maybe_close` decides again. Mid-turn: nothing to do."""
+        if not self.idle:
+            return
+        self.idle = False
+        run, ticks = self.run, self.ticks
+
+        def fallback():
+            with self.lock:
+                if self.run is not run or self.ticks != ticks or self.idle:
+                    return
+                self.idle = True
+                log.info("topic %s: no turn after a background task ended", self.thread)
+            self.maybe_close()
+        tm = threading.Timer(self.TURN_GRACE, fallback)
+        tm.daemon = True
+        tm.start()
+
+    TURN_GRACE = 60  # s: a notification turn starts (system/init) well within this after its task ends
+
     def maybe_close(self):
-        """Close stdin once nothing is left to answer: the turn ended, no background task runs, no message is on
+        """Close stdin once nothing is left to answer: the turn ended (`idle`: a `result`, and no notification
+        turn pending after a background task ended - `expect_turn`), no background task runs, no message is on
         its way in. claude then exits (it would still finish helpers first); later messages start a new process."""
         with self.lock:
             run = self.run
@@ -860,6 +886,7 @@ class Worker:
         unsent = []
         with self.lock:
             self.run, self.sent, self.seen, self.bg, self.idle = run, {}, [], 0, False
+            self.ticks = 0
             for bt in batches:
                 uid = run.send(bt.prompt)
                 if uid:
@@ -878,6 +905,8 @@ class Worker:
                     self.turn_begin()
                 if ev.kind in ("turn", "thinking", "tool", "text"):
                     self.post_interim()  # the run went on: the ended block was a message, not the answer
+                if ev.kind in ("session", "user", "result"):
+                    self.ticks += 1  # the run moved on: a pending expect_turn fallback is void
                 if ev.kind == "session":  # once per turn
                     self.timing["model"] = ev.text
                     with self.lock:
@@ -892,8 +921,13 @@ class Worker:
                         self.idle = False
                 elif ev.kind == "bg":
                     with self.lock:
+                        if ev.count < self.bg:
+                            self.expect_turn()
                         self.bg = ev.count
                     self.maybe_close()
+                elif ev.kind == "done":
+                    with self.lock:
+                        self.expect_turn()
                 elif ev.kind == "thinking":
                     self.st.thinking(ev.text)
                 elif ev.kind == "tool":

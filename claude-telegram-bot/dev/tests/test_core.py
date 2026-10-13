@@ -116,11 +116,13 @@ class StreamJson(unittest.TestCase):
             j(type="result", is_error=False, num_turns=1, result="waiting", session_id=SID),
             j(type="system", subtype="init", session_id=SID, model="m"),  # next turn, same process
             j(type="system", subtype="background_tasks_changed", tasks=[]),
+            j(type="system", subtype="task_notification", task_id="a", status="completed"),
+            j(type="system", subtype="task_notification", task_id="b", status="completed", owned_by_subagent=True),
             j(type="result", is_error=False, num_turns=1, result="helper finished", session_id=SID),
         ])
         self.assertEqual([(e.kind, e.text if e.kind != "bg" else e.count) for e in ev], [
             ("session", "m"), ("user", "u1"), ("bg", 1), ("result", "waiting"), ("session", "m"), ("bg", 0),
-            ("result", "helper finished")])
+            ("done", "completed"), ("result", "helper finished")])
 
     def test_tool_line_truncates_and_unknown(self):
         self.assertTrue(streamjson.tool_line("Bash", {"command": "x" * 200}).endswith("…"))
@@ -751,16 +753,73 @@ class Inject(TopicCommands):
                 r.ev.put(e)
             until(lambda: "👍" in self.reacts(b, 2))
             self.assertTrue(r.open)
-            r.ev.put(self.E("bg", count=0))  # helper done while idle -> close stdin, claude finishes on its own
+            r.ev.put(self.E("bg", count=0))  # helper done while idle -> a notification turn follows: stay open
+            r.ev.put(self.E("session", "m", "s50"))
+            until(lambda: w.ticks == 7)
+            self.assertTrue(r.open)
+            r.ev.put(self.E("result", "helper finished", "s50"))  # its result: nothing left -> close stdin
             until(lambda: not r.open)
-            for e in (self.E("session", "m", "s50"), self.E("result", "helper finished", "s50"), None):
-                r.ev.put(e)
+            r.ev.put(None)
             until(lambda: w.run is None)
             self.assertEqual(self.answers(b), ["waiting", "still sleeping", "helper finished"])
             self.assertEqual(b.store.pending(), {})
             w.put(self.msg(3, "next"))  # no process now: a new one
             until(lambda: len(FakeRun.runs) == 2 and FakeRun.runs[1].lines == ["next"])
             FakeRun.runs[1].stop()
+            until(lambda: w.run is None)
+
+    def test_notification_turn_keeps_stdin_open_until_its_result(self):
+        """bg 1, result, bg 0, notification turn starts another bg task, result: stdin closes only after that
+        task ends and its own notification turn's result (closing early orphaned the new task)."""
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            b = self.bridge(d)
+            w = b.worker(1, 50)
+            w.put(self.msg(1, "watch the build"))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            r = FakeRun.runs[0]
+
+            def feed(*evs, ticks):
+                for e in evs:
+                    r.ev.put(e)
+                until(lambda: w.ticks == ticks)
+            feed(self.E("session", "m", "s50"), self.E("user", "u1"), self.E("bg", count=1),
+                 self.E("result", "started", "s50"), ticks=3)
+            until(lambda: w.idle)
+            self.assertTrue(r.open)  # the task runs
+            feed(self.E("bg", count=0), self.E("done", "completed"), ticks=3)
+            until(lambda: w.bg == 0)
+            self.assertTrue(r.open)  # the notification turn has not run yet
+            feed(self.E("session", "m", "s50"), self.E("bg", count=1), self.E("result", "next check", "s50"), ticks=5)
+            until(lambda: w.idle and w.bg == 1)
+            self.assertTrue(r.open)  # the new task runs
+            feed(self.E("bg", count=0), self.E("done", "completed"), ticks=5)
+            until(lambda: w.bg == 0)
+            self.assertTrue(r.open)
+            feed(self.E("session", "m", "s50"), self.E("result", "all done", "s50"), ticks=7)
+            until(lambda: not r.open)
+            r.ev.put(None)
+            until(lambda: w.run is None)
+            self.assertEqual(self.answers(b), ["started", "next check", "all done"])
+
+    def test_task_ended_without_a_turn_closes_after_the_grace(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"), \
+                mock.patch.object(bridge.Worker, "TURN_GRACE", 0.3):
+            FakeRun.runs = []
+            b = self.bridge(d)
+            w = b.worker(1, 50)
+            w.put(self.msg(1, "start and kill"))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            r = FakeRun.runs[0]
+            for e in (self.E("session", "m", "s50"), self.E("user", "u1"), self.E("bg", count=1),
+                      self.E("result", "running", "s50"), self.E("bg", count=0), self.E("done", "stopped")):
+                r.ev.put(e)
+            until(lambda: w.ticks == 3 and w.bg == 0)
+            self.assertTrue(r.open)
+            until(lambda: not r.open)  # no notification turn came: the fallback closes stdin
+            r.ev.put(None)
             until(lambda: w.run is None)
 
     def test_mid_turn_message_is_answered_by_the_same_result_and_stop_marks_the_rest(self):
@@ -1224,7 +1283,7 @@ class People(unittest.TestCase):
         g = notify.people_prompt(ps, True)
         self.assertIn("- Nikita / Никита: @nik", g)
         self.assertIn("starts with their mention(s) and the ask", g)
-        self.assertIn("tasks needs", g)
+        self.assertIn("github-tasks needs", g)
         self.assertIn("starts with @nik and the ask", notify.people_prompt(ps[:1], False))
         self.assertEqual(notify.people_prompt([], True), "")
 

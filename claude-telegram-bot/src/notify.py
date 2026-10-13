@@ -296,11 +296,11 @@ def people_prompt(ps: list, group: bool) -> str:
                 "never by a bare or bold name (\"Name:\"): Telegram notifies only on a mention. A final message that "
                 "waits on someone (a decision, an action, an answer) starts with their mention(s) and the ask - one "
                 "message, no separate ping. If the work is a tracked task, also record the wait "
-                "(`tasks needs <ref> --who <name> --action …`).")
+                "(`github-tasks needs <ref> --who <name> --action …`).")
     return ("You answer in a Telegram chat with " + ps[0]["names"][0] + " (" + ps[0]["handle"] + "). A final message "
             "that waits on them (a decision, an action, an answer) starts with " + ps[0]["handle"] + " and the ask: "
             "the mention notifies even in a muted chat and marks the message as waiting on them. No mention in other "
-            "messages. If the work is a tracked task, also record the wait (`tasks needs <ref> --action …`).")
+            "messages. If the work is a tracked task, also record the wait (`github-tasks needs <ref> --action …`).")
 
 
 def address(text: str, ps: list) -> str:
