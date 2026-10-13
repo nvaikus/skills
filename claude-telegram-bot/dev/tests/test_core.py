@@ -1532,8 +1532,11 @@ class Notify(unittest.TestCase):
         self.assertIn("Bill due 5 Oct", bridge.reply_context({"reply_to_message": bot_msg}, 300))
         root = dict(bot_msg, message_id=300)
         self.assertIsNone(bridge.reply_context({"reply_to_message": root}, 300))
-        own = dict(bot_msg, **{"from": {"is_bot": False}})
-        self.assertIsNone(bridge.reply_context({"reply_to_message": own}, 300))
+        human = dict(bot_msg, text="https://www.chaos.com one more",
+                     **{"from": {"is_bot": False, "first_name": "Nikita", "username": "vaikus_n", "id": 7}})
+        got = bridge.reply_context({"reply_to_message": human}, 300)
+        self.assertIn("chaos.com", got)
+        self.assertIn("@vaikus_n", got)
 
 
 class Profile(unittest.TestCase):

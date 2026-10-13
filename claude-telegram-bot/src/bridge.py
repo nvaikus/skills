@@ -595,14 +595,18 @@ class Bridge:
 
 
 def reply_context(msg, thread):
-    """The bot message the owner replies to (e.g. a `claude-tg notify` notification), quoted for claude.
-    Replies to the topic root (the client's default) and to the owner's own messages add nothing."""
+    """The message being replied to (a bot answer, a `claude-tg notify` notification, a group member's message),
+    quoted for claude: without it "not that one" has no referent. Replies to the topic root (the client's
+    default) add nothing."""
     rt = msg.get("reply_to_message") or {}
     text = rt.get("text") or rt.get("caption")
-    if not text or rt.get("message_id") == thread or not (rt.get("from") or {}).get("is_bot"):
+    if not text or rt.get("message_id") == thread:
         return None
-    quote = (msg.get("quote") or {}).get("text")  # the owner quoted only a part of it
-    return "[Replying to this bot message:]\n" + (quote or text)[:4000] + "\n[Reply:]"
+    quote = (msg.get("quote") or {}).get("text")  # only a part of it was quoted
+    f = rt.get("from") or {}
+    who = "this bot message" if f.get("is_bot") else "this message" + (
+        " " + sender(rt)[1:-1].replace("From:", "from") if sender(rt) else "")
+    return f"[Replying to {who}:]\n" + (quote or text)[:4000] + "\n[Reply:]"
 
 
 def sender(msg):
