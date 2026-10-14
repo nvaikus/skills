@@ -17,7 +17,9 @@ sendDocument; text becomes the caption when it fits, else a message before the f
 --replace KEY: after a successful send, the messages stored under KEY (notify.json "replace") are deleted and the
 new ids take their place - send first, so a failed send never leaves the topic empty. A refused delete (400: too
 old, already gone) is a warning and is forgotten; a transient one (network, 5xx) keeps its id under KEY for the
-next try. `notify-delete KEY` deletes and forgets without sending."""
+next try. `notify-delete KEY` deletes and forgets without sending.
+
+--keep KEY [--pin]: one message per (chat, KEY) edited in place on every call (a status board); see `keep`."""
 import html
 import json
 import os
@@ -514,6 +516,55 @@ def replace(bot, key: str, r: dict):
     _save(data)
 
 
+def keep(bot, cfg: dict, key: str, text: str, mode="plain", topic=DEFAULT_TOPIC, thread=None, chat=None,
+         pin=False, silent=True) -> dict:
+    """--keep KEY: one message per (chat, KEY) kept up to date in place (a status board). Stored message in the same
+    topic -> editMessageText (`"unchanged": true` when Telegram says not modified, `"edited": true` else). None yet,
+    or the edit is refused (deleted message / topic: any 400) -> a new message (+ pinChatMessage with `pin`, silent),
+    its id stored in notify.json "keep". One message only: text over the limit is an error."""
+    text = text.strip()
+    if not text:
+        raise NotifyError("empty text")
+    parts = chunks(text, mode)
+    if len(parts) > 1:
+        raise NotifyError(f"--keep needs one message; text is {len(text)} chars (limit {fmt.LIMIT})")
+    body, parse = parts[0]
+    dest = _Dest(bot, cfg, topic, thread, chat)
+    k = f"{dest.chat}:{key}"
+    old = _load().get("keep", {}).get(k)
+    if old and old.get("thread") == dest.thread:
+        try:
+            bot.call("editMessageText", chat_id=dest.chat, message_id=old["message_id"], text=body, parse_mode=parse,
+                     link_preview_options={"is_disabled": True})
+            return dest.result([old], edited=True)
+        except TgError as e:
+            if "message is not modified" in e.description:
+                return dest.result([old], unchanged=True)
+            if e.code != 400:
+                raise
+            print(f"claude-tg notify: kept message {key} gone ({e.description}); sending a new one", file=sys.stderr)
+    sent = _messages(bot, dest, [(body, parse)], silent, None)
+    mid = sent[0]["message_id"]
+    extra = {"created": True}
+    if pin:
+        try:
+            bot.call("pinChatMessage", chat_id=dest.chat, message_id=mid, disable_notification=True)
+            extra["pinned"] = True
+        except TgError as e:  # no can_pin_messages right: the message still works, unpinned
+            print(f"claude-tg notify: not pinned ({e.description})", file=sys.stderr)
+    data = _load()
+    data.setdefault("keep", {})[k] = {"thread": dest.thread, "message_id": mid}
+    _save(data)
+    return dest.result(sent, **extra)
+
+
+def with_topic_icon(cfg: dict, topic, icon) -> dict:
+    """--topic-icon: the topic of KEY gets this icon (registry name kept; created with it or edited once)."""
+    if not (topic and icon):
+        return cfg
+    return dict(cfg, notify_topics={**(cfg.get("notify_topics") or {}), topic: {**spec(cfg, topic), "icon": icon}})
+
+
 def forget(bot, cfg: dict, keys, ids, chat=None) -> int:
     """`claude-tg notify-delete`: delete the messages stored under KEYs and/or explicit ids in the owner chat.
     0 = all gone (unknown KEY = nothing to do), 1 = some not deleted (transient ones stay under their KEY)."""
@@ -565,7 +616,14 @@ def main(cfg: dict, a) -> int:
         topic, thread = target(a)
         chat = target_chat(cfg, a)
         bot = cli_bot(cfg)
+        cfg = with_topic_icon(cfg, topic, getattr(a, "topic_icon", None))
         text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None))
+        if getattr(a, "keep", None):
+            if files or getattr(a, "replace", None) or a.button:
+                raise NotifyError("--keep takes text only (no --file / --replace / --button)")
+            r = keep(bot, cfg, a.keep, text, mode, topic, thread, chat, getattr(a, "pin", False), a.silent)
+            print(json.dumps(r))
+            return 0
         if files:
             r = send_files(bot, cfg, files, text, mode, a.silent, topic, a.button, thread, g, chat)
         else:

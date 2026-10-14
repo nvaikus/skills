@@ -1518,7 +1518,8 @@ class Notify(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             (Path(d) / "notify.json").write_text('{"replace": {"dg": {"chat": 7, "message_ids": [9]}}}')
             a = mock.Mock(file=None, text=["hi"], html=False, markdown=False, silent=False, button=None,
-                          thread=5, chat=None, main_chat=False, topic=None, replace="dg")
+                          thread=5, chat=None, main_chat=False, topic=None, replace="dg", keep=None,
+                          topic_icon=None)
             bot = FakeBot(fail={"sendMessage": "Bad Request: chat not found"})
             with mock.patch.object(self.n, "Bot", lambda *_, **__: bot), mock.patch.object(config, "read_token",
                                                                                      lambda c: "t"), \
@@ -1526,6 +1527,54 @@ class Notify(unittest.TestCase):
                 self.assertEqual(self.n.main(dict(config.DEFAULTS, owner_id=7), a), 1)
             self.assertEqual([c[0] for c in bot.calls], ["sendMessage"])
             self.assertIn("dg", json.loads((Path(d) / "notify.json").read_text())["replace"])
+
+    def test_keep_edits_in_place_and_resends_when_gone(self):
+        class Bot(FakeBot):
+            ids = iter(range(100, 200))
+            gone = set()
+
+            def call(self, method, _timeout=35, _retries=3, **p):
+                self.calls.append((method, p))
+                if method == "createForumTopic":
+                    return {"message_thread_id": 300}
+                if method == "getForumTopicIconStickers":
+                    return [{"emoji": "\U0001f4c8", "custom_emoji_id": "555"}]
+                if method == "editMessageText":
+                    if p["message_id"] in self.gone:
+                        raise TgError(method, 400, "Bad Request: message to edit not found")
+                    if p["text"] == self.last:
+                        raise TgError(method, 400, "Bad Request: message is not modified")
+                    self.last = p["text"]
+                    return {"message_id": p["message_id"]}
+                if method == "sendMessage":
+                    self.last = p["text"]
+                return True if method == "pinChatMessage" else {"message_id": next(self.ids)}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = self.n.with_topic_icon(dict(config.DEFAULTS, owner_id=7), "Статус", "\U0001f4c8")
+            bot = Bot()
+            bot.last = None
+            r = self.n.keep(bot, cfg, "st", "<b>a</b>", "html", topic="Статус", pin=True)
+            self.assertEqual([c[0] for c in bot.calls],
+                             ["getForumTopicIconStickers", "createForumTopic", "sendMessage", "pinChatMessage"])
+            self.assertEqual(bot.calls[1][1]["icon_custom_emoji_id"], "555")
+            self.assertEqual(bot.calls[3][1], {"chat_id": 7, "message_id": 100, "disable_notification": True})
+            self.assertEqual(r, {"chat": 7, "thread": 300, "message_ids": [100], "created": True, "pinned": True})
+            bot.calls.clear()
+            r = self.n.keep(bot, cfg, "st", "<b>a</b>", "html", topic="Статус", pin=True)
+            self.assertTrue(r["unchanged"])
+            r = self.n.keep(bot, cfg, "st", "<b>b</b>", "html", topic="Статус", pin=True)
+            self.assertEqual((r["edited"], r["message_ids"]), (True, [100]))
+            self.assertEqual([c[0] for c in bot.calls], ["editMessageText", "editMessageText"])
+            bot.gone.add(100)
+            bot.calls.clear()
+            with mock.patch("sys.stderr"):
+                r = self.n.keep(bot, cfg, "st", "<b>c</b>", "html", topic="Статус", pin=True)
+            self.assertEqual([c[0] for c in bot.calls], ["editMessageText", "sendMessage", "pinChatMessage"])
+            self.assertEqual(r["message_ids"], [101])
+            self.assertEqual(json.loads((Path(d) / "notify.json").read_text())["keep"],
+                             {"7:st": {"thread": 300, "message_id": 101}})
+            with self.assertRaises(self.n.NotifyError):
+                self.n.keep(bot, cfg, "st", "x" * 5000, "plain", topic="Статус")
 
     def test_reply_to_bot_message_is_quoted(self):
         bot_msg = {"message_id": 10, "from": {"is_bot": True}, "text": "Bill due 5 Oct"}

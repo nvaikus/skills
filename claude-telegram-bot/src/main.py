@@ -105,6 +105,12 @@ def main(argv=None):
     s.add_argument("--replace", metavar="KEY",
                    help="after a successful send, delete the message(s) last sent with this KEY and remember the new "
                         "ones (STATE_DIR/notify.json); a delete that fails (too old, gone) only warns")
+    s.add_argument("--keep", metavar="KEY",
+                   help="keep ONE message per chat + KEY up to date: edit it in place (prints edited / unchanged), "
+                        "send a new one when none is stored or it was deleted (STATE_DIR/notify.json keep)")
+    s.add_argument("--pin", action="store_true", help="with --keep: pin the message when it is (re)sent, silently")
+    s.add_argument("--topic-icon", metavar="EMOJI",
+                   help="with --topic: the topic's icon (getForumTopicIconStickers emoji); overrides notify_topics")
     s.add_argument("text", nargs="*", help="message text (default: stdin)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
