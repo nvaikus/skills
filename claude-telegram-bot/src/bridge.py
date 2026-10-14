@@ -1,5 +1,6 @@
 """The bot: long-poll loop, owner lock, one worker thread per topic (serial inside a topic,
 parallel across topics), progress UX, final answer delivery."""
+import html
 import logging
 import os
 import queue
@@ -10,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, fmt, guard, inbox, media, notify, runner, ui
+from . import config, fmt, general, guard, inbox, media, notify, runner, ui
 from .botapi import Bot, Skipped, TgError
 from .store import GENERAL, Store
 
@@ -68,6 +69,9 @@ class Bridge:
         self.owner = cfg.get("owner_id") or self.store.owner_id
         self.lang = ui.lang(cfg)
         self.guard = guard.from_config(cfg)  # outbound leak filter; None = off
+        # General ignored (group_general false): last N General messages per chat, context for a mention's topic
+        self.general = general.Buffer(config.STATE_DIR / "general.json", cfg.get("general_context", 20))
+        self.mention_albums = []  # media_group_ids of mention messages: the rest of the album follows the mention
 
     def key(self, chat, thread) -> str:
         """Topic key: thread id in the home chat, `<chat>:<thread>` in an owner group (thread ids collide)."""
@@ -234,13 +238,13 @@ class Bridge:
             if not msg or not self.admits(msg.get("chat") or {}, msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
-            if thread == GENERAL and not self.general_ok(msg["chat"]):
+            if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
                 return
         elif msg and (msg.get("chat") or {}).get("type") in ("group", "supergroup"):
             if not self.owner_admits(msg["chat"], msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
-            if thread == GENERAL and not self.general_ok(msg["chat"]):
+            if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
                 return
         else:
             if not msg or msg["chat"]["type"] != "private" or "from" not in msg:
@@ -328,8 +332,32 @@ class Bridge:
         now, src = time.monotonic(), f"general {chat.get('id')}"
         if now - self.ignored.get(src, -IGNORED_LOG) >= IGNORED_LOG:
             self.ignored[src] = now
-            log.info("ignored: General topic of chat %s (config group_general: false)", chat.get("id"))
+            log.info("ignored: General topic of chat %s (config group_general: false; a mention of the bot opens "
+                     "a topic)", chat.get("id"))
         return False
+
+    def general_mention(self, msg: dict) -> bool:
+        """General while ignored, sender already admitted: a mention of the bot (or a reply to its message) goes
+        on - marked `_mention`, with the buffered General messages before it as `_context` - and opens a topic at
+        flush. Anything else is buffered (no commands, no service messages) and dropped."""
+        chat = msg["chat"]["id"]
+        if msg.get("forum_topic_created") or msg.get("forum_topic_edited") or any(k in msg for k in GROUP_SERVICE):
+            return False
+        if (msg.get("text") or "").startswith("/"):
+            return self.general_ok(msg["chat"])
+        album = msg.get("media_group_id")
+        if album and album in self.mention_albums:
+            return True  # the rest of a mention's album: same burst, same topic
+        if not general.mentions(msg, self.username, self.bot_id):
+            self.general.add(chat, msg)
+            return self.general_ok(msg["chat"])
+        msg["_mention"] = True
+        msg["_context"] = general.render(self.general.recent(chat))
+        self.general.add(chat, msg)
+        if album:
+            self.mention_albums = (self.mention_albums + [album])[-20:]
+        log.info("General mention in chat %s (message %s): opening a topic", chat, msg["message_id"])
+        return True
 
     def membership(self, mcm: dict):
         """Added to a group that is not ours -> leave it (it would ignore everything there). Group mode: anything but
@@ -396,6 +424,8 @@ class Bridge:
             thread = self.new_topic(chat, msgs[0])
             if thread is None:
                 return
+            if msgs[0].get("_mention"):  # General mention: answer it there with the topic link
+                self.general_link(chat, thread, msgs[0])
         self.worker(chat, thread).put(msgs)
 
     def note_topic(self, chat, thread, msg):
@@ -413,7 +443,10 @@ class Bridge:
             self.store.update(k, title=edited["name"], implicit=False)
 
     def new_topic(self, chat, msg):
-        seed = " ".join((msg.get("text") or msg.get("caption") or "New chat").split()[:5])[:40]
+        text = msg.get("text") or msg.get("caption") or ""
+        if msg.get("_mention"):
+            text = general.strip_mention(text, self.username)
+        seed = " ".join((text or "New chat").split()[:5])[:40]
         try:
             topic = self.bot.call("createForumTopic", chat_id=chat, name=seed)
         except TgError as e:
@@ -424,6 +457,17 @@ class Bridge:
         self.store.update(self.key(chat, thread), title=seed, implicit=True)
         log.info("topic %s auto-created from All messages", self.key(chat, thread))
         return thread
+
+    def general_link(self, chat, thread, msg):
+        """Reply to the mention in General: the new topic's title, linked."""
+        title = self.store.topic(self.key(chat, thread)).get("title") or ""
+        link = inbox.topic_link(None, thread, chat)
+        try:
+            self.bot.call("sendMessage", chat_id=chat, parse_mode="HTML", link_preview_options={"is_disabled": True},
+                          text=self.s("general_topic", link=link, title=html.escape(title)),
+                          reply_parameters={"message_id": msg["message_id"], "allow_sending_without_reply": True})
+        except TgError as e:
+            log.warning("General link reply: %s", e)
 
     def worker(self, chat, thread):
         k = self.key(chat, thread)
@@ -744,6 +788,8 @@ class Worker:
         notes = []
         who = None
         for m in msgs:
+            if m.get("_context"):  # a General mention: what was said there before it, delimited
+                parts.append(m["_context"])
             tag = sender(m) if b.group is not None else None
             if tag and tag != who:  # group mode: several people share the session - say who writes
                 parts.append(tag)
@@ -1019,7 +1065,7 @@ class Worker:
                 b.react(chat, bt.key, "👍")
             if answered and not ev.hook and not self.renamed and b.store.topic(self.key).get("implicit"):
                 self.renamed = True
-                threading.Thread(target=self.rename, args=(answered[0].prompt, ev.text), daemon=True).start()
+                threading.Thread(target=self.rename, args=(general.title_part(answered[0].prompt), ev.text), daemon=True).start()
         for bt in answered:
             b.store.unpend(self.pk(bt.key))
 

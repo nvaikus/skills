@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src import bridge, config, fmt, runner, service, streamjson, ui  # noqa: E402
+from src import bridge, config, fmt, general, runner, service, streamjson, ui  # noqa: E402
 from src import botapi  # noqa: E402
 from src.botapi import TgError  # noqa: E402
 from src.store import Store  # noqa: E402
@@ -2225,6 +2225,126 @@ class GroupMode(unittest.TestCase):
         self.assertIn(f"chat\t{self.G}\tsupergroup\tStudio\tforum", lines)
         self.assertIn(f"user\t{self.A}\tAnn\t-\t{self.G}", lines)
         self.assertEqual(len(lines), 3)
+
+
+class GeneralMention(unittest.TestCase):
+    """General ignored (group_general false): a mention of the bot opens a topic with the buffered General context."""
+    G, A, B, BOT = GroupMode.G, GroupMode.A, GroupMode.B, 4242
+
+    def bridge(self, d, cfg=None):
+        b = GroupMode.bridge(self, d, cfg or GroupMode.cfg(self))
+        b.username, b.bot_id = "my_bot", self.BOT
+        return b
+
+    def gen(self, mid, text="hi", uid=None, **kw):
+        return GroupMode.msg(self, mid, uid=uid, thread=None, text=text, date=1700000000 + mid, **kw)
+
+    def at(self, mid, text="🙂 @My_Bot fix the build", **kw):
+        i = text.index("@")
+        off = len(text[:i].encode("utf-16-le")) // 2
+        return self.gen(mid, text, entities=[{"type": "mention", "offset": off, "length": 7}], **kw)
+
+    def test_mention_detection(self):
+        m = lambda u: general.mentions(u["message"], "my_bot", self.BOT)
+        self.assertTrue(m(self.at(1)))                                                    # emoji before: UTF-16
+        self.assertFalse(m(self.at(2, "@other_ fix")))                                   # another @name
+        self.assertFalse(m(self.gen(3, "my_bot without entity")))
+        self.assertTrue(m(self.gen(4, "Bot", entities=[{"type": "text_mention", "offset": 0, "length": 3,
+                                                          "user": {"id": self.BOT}}])))
+        self.assertTrue(m(self.gen(5, "and this?", reply_to_message={"message_id": 1, "from": {"id": self.BOT}})))
+        self.assertFalse(m(self.gen(6, "re", reply_to_message={"message_id": 1, "from": {"id": self.A}})))
+        cap = self.gen(7, None, caption="@my_bot look", photo=[{}],
+                       caption_entities=[{"type": "mention", "offset": 0, "length": 7}])
+        self.assertTrue(m(cap))
+        self.assertEqual(general.strip_mention("🙂 @My_Bot fix  the build", "my_bot"), "🙂 fix the build")
+
+    def test_buffer_bounded_persistent_media_placeholder(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "general.json"
+            buf = general.Buffer(path, 3)
+            for i in range(5):
+                buf.add(-1, self.gen(i, f"m{i}")["message"])
+            buf.add(-1, self.gen(9, None, voice={})["message"])
+            buf.add(-1, self.gen(10, None, caption="see", document={"file_name": "a.pdf"})["message"])
+            again = general.Buffer(path, 2)                                     # restart, smaller size
+            self.assertEqual([e["text"] for e in again.recent(-1)], ["[voice note]", "[file a.pdf] see"])
+            self.assertEqual(again.recent(-1)[0]["from"], "Ann")
+            off = general.Buffer(Path(d) / "x.json", 0)
+            off.add(-1, self.gen(1)["message"])
+            self.assertEqual(off.recent(-1), [])
+
+    def test_general_buffered_mention_opens_with_context(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.gen(1, "first"))
+            b.handle(self.gen(2, "second", uid=self.B))
+            b.handle(self.gen(3, "stranger", uid=333))                            # not allowed: not buffered
+            b.handle(self.gen(4, "/status"))                                      # commands: not buffered
+            b.handle(self.at(5, "@my_bot sum it up", uid=333))                    # mention by a stranger: ignored
+            self.assertEqual(b.collected, [])
+            m = self.at(6, "@my_bot sum it up")
+            b.handle(m)
+            self.assertEqual(b.collected, [(self.G, bridge.GENERAL, 6)])
+            ctx = m["message"]["_context"]
+            self.assertTrue(m["message"]["_mention"])
+            self.assertLess(ctx.index("Ann: first"), ctx.index("Ann: second"))
+            self.assertNotIn("stranger", ctx)
+            self.assertNotIn("/status", ctx)
+            self.assertNotIn("sum it up", ctx)                                    # the mention itself is not context
+            self.assertTrue(ctx.startswith(general.CONTEXT_OPEN) and ctx.endswith(general.CONTEXT_CLOSE))
+            self.assertEqual(len(b.general.recent(self.G)), 3)                     # first, second, the mention
+            self.assertEqual(b.bot.calls, [])
+
+    def test_group_general_true_keeps_old_behaviour(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d, GroupMode.cfg(self, group_general=True))
+            b.handle(self.gen(1, "plain"))
+            self.assertEqual(b.collected, [(self.G, bridge.GENERAL, 1)])
+            self.assertEqual(b.general.recent(self.G), [])
+
+    def test_flush_creates_topic_links_it_and_prompt_carries_context(self):
+        class Bot(FakeBot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                super().call(method, **p)
+                return {"message_thread_id": 77} if method == "createForumTopic" else {"message_id": 1}
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.bot = Bot()
+            b.handle(self.gen(1, "earlier talk"))
+            m = self.at(6, "@my_bot sum it up")
+            b.handle(m)
+            put = []
+            b.worker = lambda chat, thread: mock.Mock(put=lambda msgs: put.append((chat, thread, msgs)))
+            k, t = b.key(self.G, bridge.GENERAL), object()
+            b.bursts[k], b.timers[k] = [m["message"]], t
+            b.flush(self.G, bridge.GENERAL, t)
+            calls = dict(b.bot.calls)
+            self.assertEqual(calls["createForumTopic"]["name"], "sum it up")
+            self.assertEqual(calls["sendMessage"]["reply_parameters"]["message_id"], 6)
+            self.assertIn("https://t.me/c/1234567890/77/", calls["sendMessage"]["text"])
+            self.assertIsNone(calls["sendMessage"].get("message_thread_id"))      # the reply stays in General
+            self.assertEqual(put[0][:2], (self.G, 77))
+            w = bridge.Worker.__new__(bridge.Worker)
+            w.b, w.chat, w.thread = b, self.G, 77
+            prompt = w.prompt(put[0][2])
+            self.assertLess(prompt.index("earlier talk"), prompt.index("[From: Ann"))
+            self.assertLess(prompt.index(general.CONTEXT_CLOSE), prompt.index("@my_bot sum it up"))
+            self.assertNotIn("earlier talk", general.title_part(prompt))
+
+    def test_owner_group_mention(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            og = OwnerGroups()
+            b = GroupMode.bridge(self, d, og.cfg())
+            b.owner, b.username, b.bot_id = og.OWNER, "my_bot", self.BOT
+            b.handle(og.msg(1, thread=None, text="note", date=1))
+            b.handle(og.msg(2, thread=None, uid=999, text="other", date=2))
+            m = og.msg(3, thread=None, text="@my_bot go", date=3,
+                                entities=[{"type": "mention", "offset": 0, "length": 7}])
+            b.handle(m)
+            self.assertEqual(b.collected, [(OwnerGroups.G, bridge.GENERAL, 3)])
+            self.assertIn("note", m["message"]["_context"])
+            self.assertNotIn("other", m["message"]["_context"])
 
 
 class OwnerGroups(unittest.TestCase):
