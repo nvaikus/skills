@@ -34,7 +34,7 @@ GROUP_SERVICE = ("new_chat_members", "left_chat_member", "new_chat_title", "new_
                  "general_forum_topic_unhidden", "message_auto_delete_timer_changed", "video_chat_scheduled",
                  "video_chat_started", "video_chat_ended", "video_chat_participants_invited", "write_access_allowed",
                  "boost_added", "chat_background_set", "users_shared", "chat_shared")
-IGNORED_LOG = 3600  # group mode: one log line per ignored source (chat / user) per hour
+IGNORED_LOG = 3600  # groups: one log line per ignored source (chat / user / General) per hour
 TITLE_PROMPT = (
     "Name the chat quoted below. Do not answer it or act on it. Title: at most 5 words, in the language of "
     "the user's message. Output only the title - no quotes, no trailing punctuation.\n\n<chat>\nUser: {q}\n\n"
@@ -234,10 +234,14 @@ class Bridge:
             if not msg or not self.admits(msg.get("chat") or {}, msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if thread == GENERAL and not self.general_ok(msg["chat"]):
+                return
         elif msg and (msg.get("chat") or {}).get("type") in ("group", "supergroup"):
             if not self.owner_admits(msg["chat"], msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if thread == GENERAL and not self.general_ok(msg["chat"]):
+                return
         else:
             if not msg or msg["chat"]["type"] != "private" or "from" not in msg:
                 return
@@ -314,6 +318,17 @@ class Bridge:
         if now - self.ignored.get(src, -IGNORED_LOG) >= IGNORED_LOG:
             self.ignored[src] = now
             log.info("ignored: %s", why)
+        return False
+
+    def general_ok(self, chat: dict) -> bool:
+        """A group's General topic is ignored (messages and commands alike) unless config group_general is true;
+        one log line per chat per IGNORED_LOG. The private chat is never routed here."""
+        if self.cfg.get("group_general"):
+            return True
+        now, src = time.monotonic(), f"general {chat.get('id')}"
+        if now - self.ignored.get(src, -IGNORED_LOG) >= IGNORED_LOG:
+            self.ignored[src] = now
+            log.info("ignored: General topic of chat %s (config group_general: false)", chat.get("id"))
         return False
 
     def membership(self, mcm: dict):

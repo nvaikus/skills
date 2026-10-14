@@ -2059,11 +2059,24 @@ class GroupMode(unittest.TestCase):
 
     def test_general_and_reply_threads_map_to_all_messages(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
-            b = self.bridge(d)
+            b = self.bridge(d, self.cfg(group_general=True))
             b.handle(self.msg(1, thread=None))
             reply = self.msg(2, thread=None, message_thread_id=1)  # a reply in General: thread id, not a topic
             b.handle(reply)
             self.assertEqual([t for _, t, _ in b.collected], [bridge.GENERAL, bridge.GENERAL])
+
+    def test_general_ignored_by_default(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            with self.assertLogs("claude-tg", "INFO") as cm:
+                b.handle(self.msg(1, thread=None))
+                b.handle(self.msg(2, thread=None, message_thread_id=1))  # a reply in General
+                b.handle(self.msg(3, thread=None, text="/start"))
+                b.handle(self.msg(4, thread=None, text="/status"))
+                b.handle(self.msg(5))                                    # a topic: heard
+            self.assertEqual(b.collected, [(self.G, 55, 5)])
+            self.assertEqual(b.bot.calls, [])                            # no reply, no new topic
+            self.assertEqual(len([x for x in cm.output if "General" in x]), 1)  # one line per chat per window
 
     def test_service_messages_never_become_prompts(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
@@ -2250,11 +2263,14 @@ class OwnerGroups(unittest.TestCase):
             b.handle(self.msg(2, uid=333))                                    # another member
             b.handle(self.msg(3, chat=-100999))                               # a group not in owner_groups
             b.handle(self.msg(4, **{"sender_chat": {"id": self.G}}))          # anonymous admin
-            b.handle(self.msg(5, thread=None))                                # General
+            b.handle(self.msg(5, thread=None))                                # General: ignored by default
             b.handle({"message": {"message_id": 6, "chat": {"id": 1, "type": "private"}, "from": {"id": 1},
-                                  "text": "dm", "date": 0}})
-            self.assertEqual([c for c in b.collected if c[0] == self.G], [(self.G, 55, 1), (self.G, bridge.GENERAL, 5)])
+                                  "text": "dm", "date": 0}})                # private General: heard as before
+            self.assertEqual([c for c in b.collected if c[0] == self.G], [(self.G, 55, 1)])
             self.assertEqual([m for c, _, m in b.collected if c == 1], [6])  # the private chat as before
+            b.cfg = self.cfg(group_general=True)
+            b.handle(self.msg(7, thread=None))
+            self.assertEqual(b.collected[-1], (self.G, bridge.GENERAL, 7))
 
     def test_same_thread_in_two_chats_stays_apart(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \

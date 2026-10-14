@@ -39,6 +39,7 @@ DEFAULTS = {
     "group_id": None,            # group mode: forum supergroup chat id (-100...); None = owner's private chat
     "allowed_users": [],         # group mode: Telegram user ids allowed to drive the bot; [] = nobody (fail closed)
     "owner_groups": {},          # private-owner mode: name -> forum supergroup id (-100...) where only the owner talks
+    "group_general": False,      # groups (group_id + owner_groups): True = the General topic is heard too (opens topics)
     "people_aliases": {},        # user id -> extra names people call them by ("Sasha"): the addressing rule + header rewrite
 }
 

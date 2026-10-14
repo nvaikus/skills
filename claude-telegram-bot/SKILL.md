@@ -40,6 +40,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - When: a project bot that 2+ people drive, every topic visible to all. Config `group_id` (forum supergroup, `-100…`) + `allowed_users` (user ids); absent = private-owner mode as above. Setup: `references/setup.md` (Group mode).
 - Only `allowed_users` in that group are heard (empty list = nobody); everyone/everything else is ignored silently (one log line per source per hour). All allowed users are equal (commands, ⏹); `owner_id` is unused. The bot leaves any other group it is added to.
 - Topics, notify, spawn/send, restart reports all go to the group. Each prompt line is tagged `[From: Name (@user, id N)]`. Links: `https://t.me/c/<group id without -100>/<thread>/2147483647`.
+- General topic of any group (this and owner groups) is ignored by default: messages and commands (`/start` too), no reply, no new topic, one log line per chat per hour. Work happens in topics. Config `group_general: true` = heard again (a message there opens a topic). Outbound (`notify` without a topic) still posts there. The private chat is unaffected.
 - Telegram allows ~20 messages/min per group: status updates are slower than in private, answers stream by message edits (no drafts).
 
 ## Owner groups (private mode + extra forum groups)

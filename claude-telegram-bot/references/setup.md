@@ -44,6 +44,7 @@
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 | `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
 | `owner_groups` | `{}` | private mode: name → forum supergroup id (`-100…`) where only the owner talks; CLI `--chat NAME`. Section below |
+| `group_general` | false | groups (`group_id` and `owner_groups`): true = the General topic is heard (a message there opens a topic); false = ignored, commands too. Private chat unaffected |
 | `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
 | `people_aliases` | `{}` | user id → extra names people call them by (`{"123": ["Al"]}`): addressing rule + `Name:` header rewrite (SKILL.md, Addressing people) |
 
@@ -62,7 +63,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 
 - Routing: only that group, only `allowed_users`; other groups/members/bots/channel posts/anonymous admins are ignored (log `ignored: …` once per source per hour). Added to another group → the bot leaves it. `/cmd@other_bot` is ignored.
 - All allowed users are equal (commands, ⏹, everything); `owner_id` is unused in group mode.
-- General = All messages: a message there opens a new topic. Join/pin/title service messages never run.
+- General is ignored (messages and commands; config `group_general: true` → a message there opens a new topic). Join/pin/title service messages never run.
 - Prompts are tagged per sender: `[From: Name (@user, id N)]`.
 - Limits: ~20 messages/min per group, edits included. Cosmetic budget (status edits, typing, stream edits) 0.2/s, burst 3 (private: 0.5/s, burst 5); answers are never dropped. `sendMessageDraft` is private-only → answers stream as an edited message.
 - Topic links: `https://t.me/c/<group id without -100>/<thread>/2147483647` (members only).
@@ -77,6 +78,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 3 | agent | config `"owner_groups": {"<name>": <id>}` → `claude-tg restart` → `claude-tg doctor` (`group <name>`, `group <name> admin` ok) |
 
 - Topic state is keyed `"<chat>:<thread>"` for these groups; private-chat topics keep their plain keys.
+- General is ignored like in group mode (`group_general`).
 - A supergroup id changes when Telegram migrates a basic group: use the `-100…` id that `doctor` accepts.
 
 ## Files over 20 MB (optional local Bot API server)
