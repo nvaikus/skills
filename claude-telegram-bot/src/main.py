@@ -127,7 +127,7 @@ def main(argv=None):
     INBOX = ("Needs the running bot: the prompt is posted into the topic as a bot message, then queued in "
              "STATE_DIR/inbox/ and run by the bot like an owner message (queued while it is down). Prints JSON.")
     s = sub.add_parser("spawn", help="new topic + claude session started with PROMPT (args or stdin)",
-                       description=INBOX + " Output: {thread, link, message_id, cwd}.")
+                       description=INBOX + " Output: {thread, link, message_id, cwd[, icon]}.")
     s.add_argument("--title", required=True, help="topic name")
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--mention", action="append", metavar="ID=NAME",
@@ -135,6 +135,9 @@ def main(argv=None):
                         "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
     s.add_argument("--cwd", help="working dir of the topic's session (default: config default_cwd)")
     s.add_argument("--icon", help="topic icon emoji (getForumTopicIconStickers); kept as the topic's base icon")
+    s.add_argument("--start-icon", metavar="EMOJI",
+                   help="create the topic with this icon instead, not kept as base (topic-icon base restores --icon or "
+                        "none); output gets \"icon\" when an icon was set")
     s.add_argument("--system", metavar="TEXT|@FILE",
                    help="appended to claude's system prompt on every run of this topic (topic role)")
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")

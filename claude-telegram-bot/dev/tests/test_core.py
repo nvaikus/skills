@@ -1907,6 +1907,22 @@ class Inbox(unittest.TestCase):
         with self.assertRaises(self.ib.NotifyError):
             self.ib.thread_of("https://example.com/x")
 
+    def test_spawn_start_icon_set_at_creation_not_kept_as_base(self):
+        """--start-icon: createForumTopic carries it (no separate skippable editForumTopic); base stays --icon/none."""
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(bridge.Worker, "put"):
+            b = TopicCommands.bridge(self, d)
+            for base, want_base in ((None, None), ("📋", "222")):
+                bot = self.Bot()
+                r = self.ib.spawn(bot, self.cfg(), "Needs", d, "x", icon=base, start_icon="❗")
+                create = [p for m, p in bot.calls if m == "createForumTopic"][0]
+                self.assertEqual((create["icon_custom_emoji_id"], r["icon"]), ("111", "111"))
+                self.assertNotIn("editForumTopic", [m for m, _ in bot.calls])
+                b.drain_inbox()
+                self.assertEqual(b.store.topic(r["thread"]).get("icon"), want_base)
+            r = self.ib.spawn(self.Bot(), self.cfg(), "Plain", d, "x")
+            self.assertNotIn("icon", r)
+
     def test_topic_link_opens_at_last_message(self):
         self.assertEqual(self.ib.topic_link("my_bot", 400), "https://t.me/my_bot/400/2147483647")
         self.assertEqual(self.ib.thread_of(self.ib.topic_link("my_bot", 400)), 400)

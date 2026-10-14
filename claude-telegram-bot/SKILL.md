@@ -16,7 +16,7 @@ claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after eve
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY]   # bot -> owner; stdin if no TEXT
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
-claude-tg spawn --title T [--cwd DIR] [--icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
+claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
@@ -82,7 +82,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## spawn / send (scripts driving sessions)
 
 - Need the running service: the prompt is posted into the topic as a bot message (the owner sees it; `--show TEXT` posts that short human line instead, claude still gets the full prompt), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
-- `spawn` prints `{thread, link, message_id, cwd}` (+ `chat` in an owner group, link `t.me/c/...`); `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs.
+- `spawn` prints `{thread, link, message_id, cwd}` (+ `chat` in an owner group, link `t.me/c/...`); `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs. `--icon` = base icon (kept, `topic-icon base` restores it); `--start-icon` = created with that icon instead, not kept (a status mark like ❗ that can't be skipped for rate budget, unlike a later `topic-icon`); output gets `icon` when one was set.
 - `alive` = a process with `CLAUDE_TG_RUN_TOPIC=<thread>`, a pending request or an inbox file. A finished turn ends the process: idle between turns is normal.
 - Status-only lines into a topic (no claude turn): `notify --thread ID --silent`.
 

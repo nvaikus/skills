@@ -137,15 +137,18 @@ def read_system(arg):
 
 
 def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False,
-          mention=None, chat=None) -> dict:
+          mention=None, chat=None, start_icon=None) -> dict:
+    """`icon` = the topic's base icon (stored, `topic-icon base` restores it); `start_icon` = the icon the topic is
+    created with instead, not stored (e.g. a ❗ mark set in createForumTopic: no separate, skippable editForumTopic)."""
     path = Path(os.path.expanduser(cwd or cfg["default_cwd"])).resolve()
     if not path.is_dir():
         raise NotifyError(f"cwd is not a directory: {path}")
     chat = chat if chat is not None else owner_chat(cfg)
     extra = {}
     cid = icon_id(bot, icon) if icon else None
-    if cid:
-        extra["icon_custom_emoji_id"] = cid
+    shown = (icon_id(bot, start_icon) if start_icon else None) or cid
+    if shown:
+        extra["icon_custom_emoji_id"] = shown
     thread = bot.call("createForumTopic", chat_id=chat, name=title.strip()[:128], **extra)["message_thread_id"]
     topic = {"cwd": str(path), "title": title.strip()[:128], "implicit": False}
     if cid:
@@ -157,6 +160,8 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
     msg = post(bot, chat, thread, prompt, silent, show, cfg, mention)
     enqueue({"op": "prompt", "thread": thread, "chat": chat, "msg": msg, "topic": topic})
     out = {"thread": thread, "link": link(bot, thread, cfg, chat), "message_id": msg["message_id"], "cwd": str(path)}
+    if shown:
+        out["icon"] = shown
     return out if config.home(cfg, chat) else dict(out, chat=chat)
 
 
@@ -260,7 +265,7 @@ def main(cfg: dict, a) -> int:
         bot = cli_bot(cfg)
         if a.cmd == "spawn":
             r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet,
-                      getattr(a, "mention", None), chat)
+                      getattr(a, "mention", None), chat, getattr(a, "start_icon", None))
         elif a.cmd == "send":
             r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
         else:

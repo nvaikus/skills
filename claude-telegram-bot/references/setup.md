@@ -57,7 +57,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 2 | user | Telegram: new group → settings → Topics on (turns it into a forum supergroup); add the members |
 | 3 | user | add the bot, then make it **admin** with Manage Topics. Admins get every message; a non-admin bot with privacy mode on sees only commands (alternative: @BotFather `/setprivacy` → Disable, then remove + re-add the bot) |
 | 4 | user | each member writes one message in the group |
-| 5 | agent | service stopped (or not installed yet): `claude-tg chats` → `chat` row = `group_id`, `user` rows = ids for `allowed_users`. Reads pending updates without confirming them; 409 = the service is polling, stop it first. Those messages run when the bot starts |
+| 5 | agent | service stopped (or not installed yet): `claude-tg chats` → `chat` row = `group_id`, `user` rows = ids for `allowed_users`. Reads pending updates without confirming them; 409 = the service is polling, stop it first. Those messages run when the bot starts. Empty (messages sent before the bot was admin are never delivered): `tg-cli chats "<title>"` → the `-100…` row (a second plain-id row = pre-migration group, ignore), `tg-cli history <id> -j` → `sender_id`s |
 | 6 | agent | config `"group_id": -100…, "allowed_users": [id, id]` → `claude-tg doctor` (`group`, `group_admin`, `allowed_users` ok) → `claude-tg install` / `restart` |
 
 - Routing: only that group, only `allowed_users`; other groups/members/bots/channel posts/anonymous admins are ignored (log `ignored: …` once per source per hour). Added to another group → the bot leaves it. `/cmd@other_bot` is ignored.
