@@ -808,6 +808,18 @@ class Normalize(unittest.TestCase):
         self.assertEqual(normalize.content(P(eventMessage=P(name="x"))), ("msg", "other", "[event]"))
         self.assertIsNone(normalize.content(P(senderKeyDistributionMessage=P(x=1))))
 
+    def test_contact_cards_keep_phones(self):
+        vc = ("BEGIN:VCARD\r\nVERSION:3.0\r\nN:;Carla;;;\r\nFN:Carla\r\n"
+              "item1.TEL;waid=351912345678:+351 912 345 678\r\nitem1.X-ABLabel:Mobile\r\n"
+              "TEL;type=HOME:(21) 555-0100\r\nTEL;type=CELL;waid=351912345678:+351912345678\r\nEND:VCARD")
+        self.assertEqual(normalize.vcard_phones(vc), ["+351912345678", "215550100"])
+        self.assertEqual(normalize.content(P(contactMessage=P(displayName="Carla", vcard=vc))),
+                         ("msg", "contact", "[contact] Carla +351912345678 215550100"))
+        self.assertEqual(normalize.content(P(contactMessage=P(displayName="X"))), ("msg", "contact", "[contact] X"))
+        arr = P(contactsArrayMessage=P(displayName="2 contacts", contacts=[
+            P(displayName="A", vcard="BEGIN:VCARD\nTEL;waid=111:+1 11\nEND:VCARD"), P(displayName="B")]))
+        self.assertEqual(normalize.content(arr), ("msg", "contact", "[contacts] 2 contacts: A +111; B"))
+
     def test_media_of_kinds_and_non_media(self):
         with mock.patch.object(normalize, "_blob", fake_blob):
             got = normalize.media_of(P(ephemeralMessage=P(message=doc("a.pdf"))))

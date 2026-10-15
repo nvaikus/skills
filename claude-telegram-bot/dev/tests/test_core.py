@@ -2486,6 +2486,98 @@ class OwnerGroups(unittest.TestCase):
             self.assertTrue(self.bridge(d).draft_ok)  # the private chat keeps them; Worker skips them for chat < 0
 
 
+class GroupCmd(unittest.TestCase):
+    """`claude-tg group`: owner_groups edited via the CLI only (tenant guard blocks the config path)."""
+    from src import groups as gr
+    G, G2 = -1001112223334, -1005556667778  # placeholder ids
+
+    class Bot(FakeBot):
+        def __init__(self, chat=None, member=None):
+            super().__init__()
+            self.chat = chat or {"type": "supergroup", "is_forum": True, "title": "Team"}
+            self.member = member or {"status": "administrator", "can_manage_topics": True}
+
+        def call(self, method, _timeout=35, _retries=3, **p):
+            self.calls.append((method, p))
+            return {"getMe": {"id": 42}, "getChat": self.chat, "getChatMember": self.member}[method]
+
+    def run_cli(self, d, cfg_text, *argv, bot=None, journal="", mode="user"):
+        cf = Path(d) / "config.json"
+        if cfg_text is not None:
+            cf.write_text(cfg_text)
+            os.chmod(cf, 0o640)
+        from src import main as m
+        self.bot = bot or self.Bot()
+        restarts = []
+        with mock.patch.object(config, "CONFIG_FILE", cf), mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(self.gr, "Bot", lambda token: self.bot), \
+                mock.patch.object(config, "read_token", lambda cfg: "t"), \
+                mock.patch.object(service, "journal", lambda n=5000: journal), \
+                mock.patch.object(service, "installed_mode", lambda: mode), \
+                mock.patch.object(service, "restart", lambda cfg, wait, report=None: restarts.append(wait) or 0), \
+                mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out, \
+                mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as err:
+            rc = m.main(["group", *argv])
+        self.out, self.err, self.restarts = out.getvalue(), err.getvalue(), restarts
+        return rc, (json.loads(cf.read_text()) if cf.exists() else None), (cf.stat().st_mode & 0o777 if cf.exists() else None)
+
+    def test_add_with_id_keeps_other_keys_and_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, data, mode = self.run_cli(d, json.dumps({"owner_id": 1, "notify_topics": {"a": "A"}}),
+                                          "add", "team", str(self.G))
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(data, {"owner_id": 1, "notify_topics": {"a": "A"}, "owner_groups": {"team": self.G}})
+        self.assertEqual(mode, 0o640)
+        self.assertEqual(self.restarts, [600])
+        self.assertIn("added", self.out)
+
+    def test_add_takes_newest_logged_chat_and_is_idempotent(self):
+        log = (f"WARNING x: owner added the bot to chat {self.G2} (supergroup, 'Old', forum): ...\n"
+               f"WARNING x: owner added the bot to chat {self.G} (supergroup, 'New', forum): ...\n")
+        with tempfile.TemporaryDirectory() as d:
+            rc, data, _ = self.run_cli(d, "{}", "add", "team", journal=log)
+            self.assertEqual((rc, data["owner_groups"]), (0, {"team": self.G}))
+            rc, data, _ = self.run_cli(d, None, "add", "team", journal=log)  # again: unchanged, no restart
+            self.assertEqual((rc, data["owner_groups"], self.restarts), (0, {"team": self.G}, []))
+            self.assertIn("unchanged", self.out)
+            rc, data, _ = self.run_cli(d, None, "add", "old", "--no-restart", journal=log)  # skips configured ids
+            self.assertEqual((rc, data["owner_groups"], self.restarts), (0, {"team": self.G, "old": self.G2}, []))
+            rc, _, _ = self.run_cli(d, None, "add", "team", str(self.G2))  # name taken by another id
+            self.assertEqual(rc, 2)
+            self.assertIn("already chat", self.err)
+            rc, _, _ = self.run_cli(d, None, "add", "x", journal="")  # nothing new in the logs
+            self.assertEqual(rc, 2)
+            self.assertIn("pass the id", self.err)
+
+    def test_validation_fix_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.Bot(chat={"type": "supergroup", "is_forum": False, "title": "T"},
+                           member={"status": "administrator", "can_manage_topics": False})
+            rc, data, _ = self.run_cli(d, "{}", "add", "team", str(self.G), bot=bot)
+            self.assertEqual((rc, data), (2, {}))
+            self.assertIn("turn Topics on", self.err)
+            self.assertIn("Manage Topics", self.err)
+            rc, _, _ = self.run_cli(d, None, "add", "team", str(self.G), bot=self.Bot(member={"status": "member"}))
+            self.assertIn("make the bot an admin", self.err)
+
+    def test_refused_in_group_mode_and_remove(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, data, _ = self.run_cli(d, json.dumps({"group_id": -100999}), "add", "team", str(self.G))
+            self.assertEqual((rc, data), (2, {"group_id": -100999}))
+            self.assertIn("group mode", self.err)
+            rc, data, _ = self.run_cli(d, json.dumps({"owner_groups": {"team": self.G, "b": self.G2}}), "remove", "team")
+            self.assertEqual((rc, data["owner_groups"], self.restarts), (0, {"b": self.G2}, [600]))
+            rc, _, _ = self.run_cli(d, None, "remove", "nope")
+            self.assertEqual(rc, 2)
+
+    def test_list_tsv(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, _ = self.run_cli(d, json.dumps({"owner_groups": {"team": self.G}}), "list")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.out.splitlines(), ["name\tid\ttitle\tforum\tadmin",
+                                                 f"team\t{self.G}\tTeam\ton\tadmin, can_manage_topics"])
+
+
 class SetupText(unittest.TestCase):
     def cfg(self, **kw):
         c = dict(config.DEFAULTS, token_file=str(Path(tempfile.mkdtemp()) / "token"))

@@ -24,6 +24,7 @@ examples:
   claude-tg send --thread 123 "next step"   # prompt into a topic as if the owner wrote it (resumes / joins a run)
   claude-tg alive --thread 123              # exit 0 = a claude run is live or queued there, 1 = idle
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
+  claude-tg group add team                 # connect the owner group the bot was just added to (never edit the config)
   claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
@@ -182,6 +183,21 @@ def main(argv=None):
     s.add_argument("key", nargs="*", help="--replace KEY(s)")
     s.add_argument("--id", type=int, action="append", metavar="MSG", help="message id in the owner chat (repeatable)")
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
+    s = sub.add_parser("group", help="owner groups (private mode): list | add NAME [ID] | remove NAME",
+                       description="Manages config owner_groups without hand-editing the config: only that key is "
+                                   "rewritten (atomic, other keys + file mode kept), then the bot restarts like "
+                                   "`claude-tg restart` (inside a bot run: deferred until idle). add without ID takes "
+                                   "the newest `owner added the bot to chat <id>` from the bot's logs and checks: "
+                                   "forum supergroup, bot admin with Manage Topics. Refused in group mode.")
+    gs = s.add_subparsers(dest="action", required=True)
+    gs.add_parser("list", help="TSV: name, id, title, forum on/off, bot admin rights")
+    g = gs.add_parser("add", help="add (or confirm) an owner group; idempotent")
+    g.add_argument("name", help="the --chat NAME used by spawn / send / notify")
+    g.add_argument("id", nargs="?", help="supergroup id -100…; default: newest group the owner added the bot to")
+    g.add_argument("--no-restart", action="store_true", help="write the config only")
+    g = gs.add_parser("remove", help="drop an owner group from the config")
+    g.add_argument("name")
+    g.add_argument("--no-restart", action="store_true", help="write the config only")
     s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
                        description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
                                    "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "
@@ -216,6 +232,9 @@ def main(argv=None):
         if a.cmd in ("spawn", "send", "alive", "topic-icon"):
             from . import inbox
             return inbox.main(cfg, a)
+        if a.cmd == "group":
+            from . import groups
+            return groups.main(cfg, a)
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)

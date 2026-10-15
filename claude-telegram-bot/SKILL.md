@@ -1,6 +1,6 @@
 ---
 name: claude-telegram-bot
-description: Runs a Telegram bot that bridges the owner's private chat (or a forum supergroup shared by a few allowed users) to Claude Code on a Linux box - each bot topic (Threaded Mode) is its own `claude -p` session with streaming progress, files, photos and voice notes (via model-cli). CLI to set it up, install it as a systemd service, check and debug it. Use when the user wants to talk to Claude Code from Telegram / from the phone, sets up, restarts, debugs or reads logs of the claude-tg bot. NOT for reading or sending Telegram messages as the user (that's telegram-cli). Triggers - Telegram bot for Claude, claude in telegram, claude-tg.
+description: Runs a Telegram bot that bridges the owner's private chat (or a forum supergroup shared by a few allowed users) to Claude Code on a Linux box - each bot topic (Threaded Mode) is its own `claude -p` session with streaming progress, files, photos and voice notes (via model-cli). CLI to set it up, install it as a systemd service, check and debug it. Use when the user wants to talk to Claude Code from Telegram / from the phone, sets up, restarts, debugs or reads logs of the claude-tg bot, or wants to change the bot's own name, avatar / profile photo or description (the bot does it itself via `claude-tg profile`, no BotFather). NOT for reading or sending Telegram messages as the user (that's telegram-cli). Also when topics of a project, client or personal stream should live in their own forum group (owner groups). Triggers - Telegram bot for Claude, claude in telegram, claude-tg, separate group for these topics, отдельная группа для топиков, сменить аватарку / картинку / имя бота.
 ---
 
 # claude-telegram-bot
@@ -20,6 +20,7 @@ claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
+claude-tg group list | add NAME [ID] [--no-restart] | remove NAME   # owner groups; add w/o ID = newest group the owner added the bot to
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
 claude-tg local-api install|status|uninstall   # optional local Bot API server: attachments up to 2 GB (setup.md)
 ```
@@ -47,6 +48,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## Owner groups (private mode + extra forum groups)
 
 - When: one owner, topics of a project kept in their own forum group. Config `owner_groups`: `{"name": -100…}` (private mode only; ignored with `group_id`). Setup: `references/setup.md` (Owner groups).
+- Connect / drop one only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config (tenant hooks block that path). `add` checks forum + bot admin with Manage Topics (prints the fix otherwise), rewrites only `owner_groups`, restarts (from a bot run: deferred). Idempotent.
 - In those groups only the owner is heard; anyone else, bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
 - `spawn` / `send` / `alive` / `topic-icon` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
 - Group limits apply there (no drafts, ~20 msg/min).

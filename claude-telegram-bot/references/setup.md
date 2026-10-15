@@ -76,8 +76,8 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | step | who | action |
 |---|---|---|
 | 1 | user | Telegram: new group → settings → Topics on; add the bot as admin with Manage Topics |
-| 2 | agent | the bot logs `owner added the bot to chat <id> …` (`claude-tg logs`); or `claude-tg chats` with the service stopped |
-| 3 | agent | config `"owner_groups": {"<name>": <id>}` → `claude-tg restart` → `claude-tg doctor` (`group <name>`, `group <name> admin` ok) |
+| 2 | agent | `claude-tg group add <name>` → takes the newest `owner added the bot to chat <id>` from the bot's logs (or pass the id), checks forum + admin rights, writes `owner_groups`, restarts. A fix line instead = do it, run again |
+| 3 | agent | `claude-tg group list` / `claude-tg doctor` (`group <name>`, `group <name> admin` ok). Never edit the config by hand |
 
 - Topic state is keyed `"<chat>:<thread>"` for these groups; private-chat topics keep their plain keys.
 - General is ignored like in group mode (`group_general`).

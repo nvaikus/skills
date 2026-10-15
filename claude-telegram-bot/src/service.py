@@ -355,6 +355,22 @@ def logs(cfg, n: int, follow: bool):
     return rc
 
 
+def journal(n: int = 5000) -> str:
+    """The bot's own recent log text (message only), "" when unreadable; same access rules as `logs`.
+    errors=replace: journal lines can carry cut multibyte text."""
+    kw = dict(capture_output=True, text=True, errors="replace", timeout=60)
+    if sys.platform != "linux" or not shutil.which("journalctl"):
+        return ""
+    if installed_mode() == "user":
+        argv = ["journalctl", "--user", "-u", config.SERVICE, "-n", str(n), "--no-pager", "-o", "cat"]
+        return subprocess.run(argv, env=_user_env(), **kw).stdout
+    argv = ["journalctl", "-u", config.SERVICE, "-n", str(n), "--no-pager", "-o", "cat"]
+    r = subprocess.run(argv, **kw)
+    if r.returncode or not r.stdout.strip():  # not in systemd-journal / adm group
+        r = subprocess.run(["sudo", "-n", *argv], **kw)
+    return r.stdout
+
+
 def doctor(cfg) -> int:
     rows, bad = [], 0
 
@@ -479,7 +495,7 @@ def chats(cfg) -> int:
         if e.code == 409:
             print("claude-tg chats: the bot is polling (409): stop it first (`systemctl [--user] stop "
                   f"{config.SERVICE}`), add/write in the group, run again, then start it. Private mode: the running "
-                  "bot logs the id of a group the owner adds it to (`claude-tg logs | grep owner_groups`)",
+                  "bot logs the id of a group the owner adds it to: `claude-tg group add <name>` picks it up",
                   file=sys.stderr)
         else:
             print(f"claude-tg chats: {e}", file=sys.stderr)

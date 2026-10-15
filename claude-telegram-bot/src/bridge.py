@@ -372,8 +372,8 @@ class Bridge:
             if chat.get("id") in self.group_chats:
                 return
             if self.owner is not None and by == self.owner:
-                return log.warning("owner added the bot to chat %s (%s, %r, %s): not in owner_groups yet -> add "
-                                   '"owner_groups": {"<name>": %s} to the config and restart', chat.get("id"),
+                return log.warning("owner added the bot to chat %s (%s, %r, %s): not in owner_groups yet -> "
+                                   "`claude-tg group add <name> %s`", chat.get("id"),
                                    chat.get("type"), chat.get("title"), "forum" if chat.get("is_forum") else
                                    "topics off", chat.get("id"))
         elif chat.get("id") == self.group:

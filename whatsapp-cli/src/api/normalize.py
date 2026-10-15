@@ -48,6 +48,25 @@ def _join(*parts):
     return " ".join(p for p in parts if p)
 
 
+def vcard_phones(vcard):
+    """vCard text -> phones: "+<waid>" when WhatsApp tagged the number (canonical, usable as a `send` ref),
+    else the TEL value without spaces/dashes/brackets. Folded lines are unfolded first."""
+    out = []
+    for line in (vcard or "").replace("\r\n", "\n").replace("\n ", "").replace("\n\t", "").split("\n"):
+        name, sep, value = line.partition(":")
+        if not sep or name.split(";")[0].split(".")[-1].upper() != "TEL":
+            continue
+        waid = next((p[5:] for p in name.split(";") if p.lower().startswith("waid=")), "")
+        phone = f"+{waid}" if waid.isdigit() else "".join(c for c in value if c not in " -().")
+        if phone and phone not in out:
+            out.append(phone)
+    return out
+
+
+def _card(c):
+    return _join(c.displayName, *vcard_phones(getattr(c, "vcard", "")))
+
+
 def content(m):
     if m is None:
         return None
@@ -76,9 +95,12 @@ def content(m):
         d = m.documentMessage
         return ("msg", "document", _join("[document]", d.fileName, d.caption))
     if has(m, "contactMessage"):
-        return ("msg", "contact", _join("[contact]", m.contactMessage.displayName))
+        return ("msg", "contact", _join("[contact]", _card(m.contactMessage)))
     if has(m, "contactsArrayMessage"):
-        return ("msg", "contact", _join("[contacts]", m.contactsArrayMessage.displayName))
+        a = m.contactsArrayMessage
+        cards = "; ".join(c for c in map(_card, getattr(a, "contacts", None) or []) if c)
+        return ("msg", "contact", _join("[contacts]", f"{a.displayName}:" if a.displayName and cards else a.displayName,
+                                        cards))
     for field in ("locationMessage", "liveLocationMessage"):
         if has(m, field):
             loc = getattr(m, field)
