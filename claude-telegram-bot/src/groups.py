@@ -29,9 +29,13 @@ def raw_config() -> dict:
 
 
 def write_groups(groups: dict):
-    """Replace only the owner_groups key, atomically; keep key order, other keys and the file mode."""
+    write_key("owner_groups", groups)
+
+
+def write_key(key: str, value):
+    """Replace only this config key, atomically; keep key order, other keys and the file mode."""
     data = raw_config()
-    data["owner_groups"] = groups
+    data[key] = value
     path = config.CONFIG_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = (path.stat().st_mode & 0o7777) if path.exists() else 0o600

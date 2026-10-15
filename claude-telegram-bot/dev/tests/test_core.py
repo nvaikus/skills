@@ -2256,6 +2256,10 @@ class GeneralMention(unittest.TestCase):
         cap = self.gen(7, None, caption="@my_bot look", photo=[{}],
                        caption_entities=[{"type": "mention", "offset": 0, "length": 7}])
         self.assertTrue(m(cap))
+        cmd = lambda t: m(self.gen(8, t, entities=[{"type": "bot_command", "offset": 0, "length": len(t)}]))
+        self.assertTrue(cmd("/ask@My_Bot"))
+        self.assertFalse(cmd("/ask@other_bot"))
+        self.assertFalse(cmd("/ask"))
         self.assertEqual(general.strip_mention("🙂 @My_Bot fix  the build", "my_bot"), "🙂 fix the build")
 
     def test_buffer_bounded_persistent_media_placeholder(self):
@@ -2576,6 +2580,137 @@ class GroupCmd(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.out.splitlines(), ["name\tid\ttitle\tforum\tadmin",
                                                  f"team\t{self.G}\tTeam\ton\tadmin, can_manage_topics"])
+
+
+class PeerBots(unittest.TestCase):
+    """allowed_bots: a peer bot is heard in a group only when it addresses us; bot_turns_max caps bot loops."""
+    G, A, B, PEER, BOT = GroupMode.G, GroupMode.A, GroupMode.B, 8800, 4242  # placeholder ids
+
+    def bridge(self, d, **kw):
+        b = GroupMode.bridge(self, d, GroupMode.cfg(self, allowed_bots=[self.PEER], **kw))
+        b.username, b.bot_id = "my_bot", self.BOT
+        return b
+
+    def peer(self, mid, text="hi", uid=None, thread=55, **kw):
+        m = GroupMode.msg(self, mid, uid=uid or self.PEER, thread=thread, text=text, **kw)
+        m["message"]["from"].update(is_bot=True, first_name="Dig", username="dig_bot")
+        return m
+
+    def to_us(self, mid, **kw):
+        return self.peer(mid, "ok", reply_to_message={"message_id": 1, "from": {"id": self.BOT, "is_bot": True}}, **kw)
+
+    def test_only_allowed_bots_addressing_us_are_heard(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.to_us(1))                                                         # reply to our message
+            b.handle(self.peer(2, "@my_bot go", entities=[{"type": "mention", "offset": 0, "length": 7}]))
+            b.handle(self.peer(3, "/new@my_bot x", entities=[{"type": "bot_command", "offset": 0, "length": 11}]))
+            b.handle(self.peer(4, "chatter"))                                               # not addressed
+            b.handle(self.to_us(5, uid=777))                                               # bot not allowed
+            b.handle(self.peer(6, "@other go", entities=[{"type": "mention", "offset": 0, "length": 6}]))
+            self.assertEqual(b.collected, [(self.G, 55, 1), (self.G, 55, 2), (self.G, 55, 3)])  # /new: a prompt
+            self.assertEqual(b.bot.calls, [])
+            b.peers = set()  # default: no bots at all
+            b.handle(self.to_us(7))
+            self.assertEqual(len(b.collected), 3)
+
+    def test_owner_group_peer(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = GroupMode.bridge(self, d, dict(config.DEFAULTS, owner_id=1, owner_groups={"t": self.G},
+                                              allowed_bots=[self.PEER]))
+            b.owner, b.username, b.bot_id = 1, "my_bot", self.BOT
+            b.handle(self.to_us(1))
+            b.handle(self.peer(2))
+            b.handle(GroupMode.msg(self, 3, uid=1))
+            self.assertEqual([m for _, _, m in b.collected], [1, 3])
+
+    def test_loop_guard_until_a_human_writes(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d, bot_turns_max=2)
+            for i in range(1, 5):
+                b.handle(self.to_us(i))
+            b.handle(self.to_us(5, thread=66))                                             # other topic: own count
+            self.assertEqual([m for _, _, m in b.collected], [1, 2, 5])
+            notes = [p for m, p in b.bot.calls if m == "sendMessage"]
+            self.assertEqual(len(notes), 1)                                                # one note, not per drop
+            self.assertEqual(notes[0]["message_thread_id"], 55)
+            self.assertIn("2", notes[0]["text"])
+            b.handle(GroupMode.msg(self, 6))                                               # a human resets it
+            b.handle(self.to_us(7))
+            self.assertEqual([m for _, _, m in b.collected][-2:], [6, 7])
+
+    def test_general_mention_by_peer_opens_a_topic(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.peer(1, "/ask@my_bot hi", thread=None,
+                               entities=[{"type": "bot_command", "offset": 0, "length": 11}]))
+            self.assertEqual(b.collected, [(self.G, bridge.GENERAL, 1)])
+
+    def test_prompt_marks_the_bot_and_answer_replies_to_it(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = GroupMode.bridge(self, d, dict(config.DEFAULTS, owner_id=1, owner_groups={"t": self.G}))
+            m = self.to_us(9)["message"]
+            w = bridge.Worker.__new__(bridge.Worker)
+            w.b, w.chat, w.thread = b, self.G, 55
+            p = w.prompt([m])
+            self.assertTrue(p.startswith(f"[From bot: Dig (@dig_bot, id {self.PEER})"), p)
+            self.assertIn("address it as @dig_bot", p)
+            self.assertEqual(bridge.bot_target([m], 55), 9)
+            self.assertIsNone(bridge.bot_target([m], 66))
+            self.assertIsNone(bridge.bot_target([dict(m, _mention=True)], 55))
+            self.assertIsNone(bridge.bot_target([GroupMode.msg(self, 3)["message"]], 55))  # a human's
+            w.reply_to, w.noticed = 9, False
+            w.answer("first\n\n" + "x" * 5000)
+            sends = [p for meth, p in b.bot.calls if meth == "sendMessage"]
+            self.assertEqual(sends[0]["reply_parameters"], {"message_id": 9, "allow_sending_without_reply": True})
+            self.assertTrue(all("reply_parameters" not in p for p in sends[1:]))
+            w.answer("next")
+            self.assertNotIn("reply_parameters", b.bot.calls[-1][1])                       # only the first answer
+
+    def test_config_parsing(self):
+        self.assertEqual(config.allowed_bots({"allowed_bots": ["5", 6, "x", None]}), {5, 6})
+        self.assertEqual(config.allowed_bots(config.DEFAULTS), set())
+        self.assertEqual(config.DEFAULTS["bot_turns_max"], 6)
+
+
+class BotsCmd(unittest.TestCase):
+    """`claude-tg bots`: allowed_bots edited via the CLI only."""
+
+    def run_cli(self, d, cfg_text, *argv, journal=""):
+        cf = Path(d) / "config.json"
+        if cfg_text is not None:
+            cf.write_text(cfg_text)
+        from src import main as m
+        restarts = []
+        with mock.patch.object(config, "CONFIG_FILE", cf), mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(service, "journal", lambda n=5000: journal), \
+                mock.patch.object(service, "installed_mode", lambda: "user"), \
+                mock.patch.object(service, "restart", lambda cfg, wait, report=None: restarts.append(wait) or 0), \
+                mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out, \
+                mock.patch("sys.stderr", new_callable=__import__("io").StringIO) as err:
+            rc = m.main(["bots", *argv])
+        self.out, self.err, self.restarts = out.getvalue(), err.getvalue(), restarts
+        return rc, json.loads(cf.read_text()) if cf.exists() else None
+
+    def test_add_remove_and_username_from_logs(self):
+        log = "INFO poll: ignored: bot 8837 (@Dig_bot)\n"
+        with tempfile.TemporaryDirectory() as d:
+            rc, data = self.run_cli(d, json.dumps({"group_id": -100555}), "add", "123")
+            self.assertEqual((rc, data, self.restarts), (0, {"group_id": -100555, "allowed_bots": [123]}, [600]))
+            rc, data = self.run_cli(d, None, "add", "@dig_bot", "--no-restart", journal=log)
+            self.assertEqual((rc, data["allowed_bots"], self.restarts), (0, [123, 8837], []))
+            rc, data = self.run_cli(d, None, "add", "123")
+            self.assertEqual((rc, self.restarts), (0, []))
+            self.assertIn("unchanged", self.out)
+            rc, _ = self.run_cli(d, None, "list", journal=log)
+            self.assertEqual(self.out.splitlines(), ["id\tusername", "123\t", "8837\t@dig_bot"])
+            rc, data = self.run_cli(d, None, "remove", "123")
+            self.assertEqual((rc, data["allowed_bots"]), (0, [8837]))
+            rc, _ = self.run_cli(d, None, "add", "@nobody_bot")
+            self.assertEqual(rc, 2)
+            self.assertIn("numeric id", self.err)
+            rc, _ = self.run_cli(d, None, "remove", "999")
+            self.assertEqual(rc, 2)
 
 
 class SetupText(unittest.TestCase):

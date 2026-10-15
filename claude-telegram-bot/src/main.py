@@ -26,6 +26,7 @@ examples:
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
   claude-tg group add team                 # connect the owner group the bot was just added to (never edit the config)
   claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
+  claude-tg bots add 123456789              # let that bot talk to this one in groups (replies / @mentions only)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
   claude-tg chats            # group setup: group ids + sender ids from pending updates (service stopped)
@@ -198,6 +199,18 @@ def main(argv=None):
     g = gs.add_parser("remove", help="drop an owner group from the config")
     g.add_argument("name")
     g.add_argument("--no-restart", action="store_true", help="write the config only")
+    s = sub.add_parser("bots", help="peer bots heard in groups (allowed_bots): list | add BOT | remove BOT",
+                       description="Manages config allowed_bots without hand-editing the config (only that key, "
+                                   "atomic), then restarts like `group`. A listed bot's group message is answered only "
+                                   "when it addresses this bot: a reply to its message, @username, /cmd@username. "
+                                   "Telegram delivers bot messages only with Bot-to-Bot Communication Mode on (BotFather) "
+                                   "for at least one of the two bots. Loop cap: config bot_turns_max (default 6).")
+    gs = s.add_subparsers(dest="action", required=True)
+    gs.add_parser("list", help="TSV: id, username (from the bot's logs)")
+    for act, h in (("add", "allow a bot; idempotent"), ("remove", "drop a bot")):
+        g = gs.add_parser(act, help=h)
+        g.add_argument("bot", help="bot id (token part before ':') or @username seen in the bot's logs")
+        g.add_argument("--no-restart", action="store_true", help="write the config only")
     s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
                        description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
                                    "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "
@@ -235,6 +248,9 @@ def main(argv=None):
         if a.cmd == "group":
             from . import groups
             return groups.main(cfg, a)
+        if a.cmd == "bots":
+            from . import peerbots
+            return peerbots.main(cfg, a)
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)

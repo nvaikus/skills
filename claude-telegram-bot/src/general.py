@@ -24,8 +24,8 @@ def _slice(text: str, off: int, length: int) -> str:
 
 
 def mentions(msg: dict, username, bot_id) -> bool:
-    """The message addresses the bot: an @username mention entity, a text_mention of the bot, or a reply to one of
-    the bot's own messages."""
+    """The message addresses the bot: an @username mention entity, a /cmd@username command, a text_mention of the
+    bot, or a reply to one of the bot's own messages."""
     rt = (msg.get("reply_to_message") or {}).get("from") or {}
     if bot_id and rt.get("id") == bot_id:
         return True
@@ -34,8 +34,10 @@ def mentions(msg: dict, username, bot_id) -> bool:
         for e in msg.get(ents) or []:
             if e.get("type") == "text_mention" and bot_id and (e.get("user") or {}).get("id") == bot_id:
                 return True
-            if (e.get("type") == "mention" and username
-                    and _slice(text, e.get("offset", 0), e.get("length", 0)).lower() == "@" + username.lower()):
+            if e.get("type") not in ("mention", "bot_command") or not username:
+                continue
+            part = _slice(text, e.get("offset", 0), e.get("length", 0)).lower()
+            if part == "@" + username.lower() if e["type"] == "mention" else part.endswith("@" + username.lower()):
                 return True
     return False
 

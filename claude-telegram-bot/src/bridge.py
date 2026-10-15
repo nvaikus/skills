@@ -61,6 +61,9 @@ class Bridge:
         self.allowed = config.allowed_users(cfg)
         self.groups = config.owner_groups(cfg)  # private mode: extra forum groups only the owner talks in
         self.group_chats = set(self.groups.values())
+        self.peers = config.allowed_bots(cfg)  # groups: other bots heard when they address us (bot_gate caps loops)
+        self.bot_cap = max(0, int(cfg.get("bot_turns_max") or 0))
+        self.bot_turns = {}  # topic key -> peer-bot messages admitted since the last human one
         self.ignored = {}  # source -> last log time (group mode: ignored chats / users)
         self.username = None  # from getMe in serve(): /cmd@other_bot in a group is not ours
         self.bot_id = None  # from getMe in serve(): the bot's own updates (topic created by spawn, ...) are dropped
@@ -167,9 +170,11 @@ class Bridge:
         self.quiet("setMessageReaction", chat_id=chat, message_id=mid,
                    reaction=[{"type": "emoji", "emoji": emoji}] if emoji else [])
 
-    def say(self, chat, thread, text, html=False):
+    def say(self, chat, thread, text, html=False, reply_to=None):
         p = {"chat_id": chat, "message_thread_id": thread or None, "text": text,
              "link_preview_options": {"is_disabled": True}}
+        if reply_to:
+            p["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
         if html:
             p["parse_mode"] = "HTML"
         try:
@@ -186,20 +191,22 @@ class Bridge:
             log.warning("people lookup: %s", e)
             return []
 
-    def send_answer(self, chat, thread, md: str):
+    def send_answer(self, chat, thread, md: str, reply_to=None):
+        """reply_to: the first chunk replies to that message (a peer bot only receives replies to its messages)."""
         md = notify.address(md.strip(), self.people()) or self.s("empty")
         chunks = fmt.split_md(md)
         for i, chunk in enumerate(chunks[:MAX_CHUNKS]):
             html = fmt.md_to_html(chunk)
+            rt = reply_to if i == 0 else None
             try:
                 if len(html) > fmt.LIMIT:
                     raise TgError("local", 400, "too long for html")
-                self.say(chat, thread, html, html=True)
+                self.say(chat, thread, html, html=True, reply_to=rt)
             except TgError as e:
                 if e.code != 400:
                     raise
                 log.info("html rejected (%s), sending plain", e.description)
-                self.say(chat, thread, chunk[: fmt.LIMIT])
+                self.say(chat, thread, chunk[: fmt.LIMIT], reply_to=rt)
         if len(chunks) > MAX_CHUNKS:
             self.say(chat, thread, self.s("more_parts", n=len(chunks) - MAX_CHUNKS))
         if len(md) > FILE_OVER or len(chunks) > MAX_CHUNKS:
@@ -238,12 +245,16 @@ class Bridge:
             if not msg or not self.admits(msg.get("chat") or {}, msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if not self.bot_gate(msg["chat"]["id"], thread, msg):
+                return
             if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
                 return
         elif msg and (msg.get("chat") or {}).get("type") in ("group", "supergroup"):
             if not self.owner_admits(msg["chat"], msg):
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if not self.bot_gate(msg["chat"]["id"], thread, msg):
+                return
             if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
                 return
         else:
@@ -265,7 +276,7 @@ class Bridge:
         if chat < 0 and any(k in msg for k in GROUP_SERVICE):
             return  # joins, pins, title changes...: no prompt, and in General they would open a topic
         text = msg.get("text") or ""
-        if text.startswith("/"):
+        if text.startswith("/") and not is_bot(msg):  # a peer bot's /cmd@us is a prompt, never a bridge command
             rt = msg.get("reply_to_message") or {}
             if (thread != GENERAL and rt.get("message_id") == thread
                     and (rt.get("forum_topic_created") or {}).get("is_name_implicit")):
@@ -291,7 +302,9 @@ class Bridge:
                    else f"sent on behalf of chat {sc}")
             src = f"sender_chat {sc}"
         elif frm.get("is_bot"):
-            why, src = f"bot {frm.get('id')} (@{frm.get('username')})", f"user {frm.get('id')}"
+            if self.peer_ok(msg):
+                return True
+            why, src = self.peer_why(frm)
         elif not frm or frm.get("id") not in self.allowed:
             why, src = f"user {frm.get('id')} is not in allowed_users", f"user {frm.get('id')}"
         else:
@@ -314,6 +327,10 @@ class Bridge:
                         + (" (forum)" if chat.get("is_forum") else "")), f"chat {cid}"
         elif msg.get("sender_chat"):
             why, src = f"sent on behalf of chat {msg['sender_chat'].get('id')}: post as yourself", f"sender_chat {cid}"
+        elif frm.get("is_bot"):
+            if self.peer_ok(msg):
+                return True
+            why, src = self.peer_why(frm)
         elif self.owner is None or frm.get("id") != self.owner:
             why, src = f"user {frm.get('id')} in owner group {cid} is not the owner", f"user {frm.get('id')}"
         else:
@@ -322,6 +339,35 @@ class Bridge:
         if now - self.ignored.get(src, -IGNORED_LOG) >= IGNORED_LOG:
             self.ignored[src] = now
             log.info("ignored: %s", why)
+        return False
+
+    def peer_ok(self, msg: dict) -> bool:
+        """A bot's group message: heard only from allowed_bots and only when it addresses us (reply to our message,
+        @username, /cmd@username, text mention)."""
+        return ((msg.get("from") or {}).get("id") in self.peers
+                and general.mentions(msg, self.username, self.bot_id))
+
+    def peer_why(self, frm: dict):
+        bid = frm.get("id")
+        if bid in self.peers:
+            return f"bot {bid} (@{frm.get('username')}): not addressed to us (reply / @mention / /cmd@us)", f"peer {bid}"
+        return f"bot {bid} (@{frm.get('username')}) is not in allowed_bots", f"user {bid}"
+
+    def bot_gate(self, chat, thread, msg) -> bool:
+        """Loop guard for admitted peer bots: a human message in a topic resets its count; more than bot_turns_max
+        bot messages in a row there are dropped, with one note at the first drop. In memory: a restart resets."""
+        k = self.key(chat, thread)
+        if not is_bot(msg):
+            self.bot_turns.pop(k, None)
+            return True
+        n = self.bot_turns[k] = self.bot_turns.get(k, 0) + 1
+        if not self.bot_cap or n <= self.bot_cap:
+            return True
+        if n == self.bot_cap + 1:
+            log.warning("topic %s: %d peer-bot messages in a row, not answering bots there until a human writes",
+                        k, self.bot_cap)
+            self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None,
+                       text=self.s("bot_loop", n=self.bot_cap))
         return False
 
     def general_ok(self, chat: dict) -> bool:
@@ -343,7 +389,7 @@ class Bridge:
         chat = msg["chat"]["id"]
         if msg.get("forum_topic_created") or msg.get("forum_topic_edited") or any(k in msg for k in GROUP_SERVICE):
             return False
-        if (msg.get("text") or "").startswith("/"):
+        if (msg.get("text") or "").startswith("/") and not is_bot(msg):
             return self.general_ok(msg["chat"])
         album = msg.get("media_group_id")
         if album and album in self.mention_albums:
@@ -668,14 +714,31 @@ def reply_context(msg, thread):
     return f"[Replying to {who}:]\n" + (quote or text)[:4000] + "\n[Reply:]"
 
 
+def is_bot(msg) -> bool:
+    return bool((msg.get("from") or {}).get("is_bot"))
+
+
 def sender(msg):
-    """`[From: Name (@user, id N)]` for a real group member's message; None for a script's synthetic one."""
+    """`[From: Name (@user, id N)]` for a real group member's message; None for a script's synthetic one.
+    A peer bot's: `[From bot: ...]` + how to address it."""
     f = msg.get("from") or {}
     name = " ".join(x for x in (f.get("first_name"), f.get("last_name")) if x)
     if not (name or f.get("username")):
         return None
     bits = ([f"@{f['username']}"] if name and f.get("username") else []) + [f"id {f.get('id')}"]
-    return f"[From: {name or '@' + f['username']} ({', '.join(bits)})]"
+    who = f"{name or '@' + f['username']} ({', '.join(bits)})"
+    if f.get("is_bot"):
+        at = f"@{f['username']}" if f.get("username") else "its name"
+        return (f"[From bot: {who} - another AI bot, not a person. Your answer goes to it as a reply to its "
+                f"message; address it as {at}.]")
+    return f"[From: {who}]"
+
+
+def bot_target(msgs, thread):
+    """Id of the last peer-bot message of a batch posted in this topic (a General mention lives elsewhere), else None."""
+    ids = [m["message_id"] for m in msgs if is_bot(m) and not m.get("_mention")
+           and (m.get("message_thread_id") if m.get("is_topic_message") else None) == thread]
+    return ids[-1] if ids else None
 
 
 class Batch:
@@ -690,6 +753,7 @@ class Worker:
     it at once (stdin user line): claude answers it in its own turn, or inside the running one. Otherwise it
     queues for the next process. One process = many `result`s; each one answers the messages claude took in
     since the previous one."""
+    reply_to = None  # a peer bot's message claude took in: the next answer replies to it (bot_target)
 
     def __init__(self, bridge: Bridge, chat: int, thread: int):
         self.b, self.chat, self.thread = bridge, chat, thread
@@ -790,7 +854,7 @@ class Worker:
         for m in msgs:
             if m.get("_context"):  # a General mention: what was said there before it, delimited
                 parts.append(m["_context"])
-            tag = sender(m) if b.group is not None else None
+            tag = sender(m) if b.group is not None or is_bot(m) else None
             if tag and tag != who:  # group mode: several people share the session - say who writes
                 parts.append(tag)
                 who = tag
@@ -983,6 +1047,7 @@ class Worker:
                         bt = self.sent.pop(ev.text, None)
                         if bt:
                             self.seen.append(bt)
+                            self.reply_to = bot_target(bt.msgs, self.thread) or self.reply_to
                         self.idle = False
                 elif ev.kind == "bg":
                     with self.lock:
@@ -1133,7 +1198,8 @@ class Worker:
         """A real answer message; one quoting a protected file becomes one notice per turn."""
         b = self.b
         if not (b.guard and b.leak(text, self.thread)):
-            return b.send_answer(self.chat, self.thread, text)
+            kw, self.reply_to = ({"reply_to": self.reply_to} if self.reply_to else {}), None
+            return b.send_answer(self.chat, self.thread, text, **kw)
         if not self.noticed:
             self.noticed = True
             b.say(self.chat, self.thread, b.s("leak"))

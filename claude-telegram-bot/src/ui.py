@@ -33,6 +33,8 @@ S = {
         "in_topic": "/{cmd} works inside a topic.",
         "write_in_topic": "Please write inside a topic: each topic is a separate Claude session.",
         "general_topic": "🧵 Continuing in a new topic: <a href=\"{link}\">{title}</a>",
+        "bot_loop": "🔁 {n} bot messages in a row with no human here: I stop answering bots in this topic until "
+                    "someone writes.",
         "cmd.icon": "Topic icon: /icon <emoji>, /icon off",
         "icon_usage": "Usage: /icon <emoji> or /icon off\nAvailable: {icons}",
         "icon_bad": "😕 Not a topic icon. Available: {icons}", "icon_fail": "😕 Could not change the icon: {e}",
@@ -97,6 +99,8 @@ S = {
         "in_topic": "/{cmd} работает внутри темы.",
         "write_in_topic": "Пишите, пожалуйста, внутри темы: каждая тема - отдельная сессия Claude.",
         "general_topic": "🧵 Продолжу в новой теме: <a href=\"{link}\">{title}</a>",
+        "bot_loop": "🔁 Уже {n} сообщений от ботов подряд без людей: перестаю отвечать ботам в этой теме, пока "
+                    "кто-нибудь не напишет.",
         "cmd.icon": "Иконка темы: /icon <эмодзи>, /icon off",
         "icon_usage": "Так: /icon <эмодзи> или /icon off\nДоступные: {icons}",
         "icon_bad": "😕 Такой иконки для темы нет. Доступные: {icons}", "icon_fail": "😕 Не удалось сменить иконку: {e}",

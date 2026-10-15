@@ -41,6 +41,8 @@ DEFAULTS = {
     "owner_groups": {},          # private-owner mode: name -> forum supergroup id (-100...) where only the owner talks
     "group_general": False,      # groups (group_id + owner_groups): True = the General topic is heard too (opens topics)
     "general_context": 20,       # General ignored: a bot mention there opens a topic with the last N General messages
+    "allowed_bots": [],          # groups: peer bot ids heard when they address this bot (reply / @mention / /cmd@us)
+    "bot_turns_max": 6,          # bot messages answered in a row per topic with no human message between; 0 = no cap
     "people_aliases": {},        # user id -> extra names people call them by ("Sasha"): the addressing rule + header rewrite
 }
 
@@ -55,6 +57,17 @@ def allowed_users(cfg: dict) -> set:
     """Group mode: user ids that may write / press buttons. Unparseable entries are dropped (fail closed)."""
     out = set()
     for u in cfg.get("allowed_users") or []:
+        try:
+            out.add(int(u))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def allowed_bots(cfg: dict) -> set:
+    """Peer bot ids admitted in groups when they address this bot. Unparseable entries are dropped."""
+    out = set()
+    for u in cfg.get("allowed_bots") or []:
         try:
             out.add(int(u))
         except (TypeError, ValueError):

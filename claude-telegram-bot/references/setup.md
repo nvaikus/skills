@@ -47,6 +47,8 @@
 | `group_general` | false | groups (`group_id` and `owner_groups`): true = the General topic is heard (every message there opens a topic); false = ignored, commands too, except a mention of the bot (opens a topic with General context). Private chat unaffected |
 | `general_context` | 20 | General ignored: how many recent General messages (admitted senders only) a mention's new topic gets as context; 0 = none |
 | `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
+| `allowed_bots` | `[]` | groups (both kinds): peer bot ids heard when they address this bot; set via `claude-tg bots add` (SKILL.md, Peer bots) |
+| `bot_turns_max` | 6 | peer-bot messages answered in a row per topic without a human message; then ignored there until a human writes; 0 = no cap |
 | `people_aliases` | `{}` | user id → extra names people call them by (`{"123": ["Al"]}`): addressing rule + `Name:` header rewrite (SKILL.md, Addressing people) |
 
 Restart after edits or skill updates: `claude-tg restart` (waits until no run is active).

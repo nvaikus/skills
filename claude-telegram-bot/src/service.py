@@ -434,6 +434,9 @@ def doctor(cfg) -> int:
         row("owner", False, f"{owner!r} is not a numeric Telegram user id: the bot ignores everyone")
     else:
         row("owner", True, str(owner) if owner else "not yet: first private-chat user becomes owner")
+    if config.allowed_bots(cfg):
+        row("allowed_bots", True, ", ".join(map(str, sorted(config.allowed_bots(cfg))))
+            + f"; loop cap bot_turns_max {cfg.get('bot_turns_max')}; needs BotFather Bot-to-Bot mode on one of the bots")
     if sys.platform == "linux" and shutil.which("systemctl"):
         mode = installed_mode()
         would = mode or pick_mode()

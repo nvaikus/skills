@@ -21,6 +21,7 @@ claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # 
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
 claude-tg group list | add NAME [ID] [--no-restart] | remove NAME   # owner groups; add w/o ID = newest group the owner added the bot to
+claude-tg bots list | add BOT | remove BOT [--no-restart]   # peer bots heard in groups (allowed_bots); BOT = id or @name from the logs
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
 claude-tg local-api install|status|uninstall   # optional local Bot API server: attachments up to 2 GB (setup.md)
 ```
@@ -39,7 +40,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## Group mode (several people, one bot)
 
 - When: a project bot that 2+ people drive, every topic visible to all. Config `group_id` (forum supergroup, `-100…`) + `allowed_users` (user ids); absent = private-owner mode as above. Setup: `references/setup.md` (Group mode).
-- Only `allowed_users` in that group are heard (empty list = nobody); everyone/everything else is ignored silently (one log line per source per hour). All allowed users are equal (commands, ⏹); `owner_id` is unused. The bot leaves any other group it is added to.
+- Only `allowed_users` in that group are heard (empty list = nobody); everyone/everything else (bots too, except Peer bots below) is ignored silently (one log line per source per hour). All allowed users are equal (commands, ⏹); `owner_id` is unused. The bot leaves any other group it is added to.
 - Topics, notify, spawn/send, restart reports all go to the group. Each prompt line is tagged `[From: Name (@user, id N)]`. Links: `https://t.me/c/<group id without -100>/<thread>/2147483647`.
 - General topic of any group (this and owner groups) is ignored by default: messages and commands (`/start` too), no reply, one log line per chat per hour. Work happens in topics. Config `group_general: true` = heard again (every message there opens a topic). Outbound (`notify` without a topic) still posts there. The private chat is unaffected.
 - Exception: a mention of the bot in General by an admitted sender (`@botname` in text/caption, a text mention of the bot, or a reply to one of the bot's messages) opens a new topic (title from the message, auto-renamed later) and replies in General with its link. The topic's first prompt = the last `general_context` (20) General messages, oldest first, in a delimited block + the mention. The bot sees General only as admin; the buffer holds only senders it admits (`allowed_users` / the owner), text + sender + time, media as `[photo]`-style placeholders, in `~/.local/share/claude-tg/general.json` (survives restarts).
@@ -49,9 +50,17 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 
 - When: one owner, topics of a project kept in their own forum group. Config `owner_groups`: `{"name": -100…}` (private mode only; ignored with `group_id`). Setup: `references/setup.md` (Owner groups).
 - Connect / drop one only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config (tenant hooks block that path). `add` checks forum + bot admin with Manage Topics (prints the fix otherwise), rewrites only `owner_groups`, restarts (from a bot run: deferred). Idempotent.
-- In those groups only the owner is heard; anyone else, bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
+- In those groups only the owner is heard (+ Peer bots below); anyone else, other bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
 - `spawn` / `send` / `alive` / `topic-icon` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
 - Group limits apply there (no drafts, ~20 msg/min).
+
+## Peer bots (two bots talking in one group)
+
+- When: another bot (someone else's Claude bot) shares a group with ours and they should talk. Works in group mode and owner groups.
+- Enable: BotFather: turn Bot-to-Bot Communication Mode on for our bot (Telegram delivers bot messages only if one of the two bots has it); then `claude-tg bots add <id|@name>` (never edit the config; `@name` only once the logs show `ignored: bot ID (@name)`). `doctor` lists `allowed_bots`.
+- Heard only when the peer addresses us: a reply to our message, `/cmd@ourbot`, or `@ourbot` in text. Telegram itself delivers only the first two, unless our bot is admin + privacy mode off; a peer's `/cmd` is a prompt, never a bot command. Other bots: ignored.
+- Our answer to a peer goes out as a reply to its message (the only form it surely receives). The prompt tags it `[From bot: Name (@user, id N) …]`.
+- Loop guard: config `bot_turns_max` (default 6, 0 = off) bot messages in a row per topic with no human between; then bots are ignored there until a human writes, one 🔁 note. In memory: a restart resets the counts.
 
 ## Addressing people (every mode)
 
