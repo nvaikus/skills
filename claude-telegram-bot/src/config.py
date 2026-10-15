@@ -35,6 +35,7 @@ DEFAULTS = {
     "local_api_id": "env:TELEGRAM_API_ID",      # secret REFERENCES for `local-api serve`: env:NAME (process env
     "local_api_hash": "env:TELEGRAM_API_HASH",  # or env_files) | cred:NAME (systemd credential); literals refused
     "local_api_bin": None,       # telegram-bot-api binary; None = PATH, then ~/.local/bin
+    "notify_triage": {},         # auto-triage of notify events (triage.py); set via `claude-tg triage`, default off
     "notify_topics": {},         # notify registry: key -> "Name" | {"name": .., "icon": emoji or custom_emoji_id}
     "group_id": None,            # group mode: forum supergroup chat id (-100...); None = owner's private chat
     "allowed_users": [],         # group mode: Telegram user ids allowed to drive the bot; [] = nobody (fail closed)

@@ -2773,3 +2773,132 @@ class Mention(unittest.TestCase):
     def test_private_mode_names_and_prefix(self):
         (t, mode), calls = self.run_({}, "текст", ["1=Никита"], cfg=dict(config.DEFAULTS))
         self.assertEqual((t, mode, calls), ("Никита текст", "plain", []))
+
+
+class Triage(unittest.TestCase):
+    from src import triage as tr
+
+    CFG = dict(config.DEFAULTS, owner_id=7, notify_triage={"enabled": True})
+    EVENT = "cud-limits — ❌ ClickHouse down since 12:01 (try 3)\nHTTP Error 500\nhost home"
+
+    def args(self, **kw):
+        base = dict(triage=None, keep=None, replace=None, file=None, button=None)
+        return mock.Mock(**dict(base, **kw))
+
+    class Bot(FakeBot):
+        def __init__(self, fail=None):
+            super().__init__(fail)
+            self.thread = 900
+
+        def call(self, method, _timeout=35, _retries=3, **p):
+            super().call(method, **p)
+            if method == "createForumTopic":
+                self.thread += 1
+                return {"message_thread_id": self.thread}
+            if method == "getMe":
+                return {"username": "tbot"}
+            return {"message_id": 50}
+
+    def test_gating(self):
+        sk, a, ev = self.tr.skip, self.args, self.EVENT
+        self.assertIsNone(sk(self.CFG, a(), "system", ev, env={}))
+        self.assertEqual(sk(dict(config.DEFAULTS), a(), "system", ev, env={}), "off")  # default off (tenants)
+        self.assertIsNone(sk(dict(config.DEFAULTS), a(triage=True), "system", ev, env={}))  # --triage forces
+        self.assertEqual(sk(self.CFG, a(triage=False), "system", ev, env={}), "--no-triage")
+        for kw in ({"keep": "k"}, {"replace": "r"}, {"file": ["x.png"]}):
+            self.assertIsNotNone(sk(self.CFG, a(triage=True, **kw), "system", ev, env={}), kw)
+        self.assertIsNotNone(sk(self.CFG, a(), None, ev, env={}))  # --thread / --main-chat
+        self.assertIsNotNone(sk(self.CFG, a(), "system", ev, blocked=True, env={}))
+        self.assertIsNotNone(sk(self.CFG, a(), "system", "job — ✅ recovered", env={}))
+        ex = dict(self.CFG, notify_triage={"enabled": True, "exclude": ["mail"]})
+        self.assertIsNotNone(sk(ex, a(), "mail", ev, env={}))
+        only = dict(self.CFG, notify_triage={"enabled": True, "topics": ["system"]})
+        self.assertIsNone(sk(only, a(), "system", ev, env={}))
+        self.assertIsNotNone(sk(only, a(), "events", ev, env={}))
+
+    def test_recursion_guard(self):
+        self.assertEqual(self.tr.skip(self.CFG, self.args(triage=True), "system", self.EVENT,
+                                      env={config.RUN_TOPIC_ENV: "123"}), "inside a bot run")
+
+    def test_signature_and_title(self):
+        a = self.tr.signature(7, "system", self.EVENT)
+        b = self.tr.signature(7, "system", "cud-limits — ❌ ClickHouse down since 13:45 (try 17)\nother")
+        self.assertEqual(a, b)
+        self.assertEqual(self.tr.signature(7, "k", "job \u2014 \u274c failed"),
+                         self.tr.signature(7, "k", "job \u2014 failed (2): 3f9a2c1d"))
+        self.assertNotEqual(a, self.tr.signature(7, "mail", self.EVENT))
+        self.assertTrue(self.tr.title(self.EVENT).startswith("\U0001f50e cud-limits: ClickHouse down"))
+        self.assertLessEqual(len(self.tr.title("x" * 300)), self.tr.TITLE + 2)
+
+    def test_new_topic_then_dedupe_with_button(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(self.CFG, default_cwd=d)
+            bot = self.Bot()
+            r = {"chat": 7, "thread": 300, "message_ids": [40]}
+            out = self.tr.after_notify(bot, cfg, self.args(button=["Logs=https://x.y"]), "system", self.EVENT, r,
+                                       env={})
+            self.assertEqual((out["new"], out["count"], out["thread"]), (True, 1, 901))
+            create = [p for m, p in bot.calls if m == "createForumTopic"]
+            self.assertEqual(len(create), 1)
+            self.assertTrue(create[0]["name"].startswith("\U0001f50e cud-limits"))
+            item = json.loads(next((Path(d) / "inbox").glob("*.json")).read_text())
+            self.assertIn("HTTP Error 500", item["msg"]["text"])
+            self.assertIn("notify topic `system`", item["msg"]["text"])
+            self.assertEqual(item["topic"]["cwd"], str(Path(d).resolve()))
+            mark = [p for m, p in bot.calls if m == "editMessageReplyMarkup"][0]
+            self.assertEqual(mark["message_id"], 40)
+            self.assertEqual(len(mark["reply_markup"]["inline_keyboard"]), 2)  # own button kept + triage
+            self.assertEqual(mark["reply_markup"]["inline_keyboard"][1][0]["url"], out["link"])
+            bot.calls.clear()
+            again = "cud-limits — ❌ ClickHouse down since 14:00 (try 9)"
+            out2 = self.tr.after_notify(bot, cfg, self.args(), "system", again, r, env={})
+            self.assertEqual((out2["new"], out2["count"], out2["thread"]), (False, 2, 901))
+            self.assertNotIn("createForumTopic", [m for m, _ in bot.calls])
+            self.assertIn("#2", [p for m, p in bot.calls if m == "sendMessage"][0]["text"])
+            bot.calls.clear()
+            self.tr.after_notify(bot, cfg, self.args(), "system", again, r, env={})  # #3: counted silently
+            self.assertEqual([m for m, _ in bot.calls], ["editMessageReplyMarkup"])
+            # cooldown over -> a new topic
+            data = json.loads((Path(d) / "triage.json").read_text())
+            for e in data["events"].values():
+                e["at"] -= 7 * 3600
+            (Path(d) / "triage.json").write_text(json.dumps(data))
+            out3 = self.tr.after_notify(bot, cfg, self.args(), "system", again, r, env={})
+            self.assertEqual((out3["new"], out3["thread"]), (True, 902))
+
+    def test_deleted_triage_topic_reopens(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(self.CFG, default_cwd=d)
+            bot = self.Bot()
+            r = {"chat": 7, "thread": 300, "message_ids": [40]}
+            self.tr.after_notify(bot, cfg, self.args(), "system", self.EVENT, r, env={})
+            bot.fail = {}
+
+            def gone(method, _timeout=35, _retries=3, **p):
+                if method == "sendMessage" and p.get("message_thread_id") == 901:
+                    raise TgError(method, 400, "Bad Request: message thread not found")
+                return self.Bot.call(bot, method, **p)
+            with mock.patch.object(bot, "call", gone):
+                out = self.tr.after_notify(bot, cfg, self.args(), "system", self.EVENT, r, env={})
+            self.assertEqual((out["new"], out["thread"]), (True, 902))
+
+    def test_failure_never_breaks_notify(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = self.Bot(fail={"createForumTopic": "Bad Request: no rights"})
+            r = {"chat": 7, "thread": 300, "message_ids": [40]}
+            with mock.patch("sys.stderr"):
+                self.assertIsNone(self.tr.after_notify(bot, dict(self.CFG, default_cwd=d), self.args(), "system",
+                                                       self.EVENT, r, env={}))
+
+    def test_cli_writes_only_its_key(self):
+        from src import main as m
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "CONFIG_FILE", Path(d) / "c.json"), \
+                mock.patch.object(config, "STATE_DIR", Path(d)), mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            (Path(d) / "c.json").write_text('{"ui_lang": "ru"}')
+            self.assertEqual(m.main(["triage", "on", "--cwd", d, "--exclude", "mail", "events"]), 0)
+            got = json.loads((Path(d) / "c.json").read_text())
+            self.assertEqual(got["ui_lang"], "ru")
+            self.assertEqual(got["notify_triage"], {"enabled": True, "cwd": str(Path(d).resolve()),
+                                                    "exclude": ["mail", "events"]})
+            self.assertEqual(m.main(["triage", "off"]), 0)
+            self.assertFalse(json.loads((Path(d) / "c.json").read_text())["notify_triage"]["enabled"])

@@ -14,7 +14,8 @@ claude-tg uninstall               # removes whichever unit is installed
 claude-tg status | logs [-f] [-n N]    # status also shows runs in flight / queued
 claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after every update, never raw systemctl
 claude-tg run                     # foreground, for debugging (stop the service first)
-claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E]   # bot -> owner; stdin if no TEXT
+claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E] [--triage|--no-triage]   # bot -> owner; stdin if no TEXT
+claude-tg triage [show] | on [--cwd DIR] [--chat NAME] [--cooldown MIN] [--topics KEY..|all] [--exclude KEY..|none] | off   # auto-triage of notify events
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
 claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
@@ -92,6 +93,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Recurring post (digest, status) that must not pile up: `--replace KEY` sends, then deletes the messages last sent under KEY (ids in notify.json `replace`). Delete failure (bots can't delete > 48 h old in some chats, already gone) = stderr warning, exit stays 0. `notify-delete KEY` removes it without a new post.
 - Inside a bot run (`$CLAUDE_TG_RUN_TOPIC` set) the default target is that run's own topic: send a produced file back with `claude-tg notify --file out.mp4 "caption"`.
 - A reply to a notification there starts a claude session in that topic with the notification quoted (any reply to a bot message is quoted in the prompt).
+- Auto-triage (opt-in, default off): `claude-tg triage on` (never edit the config; no restart). Each `notify --topic KEY` event then also opens a topic "🔎 <first line>" (cwd `--cwd`, else `default_cwd`) whose session gets the text + source (key, host, systemd unit, sender command) and is told: find the cause, fix if safe and in scope, report cause / fix / what's left; transient + recovered = say so and stop. The notification gets a 🔎 button to it. Not for `--keep` / `--replace` / `--file`, `--thread` / `--main-chat`, a notify from a bot run (no recursion), a first line with ✅, `--no-triage`, keys outside `--topics` or in `--exclude`. `--triage` forces one for a call. Same first line (numbers ignored) within `--cooldown` (360 min) = no new topic, the open one counts it (silent line at #2, #4, #8…). State `STATE_DIR/triage.json`. Triage failures only warn; notify's exit code is unchanged.
 
 ## spawn / send (scripts driving sessions)
 

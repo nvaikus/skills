@@ -41,6 +41,7 @@
 | `local_api_id` / `local_api_hash` | `env:TELEGRAM_API_ID` / `env:TELEGRAM_API_HASH` | secret references for that server |
 | `local_api_bin` | PATH, then `~/.local/bin/telegram-bot-api` | server binary |
 | `notify_topics` | `{}` | `notify --topic KEY` registry: `{"mail": {"name": "Mail", "icon": "📝"}, "ci": "CI"}`. `icon` = an emoji from `getForumTopicIconStickers` (fixed set, e.g. 💬 💻 🤖 📣 📝 🔥 ❗) or its custom_emoji_id; anything else → no icon, warning. Keep emoji out of `name`: the client shows the icon beside it. Editing name/icon renames the cached topic on the next send (no new topic). Key `Notifications` = the default topic |
+| `notify_triage` | off | auto-triage of `notify --topic` events: `{enabled, cooldown_minutes, cwd, chat, topics, exclude}`; set only via `claude-tg triage` (SKILL.md, notify) |
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 | `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
 | `owner_groups` | `{}` | private mode: name → forum supergroup id (`-100…`) where only the owner talks; CLI `--chat NAME`. Section below |

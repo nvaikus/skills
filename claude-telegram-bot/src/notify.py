@@ -19,7 +19,8 @@ new ids take their place - send first, so a failed send never leaves the topic e
 old, already gone) is a warning and is forgotten; a transient one (network, 5xx) keeps its id under KEY for the
 next try. `notify-delete KEY` deletes and forgets without sending.
 
---keep KEY [--pin]: one message per (chat, KEY) edited in place on every call (a status board); see `keep`."""
+--keep KEY [--pin]: one message per (chat, KEY) edited in place on every call (a status board); see `keep`.
+After a plain --topic send, `triage.after_notify` may open an investigation topic (config notify_triage)."""
 import html
 import json
 import os
@@ -636,5 +637,7 @@ def main(cfg: dict, a) -> int:
         return 1
     if getattr(a, "replace", None):
         replace(bot, a.replace, r)
-    print(json.dumps(r))
+    from . import triage
+    tr = triage.after_notify(bot, cfg, a, topic, text, r, blocked=bool(src))
+    print(json.dumps(dict(r, triage=tr) if tr else r))
     return 3 if r.get("blocked") else 0

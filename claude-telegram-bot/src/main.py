@@ -26,6 +26,7 @@ examples:
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
   claude-tg group add team                 # connect the owner group the bot was just added to (never edit the config)
   claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
+  claude-tg triage on --cwd ~ --exclude mail   # notify --topic events open a "🔎" investigation topic
   claude-tg bots add 123456789              # let that bot talk to this one in groups (replies / @mentions only)
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
@@ -118,6 +119,12 @@ def main(argv=None):
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
     g.add_argument("--markdown", "--md", action="store_true", help="text is markdown (converted like bot answers)")
     s.add_argument("--silent", action="store_true", help="no sound / vibration")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--triage", dest="triage", action="store_const", const=True,
+                   help="open an investigation topic for this --topic event even if config notify_triage is off "
+                        "(never with --keep / --replace / --file or inside a bot run)")
+    g.add_argument("--no-triage", dest="triage", action="store_const", const=False,
+                   help="no investigation topic for this event")
     s.add_argument("--mention", action="append", metavar="ID=NAME",
                    help="group mode: mention this user at {who} in the text (else in front): @username via "
                         "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
@@ -211,6 +218,19 @@ def main(argv=None):
         g = gs.add_parser(act, help=h)
         g.add_argument("bot", help="bot id (token part before ':') or @username seen in the bot's logs")
         g.add_argument("--no-restart", action="store_true", help="write the config only")
+    s = sub.add_parser("triage", help="auto-triage of notify events: show | on [opts] | off",
+                       description="Config notify_triage (only that key is rewritten; applies to the next notify, no "
+                                   "restart). On: every `notify --topic KEY` event (not --keep / --replace / --file, "
+                                   "not from inside a bot run, not a first line with a check mark) also opens a topic "
+                                   "'🔎 <first line>' whose claude session finds the cause, fixes what is safe and "
+                                   "reports. Same first line (numbers ignored) within the cooldown: counted in the "
+                                   "open topic. Prints the settings as JSON.")
+    s.add_argument("action", choices=["show", "on", "off"], nargs="?", default="show")
+    s.add_argument("--cwd", help="working dir of triage sessions (default: config default_cwd)")
+    s.add_argument("--chat", metavar="NAME|ID", help="owner group for triage topics; home = the notification's chat")
+    s.add_argument("--cooldown", type=int, metavar="MIN", help="same event within MIN minutes = no new topic (360)")
+    s.add_argument("--topics", nargs="+", metavar="KEY", help="only these notify topic keys; 'all' = every key")
+    s.add_argument("--exclude", nargs="+", metavar="KEY", help="never these keys; 'none' clears the list")
     s = sub.add_parser("profile", help="show or change the bot's own name, descriptions, profile photo",
                        description="No flags: print name / description / short (TSV, newlines as \\n). Each flag is "
                                    "applied on its own; prints one '<field>\\t<ok|error: ...>' line per change. "
@@ -251,6 +271,9 @@ def main(argv=None):
         if a.cmd == "bots":
             from . import peerbots
             return peerbots.main(cfg, a)
+        if a.cmd == "triage":
+            from . import triage
+            return triage.main(cfg, a)
         if a.cmd == "profile":
             from . import botprofile
             return botprofile.main(cfg, a)
