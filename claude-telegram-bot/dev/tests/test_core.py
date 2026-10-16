@@ -2012,7 +2012,7 @@ class GroupMode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d)
             b.handle(self.msg(1))
-            b.handle(self.msg(2, uid=self.B))
+            b.handle(self.msg(2, uid=self.B, thread=66))                # B's own topic (a bare answer to A is A's)
             b.handle({"message": {"message_id": 4, "chat": {"id": self.A, "type": "private"},
                                   "from": {"id": self.A}, "text": "dm", "date": 0}})
             b.handle(self.msg(5, chat=-100999))                         # another group
@@ -2021,7 +2021,7 @@ class GroupMode(unittest.TestCase):
             bot_msg = self.msg(8)
             bot_msg["message"]["from"]["is_bot"] = True
             b.handle(bot_msg)
-            self.assertEqual(b.collected, [(self.G, 55, 1), (self.G, 55, 2)])
+            self.assertEqual(b.collected, [(self.G, 55, 1), (self.G, 66, 2)])
             self.assertIsNone(b.owner)  # nobody became owner from a group
 
     def test_ignored_sources_are_logged_once_per_window(self):
@@ -2621,8 +2621,10 @@ class PeerBots(unittest.TestCase):
             b.owner, b.username, b.bot_id = 1, "my_bot", self.BOT
             b.handle(self.to_us(1))
             b.handle(self.peer(2))
-            b.handle(GroupMode.msg(self, 3, uid=1))
-            self.assertEqual([m for _, _, m in b.collected], [1, 3])
+            b.handle(GroupMode.msg(self, 3, uid=1))                                     # answers the peer's chatter
+            b.handle(GroupMode.msg(self, 4, uid=1, text="@my_bot go", entities=[{"type": "mention", "offset": 0,
+                                                                                    "length": 7}]))
+            self.assertEqual([m for _, _, m in b.collected], [1, 4])
 
     def test_loop_guard_until_a_human_writes(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
@@ -2635,7 +2637,7 @@ class PeerBots(unittest.TestCase):
             self.assertEqual(len(notes), 1)                                                # one note, not per drop
             self.assertEqual(notes[0]["message_thread_id"], 55)
             self.assertIn("2", notes[0]["text"])
-            b.handle(GroupMode.msg(self, 6))                                               # a human resets it
+            b.handle(GroupMode.msg(self, 6, reply_to_message={"message_id": 1, "from": {"id": self.BOT}}))  # a human
             b.handle(self.to_us(7))
             self.assertEqual([m for _, _, m in b.collected][-2:], [6, 7])
 
@@ -2671,6 +2673,89 @@ class PeerBots(unittest.TestCase):
         self.assertEqual(config.allowed_bots({"allowed_bots": ["5", 6, "x", None]}), {5, 6})
         self.assertEqual(config.allowed_bots(config.DEFAULTS), set())
         self.assertEqual(config.DEFAULTS["bot_turns_max"], 6)
+
+
+class Addressing(unittest.TestCase):
+    """Group topic with other people / bots: a person's message is ours only when it is for us - a mention, a reply to
+    us (no one else mentioned), or a bare message right after us; a bare answer to someone else is theirs."""
+    G, A, B, PEER, BOT = GroupMode.G, GroupMode.A, GroupMode.B, 8800, 4242  # placeholder ids
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.addCleanup(self.d.cleanup)
+        p = mock.patch.object(config, "STATE_DIR", Path(self.d.name))
+        p.start()
+        self.addCleanup(p.stop)
+        self.b = GroupMode.bridge(self, self.d.name, dict(config.DEFAULTS, owner_id=self.A, owner_groups={"t": self.G}))
+        self.b.owner, self.b.username, self.b.bot_id = self.A, "my_bot", self.BOT
+
+    def human(self, mid, text="ok", uid=None, **kw):
+        return GroupMode.msg(self, mid, uid=uid or self.A, text=text, **kw)
+
+    def other_bot(self, mid, text="done"):
+        m = GroupMode.msg(self, mid, uid=self.PEER, text=text)
+        m["message"]["from"].update(is_bot=True, username="dig_bot")
+        return m
+
+    def ment(self, user, text=None):
+        text = text or f"@{user} go"
+        return {"text": text, "entities": [{"type": "mention", "offset": 0, "length": len(user) + 1}]}
+
+    def rt(self, uid):
+        return {"reply_to_message": {"message_id": 3, "from": {"id": uid}}}
+
+    def got(self):
+        return [m for _, _, m in self.b.collected]
+
+    def test_bare_answer_follows_who_spoke_last(self):
+        b = self.b
+        b.handle(self.human(1))                                     # nobody spoke yet: ours
+        b.say(self.G, 55, "answer")
+        b.handle(self.human(2))                                     # right after us: ours
+        b.handle(self.other_bot(3))                                 # another bot speaks (not addressing us)
+        b.handle(self.human(4))                                     # bare answer to it: not ours
+        b.handle(self.human(5))                                     # still talking to it
+        b.handle(self.human(6, uid=self.B))                         # the other person (not admitted here)
+        b.handle(self.human(7, **self.ment("my_bot")))              # a mention: ours
+        b.handle(self.human(8))                                     # keeps talking to us
+        b.handle(self.human(9, thread=66))                          # another topic: own history
+        self.assertEqual(self.got(), [1, 2, 7, 8, 9])
+
+    def test_reply_and_mentions(self):
+        b = self.b
+        b.handle(self.other_bot(1))
+        b.handle(self.human(2, **self.rt(self.BOT)))                # reply to us: ours even after another bot
+        b.say(self.G, 55, "answer")
+        b.handle(self.human(3, **self.rt(self.PEER)))               # reply to the other bot: not ours
+        b.handle(self.human(4, **self.rt(self.BOT), **self.ment("robert")))  # reply to us, but talks to Robert
+        b.handle(self.human(5, **self.rt(self.PEER), **self.ment("my_bot")))  # tagged us: ours
+        b.say(self.G, 55, "answer")
+        b.handle(self.human(6, **self.ment("robert")))              # after us, but mentions only Robert
+        b.handle(self.human(7, text="Rob, see", entities=[{"type": "text_mention", "offset": 0, "length": 3,
+                                                            "user": {"id": self.B}}]))
+        b.say(self.G, 55, "answer")
+        b.handle(self.human(8, reply_to_message={"message_id": 55, "forum_topic_created": {"name": "t"}}))  # root
+        self.assertEqual(self.got(), [2, 5, 8])
+
+    def test_human_conversation_in_group_mode(self):
+        b = GroupMode.bridge(self, self.d.name, dict(config.DEFAULTS, group_id=self.G, allowed_users=[self.A, self.B]))
+        b.username, b.bot_id = "my_bot", self.BOT
+        b.handle(self.human(1))                                     # A asks the bot
+        b.say(self.G, 55, "answer")
+        b.handle(self.human(2, uid=self.B))                         # B follows up on the bot's answer: ours
+        b.handle(self.human(3))                                     # A answers B, no tag: not ours
+        b.handle(self.human(4, uid=self.B, **self.ment("my_bot")))  # B tags the bot: ours
+        self.assertEqual([m for _, _, m in b.collected], [1, 2, 4])
+
+    def test_addressee(self):
+        a = lambda **kw: general.addressee(dict({"text": "x"}, **kw), "my_bot", self.BOT, 55)
+        self.assertIsNone(a())
+        self.assertEqual(a(**self.ment("My_Bot")), "us")
+        self.assertEqual(a(**self.ment("rob")), "other")
+        self.assertEqual(a(**self.rt(self.BOT)), "us")
+        self.assertEqual(a(**self.rt(self.A)), "other")
+        self.assertIsNone(a(reply_to_message={"message_id": 55}))
+        self.assertEqual(a(caption="@rob", caption_entities=[{"type": "mention", "offset": 0, "length": 4}]), "other")
 
 
 class BotsCmd(unittest.TestCase):

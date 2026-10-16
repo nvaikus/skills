@@ -42,6 +42,23 @@ def mentions(msg: dict, username, bot_id) -> bool:
     return False
 
 
+def addressee(msg: dict, username, bot_id, thread):
+    """Who a human's group message is for, from explicit signals: "us" (mentions the bot, or replies to it without
+    mentioning anyone else), "other" (replies to someone else, or mentions only others), None (no signal: the
+    caller decides from who spoke last). The topic's root service message is not a reply."""
+    if mentions(dict(msg, reply_to_message=None), username, bot_id):
+        return "us"
+    others = False
+    for field, ents in (("text", "entities"), ("caption", "caption_entities")):
+        for e in msg.get(ents) or []:
+            if e.get("type") == "text_mention" or (e.get("type") == "mention" and username):
+                others = True  # not the bot: mentions() above would have matched
+    rt = msg.get("reply_to_message") or {}
+    if rt and rt.get("message_id") != thread and not rt.get("forum_topic_created"):
+        return "us" if bot_id and (rt.get("from") or {}).get("id") == bot_id and not others else "other"
+    return "other" if others else None
+
+
 def strip_mention(text: str, username) -> str:
     """Text without the bot's @username (topic title seed)."""
     if username:

@@ -16,6 +16,7 @@ from .botapi import Bot, Skipped, TgError
 from .store import GENERAL, Store
 
 log = logging.getLogger("claude-tg")
+TALK_KEEP = 20  # speakers remembered per group topic
 
 COMMANDS = ["new", "stop", "status", "cd", "verbose", "quiet", "rename", "icon", "delete", "help"]
 RESTARTED = ("[The bridge restarted while you were answering this message. Your partial work may already be in "
@@ -64,6 +65,7 @@ class Bridge:
         self.peers = config.allowed_bots(cfg)  # groups: other bots heard when they address us (bot_gate caps loops)
         self.bot_cap = max(0, int(cfg.get("bot_turns_max") or 0))
         self.bot_turns = {}  # topic key -> peer-bot messages admitted since the last human one
+        self.talk = {}  # group topic key -> [(sender id, for us)] newest last, see addressed(); in memory
         self.ignored = {}  # source -> last log time (group mode: ignored chats / users)
         self.username = None  # from getMe in serve(): /cmd@other_bot in a group is not ours
         self.bot_id = None  # from getMe in serve(): the bot's own updates (topic created by spawn, ...) are dropped
@@ -178,10 +180,12 @@ class Bridge:
         if html:
             p["parse_mode"] = "HTML"
         try:
-            return self.bot.call("sendMessage", **p)
+            sent = self.bot.call("sendMessage", **p)
         except TgError as e:
             self.gone(e, chat, thread)
             raise
+        self.spoke(chat, thread, self.bot_id, True)
+        return sent
 
     def people(self) -> list:
         """Who claude addresses here (notify.people); [] when the lookup fails - the answer still goes out."""
@@ -222,6 +226,7 @@ class Bridge:
             return self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, text=self.s("leak_file"))
         try:
             self.bot.upload("sendDocument", "document", path, chat_id=chat, message_thread_id=thread or None)
+            self.spoke(chat, thread, self.bot_id, True)
         except TgError as e:
             log.warning("%s upload: %s", path.name, e)
 
@@ -242,20 +247,26 @@ class Bridge:
             return self.membership(upd["my_chat_member"])
         msg = upd.get("message")
         if self.group is not None:
-            if not msg or not self.admits(msg.get("chat") or {}, msg):
+            if not msg:
                 return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if not self.admits(msg.get("chat") or {}, msg):
+                return self.overheard(msg, thread)
             if not self.bot_gate(msg["chat"]["id"], thread, msg):
                 return
             if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
+                return
+            if not self.addressed(thread, msg):
                 return
         elif msg and (msg.get("chat") or {}).get("type") in ("group", "supergroup"):
-            if not self.owner_admits(msg["chat"], msg):
-                return
             thread = (msg.get("message_thread_id") if msg.get("is_topic_message") else None) or GENERAL
+            if not self.owner_admits(msg["chat"], msg):
+                return self.overheard(msg, thread)
             if not self.bot_gate(msg["chat"]["id"], thread, msg):
                 return
             if thread == GENERAL and not self.cfg.get("group_general") and not self.general_mention(msg):
+                return
+            if not self.addressed(thread, msg):
                 return
         else:
             if not msg or msg["chat"]["type"] != "private" or "from" not in msg:
@@ -340,6 +351,40 @@ class Bridge:
             self.ignored[src] = now
             log.info("ignored: %s", why)
         return False
+
+    def spoke(self, chat, thread, uid, ours):
+        """Who spoke last in a group topic (addressed() reads it). Private chat: nothing to track."""
+        if chat is None or chat >= 0 or uid is None:
+            return
+        k = self.key(chat, thread or GENERAL)
+        self.talk[k] = (self.talk.get(k, []) + [(uid, ours)])[-TALK_KEEP:]
+
+    def overheard(self, msg, thread):
+        """A group message we don't take (a person or bot we don't answer): still a speaker, so a bare answer to it
+        is not for us."""
+        uid = (msg.get("from") or {}).get("id")
+        if uid != self.bot_id and (msg.get("chat") or {}).get("id") in self.group_chats | {self.group}:
+            self.spoke(msg["chat"]["id"], thread, uid, False)
+
+    def addressed(self, thread, msg) -> bool:
+        """A group message we admitted: is it for us? A person may be talking to someone else here (another bot,
+        another person). Explicit signals first (general.addressee: mention, reply); a bare message answers whoever
+        spoke last in the topic - us, someone else, or the sender's own previous message (keeps its verdict).
+        Nobody seen yet (fresh start): ours. Peer bots and commands are already addressed."""
+        chat, uid = msg["chat"]["id"], (msg.get("from") or {}).get("id")
+        cmd = (msg.get("text") or "").startswith("/")
+        to = "us" if is_bot(msg) or cmd or msg.get("_mention") else \
+            general.addressee(msg, self.username, self.bot_id, thread)
+        if to is None:
+            last = (self.talk.get(self.key(chat, thread)) or [None])[-1]
+            ours = last is None or last[0] == self.bot_id or (last[0] == uid and last[1])
+        else:
+            ours = to == "us"
+        self.spoke(chat, thread, uid, ours)
+        if not ours:
+            log.info("topic %s: message %s from %s is for someone else, not answering", self.key(chat, thread),
+                     msg.get("message_id"), uid)
+        return ours
 
     def peer_ok(self, msg: dict) -> bool:
         """A bot's group message: heard only from allowed_bots and only when it addresses us (reply to our message,

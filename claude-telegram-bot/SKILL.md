@@ -63,6 +63,12 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Our answer to a peer goes out as a reply to its message (the only form it surely receives). The prompt tags it `[From bot: Name (@user, id N) …]`.
 - Loop guard: config `bot_turns_max` (default 6, 0 = off) bot messages in a row per topic with no human between; then bots are ignored there until a human writes, one 🔁 note. In memory: a restart resets the counts.
 
+## Who a group message is for (group mode, owner groups)
+
+- A person's admitted message in a group topic runs claude only when it is for the bot: an `@ourbot` / text mention / `/cmd`; a reply to our message that mentions no one else; or a bare message (no reply, no mention) right after our last message. A reply to someone else, a message mentioning only others, or a bare message after someone else spoke (a person, another bot, heard or not) is theirs: no 👀, no run, one `is for someone else` log line.
+- A bare message after the sender's own keeps that message's verdict (bursts, albums, forwards). Nobody seen yet in the topic (fresh start): ours.
+- History: the last 20 speakers per topic, in memory (a restart forgets). Others' messages are seen only when the bot is admin (privacy off); otherwise the rule degrades to the old behavior.
+
 ## Addressing people (every mode)
 
 - Telegram notifies only on a mention. Every run gets an addressing rule appended to its system prompt: the people (group: `allowed_users` via getChatMember; private: the owner via getChat; a day in `cache.json`) with their mention (`@username`, else a `[Name](tg://user?id=N)` text mention) and names + config `people_aliases`.
