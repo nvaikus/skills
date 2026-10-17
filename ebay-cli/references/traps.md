@@ -29,7 +29,6 @@
 - Signed-in check = cookie `ebay` with `sin=in`; an expired login that keeps the cookie shows up as a redirect to `signin.*` - also exit 5.
 - Cart `price`/`shipping` are display strings in the site's language and the listing's currency; `seller` is the store label, not the user id.
 - `cart add` on a listing already in the cart (no `--variation`) does nothing. Multi-variation listing needs `--variation` (id from `ebay item`, or aspects `Size=L,Colour=Black` matched via the Browse API = needs keys).
-- `cart rm ID` removes every line of that id, all variations.
 - Seller user id comes from the Browse API (listing pages show store slugs, not ids); without keys the CLI clicks "contact seller" to read it. `--seller` skips both.
 - Message times are the site's local strings (`Heute 18:41`, `Gestern`); `from` = `me` or the seller id. A seller reply shows in `msg list` as `last_by=them`. eBay auto-translates the seller's messages into the site language: `msg list --item` text = translation, `-j` field `original` = what the seller wrote.
 - Failures leave `~/.claude/ebay/browser/dumps/<step>-<ts>.png` + `.txt` (URL, title, ARIA snapshot).

@@ -15,6 +15,7 @@ clockmaster add daily-report --schedule '0 9 * * 1-5' --command 'claude -p "/rep
       [--workdir DIR] [--timeout 30m|2h|none] [--keep N|unlimited] [--description TEXT]
       [--notify off|on|failure] [--sound off|NAME] [--group NAME] [--parallel N] [--queue N] [--telegram_topic KEY] [--disabled]
 clockmaster edit <name> --KEY VALUE ...             # same keys as add (+ --enabled true|false), then sync
+clockmaster enable <name>  |  disable <name>        # schedule on/off (= edit --enabled true|false), then sync
 clockmaster show <name>                            # one task in plain words
 clockmaster run <name>                             # run now, live output (trigger manual)
 clockmaster runs <name> [-n N]  |  logs <name> [run-id]  |  stop <name> [run-id]

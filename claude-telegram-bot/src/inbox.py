@@ -4,7 +4,7 @@ The bot owns state.json, so a script never writes it. A prompt for a topic is po
 message (the owner sees what was asked, or a short `--show` line standing in for it), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
 (`Bridge.drain_inbox`, every second) turns each file into an owner message of that topic: same queue, same
 resume, same mid-run stdin injection. Files wait while the bot is down. Topic settings (cwd, title, base icon,
-appended system prompt, quiet flag) travel in the same file and are applied by the bot before the prompt runs.
+appended system prompt, `--settings` file, quiet flag) travel in the same file and are applied by the bot before the prompt runs.
 
 Liveness (`alive`): a claude process whose env carries CLAUDE_TG_RUN_TOPIC=<thread> (+ CLAUDE_TG_RUN_CHAT=<chat>;
 /proc, Linux), a pending request of that topic in state.json, or a queued inbox file for it.
@@ -136,8 +136,25 @@ def read_system(arg):
     return arg.strip()
 
 
+def read_settings(arg):
+    """--settings PATH: absolute, existing, a JSON object (claude ignores a broken file silently)."""
+    if not arg:
+        return None
+    if not os.path.isabs(arg):
+        raise NotifyError(f"--settings needs an absolute path: {arg}")
+    try:
+        ok = isinstance(json.loads(Path(arg).read_text()), dict)
+    except OSError as e:
+        raise NotifyError(f"--settings: cannot read {arg}: {e}")
+    except ValueError as e:
+        raise NotifyError(f"--settings: {arg} is not JSON: {e}")
+    if not ok:
+        raise NotifyError(f"--settings: {arg} is not a JSON object")
+    return arg
+
+
 def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, show=None, quiet=False,
-          mention=None, chat=None, start_icon=None) -> dict:
+          mention=None, chat=None, start_icon=None, settings=None) -> dict:
     """`icon` = the topic's base icon (stored, `topic-icon base` restores it); `start_icon` = the icon the topic is
     created with instead, not stored (e.g. a ❗ mark set in createForumTopic: no separate, skippable editForumTopic)."""
     path = Path(os.path.expanduser(cwd or cfg["default_cwd"])).resolve()
@@ -155,6 +172,8 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
         topic["icon"] = cid
     if system:
         topic["system"] = system
+    if settings:
+        topic["settings"] = settings
     if quiet:
         topic["quiet"] = True
     msg = post(bot, chat, thread, prompt, silent, show, cfg, mention)
@@ -264,8 +283,9 @@ def main(cfg: dict, a) -> int:
         chat = target_chat(cfg, chat_arg, ref)
         bot = cli_bot(cfg)
         if a.cmd == "spawn":
+            settings = read_settings(getattr(a, "settings", None))  # before anything is created
             r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet,
-                      getattr(a, "mention", None), chat, getattr(a, "start_icon", None))
+                      getattr(a, "mention", None), chat, getattr(a, "start_icon", None), settings)
         elif a.cmd == "send":
             r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
         else:

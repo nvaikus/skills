@@ -2,7 +2,6 @@
 
 ## Search
 - Words without operators match anywhere incl. bodies, stemmed by Gmail; exact phrase needs quotes inside the query: `gmail search '"exact phrase"'`.
-- Spam and Trash are excluded unless `--spam-trash` or `in:spam` / `in:trash` / `in:anywhere`.
 - `label:` takes the label name with spaces/slashes as dashes (`label:clients-acme`) or quoted (`label:"Clients/Acme"`).
 - `newer_than:2d` counts from now; `after:2026/01/31` = midnight Pacific time, exact cutoff = epoch seconds (`after:1769817600`). Output `date` is this machine's local time.
 - Default row = one message; the web UI shows conversations. `--threads` gives one row per thread (row = last message, `count` = messages).

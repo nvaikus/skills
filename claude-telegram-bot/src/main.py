@@ -155,6 +155,9 @@ def main(argv=None):
                         "none); output gets \"icon\" when an icon was set")
     s.add_argument("--system", metavar="TEXT|@FILE",
                    help="appended to claude's system prompt on every run of this topic (topic role)")
+    s.add_argument("--settings", metavar="PATH",
+                   help="absolute path of a claude settings JSON passed as --settings on every run of this topic "
+                        "(e.g. a deny list); missing/invalid at run time -> the run is refused, the topic is told")
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
     s.add_argument("--show", metavar="TEXT",
                    help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")

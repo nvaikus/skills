@@ -96,6 +96,12 @@ def search_posts(client, query, hashtag, limit):
                                      hashtag=hashtag, query=query))
 
 
+def delete_scheduled(client, chat, ids):
+    """messages.deleteScheduledMessages: cancel scheduled (not yet delivered) messages of one chat."""
+    from telethon.tl.functions.messages import DeleteScheduledMessagesRequest
+    return client(DeleteScheduledMessagesRequest(peer=client.get_input_entity(chat), id=list(ids)))
+
+
 _FILTERS = {"document": "InputMessagesFilterDocument", "photo": "InputMessagesFilterPhotos",
             "video": "InputMessagesFilterVideo", "voice": "InputMessagesFilterVoice",
             "audio": "InputMessagesFilterMusic", "round": "InputMessagesFilterRoundVideo",

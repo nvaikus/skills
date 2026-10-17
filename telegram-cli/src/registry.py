@@ -15,6 +15,7 @@ COMMANDS = {
     "search": ("src.commands.messages.search", "search messages: all your chats, one --chat, or --public posts"),
     "media-get": ("src.commands.messages.media_get", "download media/files of messages: by id, or all in a chat"),
     "send": ("src.commands.messages.send", "send a message or file(s) - immediately, no preview"),
+    "unschedule": ("src.commands.messages.unschedule", "cancel scheduled (not yet delivered) messages by id"),
     "edit": ("src.commands.messages.edit", "replace the text of your own sent message"),
 }
 

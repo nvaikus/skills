@@ -196,6 +196,20 @@ class Cli(base.Case):
         self.assertEqual(self.run_cli("remove", "rep", "--purge-runs")[0], 0)
         self.assertEqual(self.run_cli("runs", "rep")[0], 2)
 
+    def test_enable_disable(self):
+        self.assertEqual(self.run_cli("add", "rep", "--schedule", "0 9 * * *", "--command", "echo hi")[0], 0)
+        rc, out, err = self.run_cli("disable", "rep")
+        self.assertEqual(rc, 0, err)
+        path = identity.data_dir() / "tasks" / "rep.yaml"
+        self.assertIn("enabled: false", path.read_text())
+        self.assertEqual(self.run_cli("enable", "rep")[0], 0)
+        self.assertIn("enabled: true", path.read_text())
+        rc, _, err = self.run_cli("edit", "rep", "--disabled", "false")
+        self.assertEqual(rc, 2)
+        self.assertIn("enable", err)
+        self.assertEqual(self.run_cli("disable")[0], 2)
+        self.assertIn("disable <name>", self.run_cli("help")[1])
+
     def test_help_shows_data_dir(self):
         rc, out, _ = self.run_cli("help")
         self.assertIn(str(identity.data_dir()), out)

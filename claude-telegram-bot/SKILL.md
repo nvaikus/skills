@@ -17,7 +17,7 @@ claude-tg run                     # foreground, for debugging (stop the service 
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E] [--triage|--no-triage]   # bot -> owner; stdin if no TEXT
 claude-tg triage [show] | on [--cwd DIR] [--chat NAME] [--cooldown MIN] [--topics KEY..|all] [--exclude KEY..|none] | off   # auto-triage of notify events
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
-claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
+claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--settings ABS.json] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
@@ -38,75 +38,25 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - System mode: root-only copy `/etc/claude-tg/token`; the user's own token file may be deleted after `install`.
 - User mode (no sudo): the credential is read from the user's token file at every start - it must stay, and claude (same user) can read it. Owner of the bot = shell as that user anyway, so the token adds little; still never print it.
 
-## Group mode (several people, one bot)
+## Areas (one line each; details behind the table below)
 
-- When: a project bot that 2+ people drive, every topic visible to all. Config `group_id` (forum supergroup, `-100…`) + `allowed_users` (user ids); absent = private-owner mode as above. Setup: `references/setup.md` (Group mode).
-- Only `allowed_users` in that group are heard (empty list = nobody); everyone/everything else (bots too, except Peer bots below) is ignored silently (one log line per source per hour). All allowed users are equal (commands, ⏹); `owner_id` is unused. The bot leaves any other group it is added to.
-- Topics, notify, spawn/send, restart reports all go to the group. Each prompt line is tagged `[From: Name (@user, id N)]`. Links: `https://t.me/c/<group id without -100>/<thread>/2147483647`.
-- General topic of any group (this and owner groups) is ignored by default: messages and commands (`/start` too), no reply, one log line per chat per hour. Work happens in topics. Config `group_general: true` = heard again (every message there opens a topic). Outbound (`notify` without a topic) still posts there. The private chat is unaffected.
-- Exception: a mention of the bot in General by an admitted sender (`@botname` in text/caption, a text mention of the bot, or a reply to one of the bot's messages) opens a new topic (title from the message, auto-renamed later) and replies in General with its link. The topic's first prompt = the last `general_context` (20) General messages, oldest first, in a delimited block + the mention. The bot sees General only as admin; the buffer holds only senders it admits (`allowed_users` / the owner), text + sender + time, media as `[photo]`-style placeholders, in `~/.local/share/claude-tg/general.json` (survives restarts).
-- Telegram allows ~20 messages/min per group: status updates are slower than in private, answers stream by message edits (no drafts).
+- Group mode: one forum supergroup (`group_id`) shared by `allowed_users`, all equal, every topic visible to all.
+- Peer bots: another bot in our group is heard only when it addresses us (`claude-tg bots add`); loop guard `bot_turns_max`.
+- Who a group message is for: a person's message runs claude only when it is for the bot (mention, `/cmd`, reply to us, bare message right after ours).
+- Bot behavior: one topic = one session, parallel topics, status line, in-topic commands, files/voice, restart-safe queue, slow-reply logs.
+- notify: bot → owner from scripts/jobs (`--topic KEY`, `--keep`, `--replace`, `--file`); opt-in auto-triage opens a 🔎 topic per event.
+- spawn / send: scripts open or prompt topics through the running service; `alive` checks a topic.
 
 ## Owner groups (private mode + extra forum groups)
 
-- When: one owner, topics of a project kept in their own forum group. Config `owner_groups`: `{"name": -100…}` (private mode only; ignored with `group_id`). Setup: `references/setup.md` (Owner groups).
-- Connect / drop one only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config (tenant hooks block that path). `add` checks forum + bot admin with Manage Topics (prints the fix otherwise), rewrites only `owner_groups`, restarts (from a bot run: deferred). Idempotent.
-- In those groups only the owner is heard (+ Peer bots below); anyone else, other bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
-- `spawn` / `send` / `alive` / `topic-icon` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
-- Group limits apply there (no drafts, ~20 msg/min).
-
-## Peer bots (two bots talking in one group)
-
-- When: another bot (someone else's Claude bot) shares a group with ours and they should talk. Works in group mode and owner groups.
-- Enable: BotFather: turn Bot-to-Bot Communication Mode on for our bot (Telegram delivers bot messages only if one of the two bots has it); then `claude-tg bots add <id|@name>` (never edit the config; `@name` only once the logs show `ignored: bot ID (@name)`). `doctor` lists `allowed_bots`.
-- Heard only when the peer addresses us: a reply to our message, `/cmd@ourbot`, or `@ourbot` in text. Telegram itself delivers only the first two, unless our bot is admin + privacy mode off; a peer's `/cmd` is a prompt, never a bot command. Other bots: ignored.
-- Our answer to a peer goes out as a reply to its message (the only form it surely receives). The prompt tags it `[From bot: Name (@user, id N) …]`.
-- Loop guard: config `bot_turns_max` (default 6, 0 = off) bot messages in a row per topic with no human between; then bots are ignored there until a human writes, one 🔁 note. In memory: a restart resets the counts.
-
-## Who a group message is for (group mode, owner groups)
-
-- A person's admitted message in a group topic runs claude only when it is for the bot: an `@ourbot` / text mention / `/cmd`; a reply to our message that mentions no one else; or a bare message (no reply, no mention) right after our last message. A reply to someone else, a message mentioning only others, or a bare message after someone else spoke (a person, another bot, heard or not) is theirs: no 👀, no run, one `is for someone else` log line.
-- A bare message after the sender's own keeps that message's verdict (bursts, albums, forwards). Nobody seen yet in the topic (fresh start): ours.
-- History: the last 20 speakers per topic, in memory (a restart forgets). Others' messages are seen only when the bot is admin (privacy off); otherwise the rule degrades to the old behavior.
+- One owner, a project's topics in their own forum group: user creates it and makes the bot admin with Manage Topics; connect only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config.
+- Then `spawn` / `send` / `alive` / `topic-icon` / `notify` / `notify-delete` take `--chat NAME|ID`; a `t.me/c/...` link carries its chat. Rules: `references/groups.md`.
 
 ## Addressing people (every mode)
 
 - Telegram notifies only on a mention. Every run gets an addressing rule appended to its system prompt: the people (group: `allowed_users` via getChatMember; private: the owner via getChat; a day in `cache.json`) with their mention (`@username`, else a `[Name](tg://user?id=N)` text mention) and names + config `people_aliases`.
 - Group: whoever a message asks for something is addressed only by mention, never "Name:". Any mode: a final message that waits on a person starts with the mention(s) + the ask - one message, no separate ping; a tracked task also records the wait (`github-tasks needs --who`).
 - Safety net: an answer line opening with a known name as a header (`Name:`, `**Name:**`) is rewritten to the mention (not in code fences).
-
-## Bot behavior (what the owner sees)
-
-- One topic = one session; a message in "All messages" creates a new topic. Topics run in parallel. A message sent while Claude works in that topic goes into the running session at once (stdin): answered in its own turn even while a background helper runs, or folded into the current turn; it queues only while the process is exiting.
-- Reactions off by default; config `reactions: true` turns on 👀 accepted, ✍ working, 👍 done, 💔 error, 👌 stopped (errors stay visible as text either way); typing indicator (at turn start, then only while no status/draft is on screen); answer streamed via `sendMessageDraft` with a stop button, then sent as HTML, long answers also as `answer.md`.
-- Status (config `status_style`): `friendly` (default) = one edited line by activity ("🧠 Thinking…", "📖 Reading files…", "⚙️ Working… · 15 s"; timer in 15 s / 30 s / 1 min steps, timer-only edits ≥ 10 s apart), no tool names/paths, not sent if the answer starts within 2 s; `detailed` = tool calls list, at most one edit per 6 s. `/verbose [on|off]` switches one topic. `/quiet [on|off]` (or `spawn/send --quiet`): text blocks between tool calls go into the status message (top line, edited, deleted with it) instead of separate messages; only the final answer stays - it must be self-contained. Errors = one "😕 …" line; full detail in logs and in verbose mode. Status edits, drafts and typing share a per-chat budget (Telegram limits are per chat across topics): with many parallel topics they update less often; after a 429 they pause until the flood wait ends while answers and error lines wait and are still delivered (log: `flood wait N s` / `flood wait over`). The flood state lives in `STATE_DIR/flood.json`, shared with CLI calls (`notify`, `spawn`, `send`, `topic-icon`): during a wait `topic-icon` is skipped (stderr note, `"skipped": true`), sends wait.
-- Bot language: `ui_lang` `en` | `ru` (status, commands, /help, errors).
-- Auto-named topics get a ≤5-word title after the first answer (`title_model`, default haiku).
-- Photos/files → `~/.local/share/claude-tg/files/<thread>/`, paths passed to claude. Over 20 MB: needs the local Bot API server (`local_api_url`), else skipped: owner gets why + workaround, claude a note; rest of the message runs. Voice/audio/video notes → model-cli `asr` (config `stt_models`, free first) → "🎙 transcript" → claude.
-- In-topic commands: `/cd <path>` (validates; starts a new session - sessions are tied to their cwd), `/new`, `/stop`, `/status` (incl. background tasks), `/verbose`, `/quiet`, `/rename <title>` (auto-title never overrides it), `/icon <emoji>|off` (only `getForumTopicIconStickers` emojis; no arg lists them), `/delete` (topic + mapping + saved files; the Claude session file stays), `/help`.
-- A command typed in All messages is answered there; the topic the client wraps it in is deleted.
-- Restart-safe: accepted requests are kept in `state.json` until answered; after a restart queued ones run, cut ones re-run with a "↻" note (older than 1 h: 💔 + "resend").
-- A topic deleted in the Telegram client sends the bot nothing: its mapping is dropped on the first failed send there.
-- Slow reply? `claude-tg logs`: one `result topic …` line per answer (message ids answered, turns, API time) and one `run topic …` line per process: `tg-lag` (Telegram → bot), `queue`, seconds from spawn to the first `session` / `turn` / `thinking` / `text` / `tool` / `bg` / `result` / `exit`, results, model.
-
-## notify (scripts, scheduled jobs)
-
-- Plain `sendMessage`: no service needed, never disturbs its polling. Owner = `owner_id` in config, else state.json.
-- Default target: topic "Notifications", created on first use, id in `~/.local/share/claude-tg/notify.json`; deleted in the client → recreated on the next send.
-- One topic per domain: config `notify_topics` maps a key to a display name + optional icon (`references/setup.md`); senders pass `--topic <key>`. Unknown key = literal topic name. Cache is per key: a changed name/icon edits the same topic.
-- Files: `--file PATH` (repeatable, ≤ 50 MB): mp4/mov play inline, images as photos, rest as documents; TEXT = caption. Leak guard applies (exit 3 = withheld).
-- One live status message (a board): `--keep KEY [--pin]` edits the message stored for (chat, KEY) in place (`edited` / `unchanged` in the output, no new message, no sound); none yet or deleted → a new one, pinned with `--pin` (bot needs `can_pin_messages` in a group). One message: text ≤ 4096. `--topic-icon E` sets the `--topic` topic's icon without a `notify_topics` entry. Bot API cannot pin a topic in the topic list.
-- Recurring post (digest, status) that must not pile up: `--replace KEY` sends, then deletes the messages last sent under KEY (ids in notify.json `replace`). Delete failure (bots can't delete > 48 h old in some chats, already gone) = stderr warning, exit stays 0. `notify-delete KEY` removes it without a new post.
-- Inside a bot run (`$CLAUDE_TG_RUN_TOPIC` set) the default target is that run's own topic: send a produced file back with `claude-tg notify --file out.mp4 "caption"`.
-- A reply to a notification there starts a claude session in that topic with the notification quoted (any reply to a bot message is quoted in the prompt).
-- Auto-triage (opt-in, default off): `claude-tg triage on` (never edit the config; no restart). Each `notify --topic KEY` event then also opens a topic "🔎 <first line>" (cwd `--cwd`, else `default_cwd`) whose session gets the text + source (key, host, systemd unit, sender command) and is told: find the cause, fix if safe and in scope, report cause / fix / what's left; transient + recovered = say so and stop. The notification gets a 🔎 button to it. Not for `--keep` / `--replace` / `--file`, `--thread` / `--main-chat`, a notify from a bot run (no recursion), a first line with ✅, `--no-triage`, keys outside `--topics` or in `--exclude`. `--triage` forces one for a call. Same first line (numbers ignored) within `--cooldown` (360 min) = no new topic, the open one counts it (silent line at #2, #4, #8…). State `STATE_DIR/triage.json`. Triage failures only warn; notify's exit code is unchanged.
-
-## spawn / send (scripts driving sessions)
-
-- Need the running service: the prompt is posted into the topic as a bot message (the owner sees it; `--show TEXT` posts that short human line instead, claude still gets the full prompt), queued in `~/.local/share/claude-tg/inbox/`, run by the bot like an owner message. Bot down = waits there.
-- `spawn` prints `{thread, link, message_id, cwd}` (+ `chat` in an owner group, link `t.me/c/...`); `link` = `https://t.me/<bot>/<thread>/2147483647` (int32-max message id → opens the topic at its last message; `/<thread>` alone opens only the creation message in the main chat). Old `/<thread>` and `/<thread>/<msg>` links still parse as `--thread`. `--system` = per-topic role appended to claude's system prompt on every run of that topic. `--quiet` = the topic becomes quiet (`/quiet`), kept for later runs. `--icon` = base icon (kept, `topic-icon base` restores it); `--start-icon` = created with that icon instead, not kept (a status mark like ❗ that can't be skipped for rate budget, unlike a later `topic-icon`); output gets `icon` when one was set.
-- `alive` = a process with `CLAUDE_TG_RUN_TOPIC=<thread>`, a pending request or an inbox file. A finished turn ends the process: idle between turns is normal.
-- Status-only lines into a topic (no claude turn): `notify --thread ID --silent`.
 
 ## Fixing the bot from inside the bot
 
@@ -121,6 +71,9 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 | when | read |
 |---|---|
 | first setup, BotFather, config keys, group mode setup, voice setup, changing the token, files over 20 MB / local Bot API server | `references/setup.md` |
+| group mode rules, owner groups, peer bots, why a group message did / didn't run claude | `references/groups.md` |
+| what the owner sees: reactions, status line / `status_style`, `/quiet`, flood waits, in-topic commands, files and voice, restarts, slow replies | `references/behavior.md` |
+| sending from scripts or jobs: `notify` (topics, files, `--keep`, `--replace`), auto-triage, `spawn` / `send` / `alive` | `references/notify.md` |
 
 ## Memory
 

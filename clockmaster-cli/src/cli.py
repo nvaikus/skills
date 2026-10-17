@@ -38,8 +38,11 @@ usage: {APP} <command> [args]
                                 asleep is dropped, not run late (default true)
                                 telegram_topic: claude-tg topic key for this
                                 task (default: notify.yaml telegram_topic)
-  edit <name> --KEY VALUE ...   change keys (same flags as add; '' = default)
-                                and sync
+  edit <name> --KEY VALUE ...   change keys (same flags as add, plus
+                                --enabled true|false; '' = default) and sync
+  enable <name> | disable <name>
+                                turn the schedule on/off (= edit --enabled
+                                true|false); manual `run` still works
   show <name>                   one task: every setting in plain words
   sync                          apply tasks/*.yaml to the scheduler (after ANY edit)
   run <name>                    run now with live output (trigger: manual)
@@ -191,12 +194,22 @@ def cmd_edit(args):
     keys = FLAG_KEYS + ("enabled",)
     for i in range(0, len(rest), 2):
         key = rest[i][2:] if rest[i].startswith("--") else None
+        if key == "disabled":
+            raise ValidationError(f"edit has no --disabled — use: {APP} disable|enable {name}  (or --enabled true|false)")
         if key not in keys or i + 1 >= len(rest):
             raise ValidationError(f"unexpected argument '{rest[i]}' — edit takes --KEY VALUE pairs: {', '.join(keys)}")
         edits[key] = rest[i + 1]
     task = ops.set_keys(name, edits)
     print(f"updated {task.path}: {', '.join(edits)}")
     return cmd_sync([])
+
+
+def _set_enabled(value):
+    def handler(args):
+        if len(args) != 1 or args[0].startswith("-"):
+            raise ValidationError(f"usage: {APP} {'enable' if value == 'true' else 'disable'} <name>")
+        return cmd_edit([args[0], "--enabled", value])
+    return handler
 
 
 def cmd_show(args):
@@ -326,7 +339,8 @@ def cmd_migrate(args):
     return migrate.main(args)
 
 
-COMMANDS = {"list": cmd_list, "add": cmd_add, "edit": cmd_edit, "show": cmd_show, "sync": cmd_sync, "run": cmd_run, "_exec": cmd_exec,
+COMMANDS = {"list": cmd_list, "add": cmd_add, "edit": cmd_edit, "enable": _set_enabled("true"),
+            "disable": _set_enabled("false"), "show": cmd_show, "sync": cmd_sync, "run": cmd_run, "_exec": cmd_exec,
             "runs": cmd_runs, "logs": cmd_logs, "stop": cmd_stop, "remove": cmd_remove,
             "ui": cmd_ui, "migrate": cmd_migrate}
 

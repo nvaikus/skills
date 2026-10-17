@@ -1,4 +1,4 @@
-"""Message vocabulary: rows, history, search (dialogs / one chat / public posts), send, edit."""
+"""Message vocabulary: rows, history, scheduled, search (dialogs / one chat / public posts), send, edit, unschedule."""
 from datetime import datetime, timezone
 
 from ..core import tg
@@ -106,6 +106,27 @@ def history(client, chat, limit=20, since=None, sender=None, text_limit=None, id
     return _mark_reply_to_me(client, chat, rows)
 
 
+def scheduled(client, chat, limit=100, text_limit=None):
+    """The chat's scheduled (not yet delivered) messages, soonest first; date = scheduled time, no link."""
+    got = [m for m in client.iter_messages(chat, scheduled=True) if m is not None]
+    rows = [row(m, m.chat or chat, m.sender, text_limit) for m in sorted(got, key=lambda m: (m.date, m.id))][:limit]
+    for r in rows:
+        r["link"] = None
+    return rows
+
+
+def unschedule(client, chat, ids):
+    """Cancel scheduled messages by id. Any id not in the chat's scheduled list -> exit 2, nothing deleted."""
+    ids = list(dict.fromkeys(ids))
+    have = {m.id: m for m in client.iter_messages(chat, scheduled=True) if m is not None}
+    missing = [i for i in ids if i not in have]
+    if missing:
+        raise UsageError(f"no scheduled message {', '.join(map(str, missing))} in {peers.name(chat)} - nothing "
+                         f"deleted (list them: tg-cli history <chat> --scheduled)")
+    tg.delete_scheduled(client, chat, ids)
+    return [dict(_receipt(chat, have[i], have[i].date), text=getattr(have[i], "message", None) or "") for i in ids]
+
+
 def search(client, query, chat=None, sender=None, since=None, until=None, limit=50, text_limit=None):
     """chat=None -> messages.searchGlobal over every dialog of the account; else messages.search in one chat."""
     if chat is None and not query:
@@ -138,16 +159,17 @@ def search_public(client, query, limit=20, text_limit=None):
     return rows, flood
 
 
-def _receipt(chat, m):
-    return {"id": m.id, "chat_id": peers.peer_id(chat), "chat": peers.name(chat), "date": iso(m.date),
-            "link": peers.link(chat, m.id)}
+def _receipt(chat, m, schedule=None):
+    """schedule set: date = the scheduled time; no link (a scheduled message has no public id yet)."""
+    return {"id": m.id, "chat_id": peers.peer_id(chat), "chat": peers.name(chat), "date": iso(schedule or m.date),
+            "link": None if schedule else peers.link(chat, m.id)}
 
 
-def send(client, chat, text, markdown=False, reply_to=None):
+def send(client, chat, text, markdown=False, reply_to=None, schedule=None):
     if not text.strip():
         raise UsageError("empty message - nothing sent")
-    m = client.send_message(chat, text, parse_mode="md" if markdown else None, reply_to=reply_to)
-    return _receipt(chat, m)
+    m = client.send_message(chat, text, parse_mode="md" if markdown else None, reply_to=reply_to, schedule=schedule)
+    return _receipt(chat, m, schedule)
 
 
 def edit(client, chat, msg_id, text, markdown=False):
@@ -167,8 +189,9 @@ def edit(client, chat, msg_id, text, markdown=False):
     return _receipt(chat, m)
 
 
-def send_files(client, chat, paths, caption="", markdown=False, reply_to=None):
+def send_files(client, chat, paths, caption="", markdown=False, reply_to=None, schedule=None):
     """Files as documents (no recompression); several = one album, caption on the first. -> receipts."""
     sent = client.send_file(chat, paths[0] if len(paths) == 1 else list(paths), caption=caption or None,
-                            force_document=True, parse_mode="md" if markdown else None, reply_to=reply_to)
-    return [_receipt(chat, m) for m in (sent if isinstance(sent, list) else [sent])]
+                            force_document=True, parse_mode="md" if markdown else None, reply_to=reply_to,
+                            schedule=schedule)
+    return [_receipt(chat, m, schedule) for m in (sent if isinstance(sent, list) else [sent])]

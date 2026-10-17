@@ -248,6 +248,9 @@ class Env(unittest.TestCase):
         self.assertNotIn("--dangerously-skip-permissions", a)
         self.assertEqual(a[-4:], ["--permission-mode", "auto", "--model", "opus"])
         self.assertIn("--dangerously-skip-permissions", runner.build_argv("claude", None, [], config.DEFAULTS["permission_mode"]))
+        a = runner.build_argv("claude", "sid", [], settings="/x/no-send.json")
+        self.assertEqual(a[-4:], ["--settings", "/x/no-send.json", "--resume", "sid"])
+        self.assertNotIn("--settings", runner.build_argv("claude", "sid", []))
         line = json.loads(runner.user_line("-привет", "u1"))
         self.assertEqual(line, {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "-привет"}})
 
@@ -1955,6 +1958,47 @@ class Inbox(unittest.TestCase):
         self.assertEqual(self.ib.thread_of(" 12 "), 12)
         with self.assertRaises(self.ib.NotifyError):
             self.ib.thread_of("https://example.com/x")
+
+    def test_spawn_settings_validated_stored_and_passed_on_every_run_fail_closed(self):
+        """--settings PATH: absolute + JSON object at spawn; every run (resumes too) gets --settings; the file gone
+        at run time -> no claude process, the topic is told."""
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            sf = Path(d) / "no-send.json"
+            for bad, text in (("rel.json", "{}"), (str(sf), "not json"), (str(sf), "[1]"), (str(Path(d) / "nope"), None)):
+                if text is not None:
+                    sf.write_text(text)
+                with self.assertRaises(self.ib.NotifyError):
+                    self.ib.read_settings(bad)
+            sf.write_text('{"permissions": {"deny": ["Bash(*tg-cli send*)"]}}')
+            self.assertEqual(self.ib.read_settings(str(sf)), str(sf))
+            self.assertIsNone(self.ib.read_settings(None))
+            bot = self.Bot()
+            self.ib.spawn(bot, self.cfg(), "Task", d, "do X", settings=str(sf))
+            b = TopicCommands.bridge(self, d)
+            b.drain_inbox()
+            self.assertEqual(b.store.topic(400)["settings"], str(sf))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            run = FakeRun.runs[0]
+            self.assertEqual(run.argv[run.argv.index("--settings") + 1], str(sf))
+            run.stop()
+            until(lambda: b.workers["400"].run is None)
+            b.store.update(400, session_id="s1")  # a resume keeps the settings
+            b.worker(1, 400).put([{"message_id": 6, "chat": {"id": 1, "type": "private"}, "date": 0, "text": "more"}])
+            until(lambda: len(FakeRun.runs) == 2 and FakeRun.runs[1].lines)
+            a = FakeRun.runs[1].argv
+            self.assertEqual((a[a.index("--settings") + 1], a[-2:]), (str(sf), ["--resume", "s1"]))
+            FakeRun.runs[1].stop()
+            until(lambda: b.workers["400"].run is None)
+            sf.unlink()
+            sent = len(b.bot.calls)
+            b.worker(1, 400).put([{"message_id": 7, "chat": {"id": 1, "type": "private"}, "date": 0, "text": "again"}])
+            until(lambda: any("not started" in (p.get("text") or "") for m, p in b.bot.calls[sent:]
+                              if m == "sendMessage"))
+            self.assertEqual(len(FakeRun.runs), 2)  # no claude process without its settings
+            self.assertNotIn("7", b.store.pending())
+            b.workers["400"].close()
 
     def test_spawn_start_icon_set_at_creation_not_kept_as_base(self):
         """--start-icon: createForumTopic carries it (no separate skippable editForumTopic); base stays --icon/none."""

@@ -1,5 +1,7 @@
 # claude-tg setup
 
+Contents: Config `~/.config/claude-tg/config.json` · Group mode · Owner groups · Files over 20 MB · Voice
+
 | step | who | what |
 |---|---|---|
 | 1 | user | @BotFather → `/newbot` → copy the token |
@@ -65,13 +67,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 5 | agent | service stopped (or not installed yet): `claude-tg chats` → `chat` row = `group_id`, `user` rows = ids for `allowed_users`. Reads pending updates without confirming them; 409 = the service is polling, stop it first. Those messages run when the bot starts. Empty (messages sent before the bot was admin are never delivered): `tg-cli chats "<title>"` → the `-100…` row (a second plain-id row = pre-migration group, ignore), `tg-cli history <id> -j` → `sender_id`s |
 | 6 | agent | config `"group_id": -100…, "allowed_users": [id, id]` → `claude-tg doctor` (`group`, `group_admin`, `allowed_users` ok) → `claude-tg install` / `restart` |
 
-- Routing: only that group, only `allowed_users`; other groups/members/bots/channel posts/anonymous admins are ignored (log `ignored: …` once per source per hour). Added to another group → the bot leaves it. `/cmd@other_bot` is ignored.
-- All allowed users are equal (commands, ⏹, everything); `owner_id` is unused in group mode.
-- General is ignored (messages and commands; config `group_general: true` → a message there opens a new topic). Join/pin/title service messages never run.
-- A mention in General (`@bot`, text mention, or a reply to a bot message) by an allowed user opens a topic seeded with the last `general_context` General messages; the bot replies there with the topic link. Needs the bot to be admin (else it never sees General chatter).
-- Prompts are tagged per sender: `[From: Name (@user, id N)]`.
-- Limits: ~20 messages/min per group, edits included. Cosmetic budget (status edits, typing, stream edits) 0.2/s, burst 3 (private: 0.5/s, burst 5); answers are never dropped. `sendMessageDraft` is private-only → answers stream as an edited message.
-- Topic links: `https://t.me/c/<group id without -100>/<thread>/2147483647` (members only).
+- Runtime behavior (routing, General and mentions there, sender tags, limits, topic links): SKILL.md "Group mode".
 - Switching an existing bot between modes: notify topics are recreated in the new chat; old topic sessions in state.json point at the old chat - start from a fresh bot or clear `topics`.
 
 ## Owner groups (private mode, extra forum groups)
@@ -83,7 +79,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 3 | agent | `claude-tg group list` / `claude-tg doctor` (`group <name>`, `group <name> admin` ok). Never edit the config by hand |
 
 - Topic state is keyed `"<chat>:<thread>"` for these groups; private-chat topics keep their plain keys.
-- General is ignored like in group mode (`group_general`).
+- Behavior (who is heard, General, limits): SKILL.md "Owner groups".
 - A supergroup id changes when Telegram migrates a basic group: use the `-100…` id that `doctor` accepts.
 
 ## Files over 20 MB (optional local Bot API server)

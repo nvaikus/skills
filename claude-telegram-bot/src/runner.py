@@ -70,7 +70,16 @@ class ChildEnv:
 PERMISSION_MODES = ("bypass", "auto", "default", "acceptEdits")
 
 
-def build_argv(claude: str, session_id, extra_args, permission_mode="bypass", system=None) -> list:
+def settings_ok(path) -> bool:
+    """A per-topic --settings file must exist and parse as a JSON object: claude ignores an invalid one silently,
+    so a broken deny file would mean an unguarded run (fail closed instead)."""
+    try:
+        return os.path.isabs(path) and isinstance(json.loads(Path(path).read_text()), dict)
+    except (OSError, ValueError):
+        return False
+
+
+def build_argv(claude: str, session_id, extra_args, permission_mode="bypass", system=None, settings=None) -> list:
     """Prompts go in on stdin as user lines (one process, many turns); --replay-user-messages echoes each
     line with its uuid when claude takes it in -> we know which `result` answered which message."""
     argv = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -82,6 +91,8 @@ def build_argv(claude: str, session_id, extra_args, permission_mode="bypass", sy
     argv += list(extra_args)
     if system:  # per-topic role (claude-tg spawn --system)
         argv += ["--append-system-prompt", system]
+    if settings:  # per-topic settings file (claude-tg spawn --settings), e.g. a deny list for unattended sessions
+        argv += ["--settings", settings]
     if session_id:
         argv += ["--resume", session_id]
     return argv

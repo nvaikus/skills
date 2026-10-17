@@ -82,7 +82,8 @@ class FakeClient:
         news.dialog.notify_settings.mute_until = NOW.replace(year=2001)  # expired mute
         self.msgs = [msg(3, QA, IVAN, "релиз завтра", 1), msg(2, QA, SASHA1, "x" * 300, 60),
                      msg(1, NEWS, NEWS, "", 60 * 48, MessageMediaPhoto())]
-        self.sent, self.calls, self.downloads, self.edited = [], [], [], []
+        self.sent, self.calls, self.downloads, self.edited, self.schedules = [], [], [], [], []
+        self.scheduled, self.unscheduled = [], []
 
     def is_user_authorized(self):
         return True
@@ -100,9 +101,9 @@ class FakeClient:
     def iter_dialogs(self, limit=None):
         return iter(self.dialogs[:limit] if limit else self.dialogs)
 
-    def iter_messages(self, chat, search=None, from_user=None, offset_date=None, filter=None):
+    def iter_messages(self, chat, search=None, from_user=None, offset_date=None, filter=None, scheduled=False):
         self.calls.append(("iter_messages", chat, search, from_user, offset_date, filter))
-        return iter([m for m in self.msgs if chat is None or m.chat is chat])
+        return iter([m for m in (self.scheduled if scheduled else self.msgs) if chat is None or m.chat is chat])
 
     def get_messages(self, chat, ids):
         by_id = {m.id: m for m in self.msgs if m.chat is chat}
@@ -114,16 +115,19 @@ class FakeClient:
         self.downloads.append((m.id, file))
         return file
 
-    def send_message(self, chat, text, parse_mode=None, reply_to=None):
+    def send_message(self, chat, text, parse_mode=None, reply_to=None, schedule=None):
         self.sent.append((chat, text, parse_mode))
+        self.schedules.append(schedule)
         return SimpleNamespace(id=77, date=NOW)
 
     def edit_message(self, chat, m, text, parse_mode=None):
         self.edited.append((chat, m.id, text, parse_mode))
         return SimpleNamespace(id=m.id, date=m.date)
 
-    def send_file(self, chat, file, caption=None, force_document=False, parse_mode=None, reply_to=None):
+    def send_file(self, chat, file, caption=None, force_document=False, parse_mode=None, reply_to=None,
+                  schedule=None):
         self.sent.append((chat, file, caption, force_document))
+        self.schedules.append(schedule)
         if isinstance(file, list):
             return [SimpleNamespace(id=80 + i, date=NOW) for i in range(len(file))]
         return SimpleNamespace(id=78, date=NOW)
@@ -155,6 +159,7 @@ def cli(*argv, client=None, stdin=None):
             mock.patch.object(tg, "media_filter", lambda k: f"F:{k}"), \
             mock.patch.object(tg, "dialog_filters", lambda c: FILTERS), \
             mock.patch.object(tg, "notify_defaults", lambda c: MUTE_DEFAULTS), \
+            mock.patch.object(tg, "delete_scheduled", lambda c, chat, ids: c.unscheduled.append((chat, list(ids)))), \
             mock.patch("sys.stdin", io.StringIO(stdin or "")), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
@@ -446,6 +451,35 @@ class Commands(unittest.TestCase):
         code, _, _, client = cli("send", "@ivan")
         self.assertEqual((code, client.sent), (2, []))
 
+    def test_send_schedule_passthrough(self):
+        from datetime import datetime, timedelta, timezone
+        when = (datetime.now() + timedelta(days=1)).replace(second=0, microsecond=0)
+        code, out, err, client = cli("send", "@ivan", "hi", "--schedule", when.strftime("%Y-%m-%d %H:%M"), "-j")
+        self.assertEqual(code, 0)
+        self.assertEqual(client.schedules, [when.astimezone(timezone.utc)])
+        row = json.loads(out)
+        self.assertEqual(datetime.fromisoformat(row["date"]), when.astimezone())
+        self.assertIsNone(row["link"])
+        self.assertIn("# scheduled for ", err)
+
+    def test_send_schedule_relative_and_offset_with_file(self):
+        from datetime import datetime, timedelta, timezone
+        _, _, _, client = cli("send", "@ivan", "hi", "--schedule", "+2h")
+        delta = client.schedules[0] - datetime.now(timezone.utc)
+        self.assertTrue(timedelta(hours=1, minutes=59) < delta <= timedelta(hours=2))
+        path = self._tmpfile()
+        code, _, _, client = cli("send", "@ivan", "--file", path, "--schedule", "2099-01-01T08:00:00+00:00")
+        self.assertEqual(code, 2)  # > 365 days ahead
+        later = (datetime.now(timezone.utc) + timedelta(days=3)).replace(microsecond=0)
+        code, _, _, client = cli("send", "@ivan", "--file", path, "--schedule", later.isoformat())
+        self.assertEqual((code, client.schedules), (0, [later]))
+
+    def test_send_schedule_past_or_bad_sends_nothing(self):
+        for when in ("2020-01-01 08:00", "2020-01-01T08:00:00+03:00", "tomorrow", "2h"):
+            code, _, err, client = cli("send", "@ivan", "hi", "--schedule", when)
+            self.assertEqual((code, client.sent), (2, []), when)
+            self.assertIn("nothing sent", err)
+
 
 class Edit(unittest.TestCase):
     def client(self):
@@ -489,6 +523,49 @@ class Edit(unittest.TestCase):
     def test_edit_ambiguous_chat_edits_nothing(self):
         code, _, _, c = cli("edit", "Саша", "9", "new", client=self.client())
         self.assertEqual((code, c.edited), (2, []))
+
+
+class Scheduled(unittest.TestCase):
+    def client(self):
+        c = FakeClient()
+        c.scheduled = [msg(41, IVAN, ME, "later", -120, out=True), msg(40, IVAN, ME, "sooner", -60, out=True),
+                       msg(42, QA, ME, "other chat", -30, out=True)]
+        return c
+
+    def test_history_scheduled_lists_soonest_first_no_link(self):
+        code, out, _, c = cli("history", "@ivan", "--scheduled", "-j", client=self.client())
+        rows = json.loads(out)
+        self.assertEqual((code, [r["msg_id"] for r in rows]), (0, [40, 41]))
+        self.assertEqual(datetime.fromisoformat(rows[0]["date"]), NOW + timedelta(minutes=60))
+        self.assertIsNone(rows[0]["link"])
+        _, out, _, _ = cli("history", "@ivan", "--scheduled", "-n", "1", "--fields", "msg_id", "--no-header",
+                           client=self.client())
+        self.assertEqual(out, "40\n")
+
+    def test_history_scheduled_rejects_other_filters(self):
+        for extra in (("--ids", "1"), ("--since", "1d"), ("--from", "@ivan")):
+            code, out, err, _ = cli("history", "@ivan", "--scheduled", *extra, client=self.client())
+            self.assertEqual((code, out), (2, ""), extra)
+
+    def test_unschedule_receipt(self):
+        code, out, _, c = cli("unschedule", "@ivan", "41", "--fields", "id,chat", "--no-header", client=self.client())
+        self.assertEqual((code, out), (0, "41\tIvan\n"))
+        self.assertEqual(c.unscheduled, [(IVAN, [41])])
+        code, out, _, c = cli("unschedule", "@ivan", "40", "41", "40", "-j", client=self.client())
+        rows = json.loads(out)
+        self.assertEqual((code, [r["id"] for r in rows], c.unscheduled), (0, [40, 41], [(IVAN, [40, 41])]))
+        self.assertEqual((rows[0]["text"], rows[0]["link"]), ("sooner", None))
+
+    def test_unschedule_unknown_id_deletes_nothing(self):
+        for ids in (("99",), ("40", "42")):  # 42 is scheduled in another chat
+            code, out, err, c = cli("unschedule", "@ivan", *ids, client=self.client())
+            self.assertEqual((code, out, c.unscheduled), (2, "", []), ids)
+            self.assertIn("nothing deleted", err)
+
+    def test_unschedule_ambiguous_chat_or_bad_id(self):
+        for argv in (("unschedule", "Саша", "40"), ("unschedule", "@ivan", "x"), ("unschedule", "@ivan")):
+            code, _, _, c = cli(*argv, client=self.client())
+            self.assertEqual((code, c.unscheduled), (2, []), argv)
 
 
 class Media(unittest.TestCase):

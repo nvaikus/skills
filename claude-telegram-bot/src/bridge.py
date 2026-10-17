@@ -1052,9 +1052,17 @@ class Worker:
             b.guard.refresh()  # protected files changed (skill update) -> rebuild the index
         t = b.store.topic(self.key)
         cwd = t["cwd"] if os.path.isdir(t["cwd"]) else os.path.expanduser("~")
+        settings = t.get("settings")
+        if settings and not runner.settings_ok(settings):  # fail closed: never run this topic without its settings
+            self.timing = {"marks": {}, "model": "", "resume": False, "results": 0}
+            for bt in batches:
+                b.react(chat, bt.key, "💔")
+                b.store.unpend(self.pk(bt.key))
+            b.fail(chat, thread, b.s("why.settings", path=settings), f"settings file missing or not JSON: {settings}")
+            return [], None
         system = "\n\n".join(x for x in (t.get("system"), notify.people_prompt(b.people(), b.group is not None)) if x)
         argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"),
-                                 system or None)
+                                 system or None, settings)
         run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread), config.RUN_CHAT_ENV: str(chat)}))
         self.stopped, self.last_stderr = False, run.stderr
         unsent = []

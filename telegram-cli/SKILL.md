@@ -10,8 +10,10 @@ tg-cli [--account NAME] <command> ...     # python3 ~/.claude/skills/telegram-cl
 tg-cli chats [FILTER] | user-find <q>     # who/where: ids for everything below
 tg-cli search <words> [--chat C] [--from U] [--since 7d] | search --public <words|#tag>
 tg-cli history <chat> [-n N]                  # media shows in text as [document: name.pdf]
+tg-cli history <chat> --scheduled             # scheduled, not yet delivered; msg_id = scheduled id
 tg-cli media-get <chat> <msg_id...|all> [-o DIR] [--type document,photo] [--since --until] [--list]
-tg-cli send <to> [text|-] [--file PATH]...   # text = caption with --file
+tg-cli send <to> [text|-] [--file PATH]... [--schedule WHEN]   # text = caption with --file; WHEN: +2h | 'YYYY-MM-DD HH:MM' (local) | ISO
+tg-cli unschedule <chat> <id...>              # cancel scheduled; unknown id = exit 2, nothing deleted
 tg-cli edit <chat> <msg_id> [text|-]         # replace text of own message; foreign = exit 3
 ```
 
