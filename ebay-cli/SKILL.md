@@ -32,7 +32,7 @@ ebay msg list                                        # inbox, last_by=them = ans
 
 - stdout TSV (`-j` JSON with more fields, `--fields a,b`, `--no-header`); stderr `# ` notes; `item` prints markdown.
 - Exit `0` ok (account actions: outcome verified on the page) · `1` eBay/browser failure incl. rate limit · `2` usage, no keys/defaults, item not found · `5` setup or eBay sign-in waits on the user.
-- Search returns only listings that ship to the ship-to country (`--anywhere` drops that); `ship` = cost to it, `?` = none returned. Prices are the market's currency; `--sort price` = item + shipping.
+- Search returns only listings that ship to the ship-to country (`--anywhere` drops ship-to entirely; `ship` is then the market's domestic cost); `ship` = cost to it, `?` = none returned. Prices are the market's currency; `--sort price` = item + shipping. `~price` + `buy … var` = multi-variation listing: one variation's price, varies between searches (`ebay item ID` for all).
 - Never: checkout, paying, bidding, offers - the CLI has no code path for them and the agent must not click them by hand either. Out of scope: sold/completed prices (Marketplace Insights is restricted), seller tools, watchlist, orders.
 
 | when | read |

@@ -8,10 +8,13 @@ EPILOG = """examples:
   ebay search "nikon z 50mm" --market EBAY_GB --ship-to PT -j
   ebay search --category 111422 "x1 carbon" --limit 50
 
-Defaults: --market / --ship-to from `ebay setup`. Only listings that ship to --ship-to are returned
-(--anywhere drops that filter); shipping is priced for that country.
+Defaults: --market / --ship-to from `ebay setup`. Only listings that ship to --ship-to are returned;
+shipping is priced for that country. --anywhere drops ship-to (and zip) entirely: all listings of the
+market, ship = the market's domestic cost.
 Columns: id = listing id (use with `ebay item`); price = current bid for auctions; ship = cheapest
-shipping to you (free | ? = no cost returned); buy = fixed / auction Nb (bids) / offer; ends = auctions only (UTC);
+shipping to you (free | ? = no cost returned); buy = fixed / auction Nb (bids) / offer, + var =
+multi-variation listing: price ~ = the ONE variation eBay picked for this call (differs between
+searches; `ebay item ID` shows the cheapest + all); ends = auctions only (UTC);
 seller = name feedback% (score); url = short link. -j adds item_id, total, currency, end_time, image, location.
 --sort price = item + shipping, low first. --min/--max-price are in the market's currency.
 Results: at most 200 per call; the '# N of TOTAL' note says when there is more.
@@ -28,6 +31,8 @@ def run(ctx, args):
     loc = query.location(flags, ctx.cfg)
     q = " ".join(args.query).strip()
     rows, total = browse.search(query.params(q, flags, loc, args.limit), loc)
+    if args.anywhere:
+        ctx.note(f"--anywhere: ship-to ignored; ship = {loc['market']} domestic cost, not delivery to you")
     if not rows:
         ctx.note(f"no listings for {q!r} on {loc['market']}" + (f" shipping to {loc['ship_to']}" if loc["ship_to"] else ""))
     elif total > len(rows):

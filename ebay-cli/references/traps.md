@@ -8,6 +8,7 @@
 - `price` for auctions = current bid, not the final price; `ends` is UTC.
 - Max 200 rows per call, 10,000 per query in total; no paging flag - narrow the query.
 - `--condition` names map to id groups (used = 2990/3000/3010/4000-6000, refurbished = 2000-2030/2500, parts = 7000); raw ids also work. Not every category uses every id.
+- Multi-variation listing (`buy` ends in `var`, price `~`): the summary carries ONE variation eBay picks per call (ship-to and query sway it), so the same id shows different prices across searches; `ebay item ID` = cheapest + all. `watch` reports a drop only for the same variation.
 - Query: space = AND, `(a,b)` = OR, `-word` excludes; `*` is refused.
 
 ## Item

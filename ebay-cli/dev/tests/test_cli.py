@@ -139,7 +139,31 @@ class TestSearch(Base):
         c = self.fake.last("/buy/browse/v1/item_summary/search")
         self.assertEqual(c["params"]["filter"], "price:[..50],priceCurrency:EUR")
         self.assertEqual(c["params"]["sort"], "endingSoonest")
-        self.assertIn("X-EBAY-C-ENDUSERCTX", c["headers"])  # still priced for PT
+
+    def test_anywhere_drops_ship_to_context(self):
+        # regression: the end-user-context header alone filtered to PT-shipping listings (6 vs 55 live)
+        self.fake.search = {"total": 0}
+        rc, _, err = run("search", "captains bed", "--market", "EBAY_GB", "--anywhere", "--zip", "1000-001")
+        self.assertEqual(rc, 0, err)
+        c = self.fake.last("/buy/browse/v1/item_summary/search")
+        self.assertNotIn("X-EBAY-C-ENDUSERCTX", c["headers"])
+        self.assertNotIn("deliveryCountry", c["params"].get("filter", ""))
+        self.assertNotIn("shipping to PT", err)
+        self.assertIn("--anywhere", err)
+        run("watch", "add", "beds", "--anywhere", "--no-seed")
+        run("watch", "run")
+        self.assertNotIn("X-EBAY-C-ENDUSERCTX", self.fake.last("/buy/browse/v1/item_summary/search")["headers"])
+
+    def test_variation_price_marked(self):
+        s = self.fake.search["itemSummaries"][0]
+        s.update(itemId="v1|111111111111|545042259231", itemGroupType="SELLER_DEFINED_VARIATIONS")
+        rc, out, err = run("search", "a")
+        row = self.tsv(out)[0]
+        self.assertEqual((row["price"], row["buy"]), ("~399.00 EUR", "fixed+offer var"))
+        self.assertEqual(self.tsv(out)[2]["price"], "45.00 EUR")
+        data = json.loads(run("search", "a", "-j")[1])
+        self.assertEqual((data[0]["variation"], data[0]["price_value"]), ("545042259231", 399.0))
+        self.assertIsNone(data[2]["variation"])
 
     def test_usage_errors(self):
         self.assertEqual(run("search", "a", "--condition", "mint")[0], 2)
@@ -333,6 +357,16 @@ class TestWatch(Base):
         self.assertEqual(rc, 1)
         self.assertEqual([r["watch"] for r in self.tsv(out)], ["a"])
         self.assertIn("watch b failed", err)
+
+    def test_variation_flip_is_not_a_drop(self):
+        s = self.fake.search["itemSummaries"][0]
+        s.update(itemId="v1|111111111111|1", itemGroupType="SELLER_DEFINED_VARIATIONS")
+        run("watch", "add", "v")
+        s.update(itemId="v1|111111111111|2", price={"value": "299.00", "currency": "EUR"})  # eBay picked another variation
+        self.assertEqual(run("watch", "run")[1], "")
+        s["price"]["value"] = "249.00"  # same variation got cheaper: a real drop
+        rows = self.tsv(run("watch", "run")[1])
+        self.assertEqual([r["change"] for r in rows], ["drop 299.00>249.00"])
 
 
 class TestSetup(Base):

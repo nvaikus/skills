@@ -23,7 +23,8 @@ def add_args(p, limit=20):
                    "price-desc | newest | ending (auctions ending soonest)")
     p.add_argument("--category", metavar="ID", help="category id (find it with `ebay categories`)")
     p.add_argument("--location", metavar="CC", help="only items located in this country (itemLocationCountry)")
-    p.add_argument("--anywhere", action="store_true", help="drop the ship-to filter (still prices shipping to it)")
+    p.add_argument("--anywhere", action="store_true", help="listings shipping anywhere: drops --ship-to/--zip entirely "
+                   "(eBay's ship-to context filters too); ship = the market's domestic cost")
     add_loc_args(p)
     if limit:
         p.add_argument("--limit", type=int, default=limit, metavar="N", help=f"rows (default {limit}, max 200)")
@@ -45,6 +46,8 @@ def location(flags, cfg):
     if not market:
         raise UsageError("no market: pass --market EBAY_DE (or similar) or set a default with "
                          "`ebay setup --market EBAY_DE --ship-to PT`")
+    if flags.get("anywhere"):  # the end-user-context header alone hides listings not shipping there
+        return {"market": market, "ship_to": None, "zip": None}
     return {"market": market, "ship_to": markets.country(flags.get("ship_to") or cfg.get("ship_to")),
             "zip": flags.get("zip") or cfg.get("zip")}
 

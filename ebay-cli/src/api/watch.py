@@ -95,13 +95,16 @@ def check(name, w, cfg, now=None):
         if old is None:
             if not baseline:
                 out.append({"watch": name, "change": "new", **r})
-            seen[key] = {"title": r["title"], "price": price, "currency": r["currency"], "first": now, "last": now}
+            seen[key] = {"title": r["title"], "price": price, "currency": r["currency"], "item_id": r["item_id"],
+                         "first": now, "last": now}
             continue
         auction = "AUCTION" in (r["buying_options"] or [])
-        if (not auction and price is not None and old.get("price") is not None
+        # multi-variation listing: eBay picks a variation per call, so compare only the same variation
+        same = not r["variation"] or old.get("item_id") == r["item_id"]
+        if (not auction and same and price is not None and old.get("price") is not None
                 and price < old["price"] and r["currency"] == old.get("currency")):
             out.append({"watch": name, "change": f"drop {old['price']:.2f}>{price:.2f}", **r})
-        old.update(price=price, currency=r["currency"], last=now)
+        old.update(price=price, currency=r["currency"], item_id=r["item_id"], last=now)
     for k in [k for k, v in seen.items() if now - v.get("last", now) > FORGET_AFTER]:
         seen.pop(k)
     _write(p, seen)

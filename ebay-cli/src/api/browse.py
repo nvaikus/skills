@@ -38,18 +38,28 @@ def legacy_of(item_id):
     return parts[1] if len(parts) > 1 else None
 
 
+def variation_of(s):
+    """Multi-variation listing -> the variation id eBay picked for this summary, else None."""
+    parts = (s.get("itemId") or "").split("|")
+    var = parts[2] if len(parts) > 2 and parts[2] not in ("", "0") else None
+    return var or ("?" if s.get("itemGroupType") else None)
+
+
 def row(s, market):
     price, cur = _money(s.get("currentBidPrice") or s.get("price"))
+    var = variation_of(s)
     ship, _ = ship_of(s)
     opts = s.get("buyingOptions") or []
     buy = "+".join(BUY_SHORT.get(o, o.lower()) for o in opts)
     if "AUCTION" in opts and s.get("bidCount") is not None:
         buy += f" {s['bidCount']}b"
+    if var:
+        buy += " var"
     seller = s.get("seller") or {}
     legacy = s.get("legacyItemId") or legacy_of(s.get("itemId"))
     loc = s.get("itemLocation") or {}
     return {
-        "id": legacy, "title": s.get("title"), "price": _fmt(price, cur),
+        "id": legacy, "title": s.get("title"), "price": ("~" if var and price is not None else "") + _fmt(price, cur),
         "ship": "free" if ship == 0 else _fmt(ship) if ship is not None else "?",
         "cond": s.get("condition"), "buy": buy,
         "ends": _when(s.get("itemEndDate")) if "AUCTION" in opts else "",
@@ -60,7 +70,7 @@ def row(s, market):
         "total": round(price + ship, 2) if price is not None and ship is not None else None,
         "condition_id": s.get("conditionId"), "buying_options": opts, "end_time": s.get("itemEndDate"),
         "location": loc.get("country"), "image": (s.get("image") or {}).get("imageUrl"),
-        "web_url": s.get("itemWebUrl"),
+        "web_url": s.get("itemWebUrl"), "variation": var,
     }
 
 
