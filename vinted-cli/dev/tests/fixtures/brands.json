@@ -1,0 +1,48 @@
+{
+ "brands": [
+  {
+   "id": 53,
+   "title": "Nike",
+   "slug": "nike",
+   "item_count": 63783557
+  },
+  {
+   "id": 2703,
+   "title": "Jordan",
+   "slug": "jordan",
+   "item_count": 5148479
+  },
+  {
+   "id": 5977,
+   "title": "Nike Air",
+   "slug": "nike-air",
+   "item_count": 2053419
+  },
+  {
+   "id": 941408,
+   "title": "NIK&NIK",
+   "slug": "niknik",
+   "item_count": 122608
+  },
+  {
+   "id": 283953,
+   "title": "Nike SB",
+   "slug": "nike-sb",
+   "item_count": 177546
+  },
+  {
+   "id": 370427,
+   "title": "Nike Mercurial",
+   "slug": "nike-mercurial",
+   "item_count": 46657
+  }
+ ],
+ "pagination": {
+  "current_page": 1,
+  "total_pages": 1,
+  "total_entries": 10,
+  "per_page": 30,
+  "time": 1792795685
+ },
+ "code": 0
+}
