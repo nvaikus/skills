@@ -1,0 +1,1 @@
+{"error":{"status":400,"code":400,"title":"Invalid request","detail":"Data validation error occurred","validation":[{"field":"sort_by","title":"Este valor n\u00e3o \u00e9 v\u00e1lido.","detail":"Unable to reverse value for property path \u0022sortCriteria\u0022: Invalid sort criteria provided."}]}}

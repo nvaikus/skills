@@ -14,6 +14,7 @@ Every skill is a top-level folder `<name>/`: `SKILL.md`, plus for CLI skills the
 | [gmail-cli](gmail-cli/SKILL.md) | Gmail for agents: search all accounts with Gmail query syntax, threads as compact markdown, labels and bulk organizing, drafts, replies and send |
 | [icloud-calendar-cli](icloud-calendar-cli/SKILL.md) | iCloud Calendar over CalDAV from any OS: calendars with kind and access (own, shared, subscribed), events in a range with recurrences expanded, add, edit, delete |
 | [ebay-cli](ebay-cli/SKILL.md) | Buyer-side eBay search via the official Browse API: listings with shipping priced for your country, item cards, category ids, saved searches reporting new listings and price drops |
+| [olx-cli](olx-cli/SKILL.md) | Buyer-side OLX search (olx.pt and other OLX countries) via its frontend JSON API: filters, region + radius, listing cards, saved searches reporting new listings and price drops |
 | [google-drive-cli](google-drive-cli/SKILL.md) | Google Drive as a local filesystem (rclone mount / synced folder) plus Google Docs and Sheets by path: read Docs as markdown, targeted edits, Sheets as TSV |
 | [clockmaster-cli](clockmaster-cli/SKILL.md) | Run jobs on a schedule through the OS's own scheduler (launchd, systemd user timers, Task Scheduler): run history, logs, notifications, claude cost, local web UI; migrates the old task-scheduler |
 | [skilltap](skilltap/SKILL.md) | Install single skills from any git repo and keep them updated on session start; admin-managed skill list; publish skill edits back through the source clone |
