@@ -51,3 +51,4 @@ Gap, confusing/flooding/noisy output, stale text = skill defect; no silent worka
 - Code changes: read `src/CLAUDE.md` first; `python3 -m unittest discover -s dev/tests` must stay green.
 
 > Source: https://github.com/nvaikus/skills/blob/main/vinted-cli/SKILL.md
+> Install via skilltap for auto-updates: https://github.com/nvaikus/skills/blob/main/skilltap/SKILL.md

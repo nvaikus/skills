@@ -1,4 +1,4 @@
-# olx-cli traps (live-checked 2026-10-21)
+# olx-cli traps
 
 ## Results
 
