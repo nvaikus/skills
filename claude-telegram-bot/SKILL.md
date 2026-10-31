@@ -73,7 +73,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 | first setup, BotFather, config keys, group mode setup, voice setup, changing the token, files over 20 MB / local Bot API server | `references/setup.md` |
 | group mode rules, owner groups, peer bots, why a group message did / didn't run claude | `references/groups.md` |
 | what the owner sees: reactions, status line / `status_style`, `/quiet`, flood waits, in-topic commands, files and voice, restarts, slow replies | `references/behavior.md` |
-| sending from scripts or jobs: `notify` (topics, files, `--keep`, `--replace`), auto-triage, `spawn` / `send` / `alive` | `references/notify.md` |
+| sending from scripts or jobs: which of `notify` / auto-triage / `spawn` / `send` / `alive` (flags and behavior: `claude-tg <cmd> -h`) | `references/notify.md` |
 
 ## Memory
 

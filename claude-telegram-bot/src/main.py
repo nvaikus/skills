@@ -31,6 +31,8 @@ examples:
   claude-tg profile --name "Helper" --photo me.png   # bot's own name / about / avatar (no args: show)
   claude-tg local-api status # local Bot API server for attachments > 20 MB (optional)
   claude-tg chats            # group setup: group ids + sender ids from pending updates (service stopped)
+
+STATE_DIR = $CLAUDE_TG_STATE_DIR, default ~/.local/share/claude-tg.
 """
 
 
@@ -74,6 +76,8 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     CHAT = ("target chat: an owner group (config owner_groups name or id); default the home chat; a t.me/c/ topic "
             "link implies its chat")
+    THREAD = ("topic: message_thread_id or a topic link t.me/<bot>/<thread>[/<msg>] | t.me/c/<chat>/<thread>[/<msg>] "
+              "(spawn's link)")
     s = sub.add_parser("setup", help="BotFather steps + save the token file")
     s.add_argument("--token-stdin", action="store_true", help="read the token from stdin (never pass it in argv)")
     sub.add_parser("doctor", help="check token, bot, Threaded Mode (private) or group + admin rights (group mode), claude, voice deps, service")
@@ -98,22 +102,29 @@ def main(argv=None):
     s.add_argument("-f", "--follow", action="store_true")
     sub.add_parser("run", help="run the bot in the foreground")
     s = sub.add_parser("notify", help="send a message from the bot to the owner (no service needed)",
-                       description="Text from args or stdin (with --file: args only, becomes the caption). Target: "
-                                   "--thread > --main-chat > --topic > $CLAUDE_TG_RUN_TOPIC (inside a bot run: its own "
-                                   "topic) > topic 'Notifications' (created once, id kept in STATE_DIR/notify.json); "
-                                   "--topic KEY resolves via config notify_topics. Replying there starts a claude "
-                                   "session that sees the quoted notification. Prints {chat, thread, message_ids}. "
-                                   "Exit 3 = a file was withheld by the leak guard.")
+                       description="Plain sendMessage: never disturbs the service's polling. Owner = config "
+                                   "owner_id, else state.json. Text from args or stdin (with --file: args only, becomes "
+                                   "the caption). Target: --thread > --main-chat > --topic > $CLAUDE_TG_RUN_TOPIC "
+                                   "(inside a bot run: its own topic, e.g. to send a produced file back) > topic "
+                                   "'Notifications' (created on first use, id kept in STATE_DIR/notify.json; deleted "
+                                   "in the client -> recreated on the next send). Replying there starts a claude "
+                                   "session in that topic that sees the quoted notification. Prints {chat, thread, "
+                                   "message_ids}. Exit 3 = a file was withheld by the leak guard.")
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--replace", metavar="KEY",
-                   help="after a successful send, delete the message(s) last sent with this KEY and remember the new "
-                        "ones (STATE_DIR/notify.json); a delete that fails (too old, gone) only warns")
+                   help="recurring post that must not pile up: after a successful send, delete the message(s) last "
+                        "sent with this KEY and remember the new ones (STATE_DIR/notify.json replace); a delete that "
+                        "fails (bots can't delete > 48 h old in some chats, already gone) only warns, exit stays 0; "
+                        "notify-delete KEY removes them without a new post")
     s.add_argument("--keep", metavar="KEY",
-                   help="keep ONE message per chat + KEY up to date: edit it in place (prints edited / unchanged), "
-                        "send a new one when none is stored or it was deleted (STATE_DIR/notify.json keep)")
-    s.add_argument("--pin", action="store_true", help="with --keep: pin the message when it is (re)sent, silently")
+                   help="one live status message (a board) per chat + KEY: edit it in place (prints edited / unchanged; "
+                        "no new message, no sound), send a new one when none is stored or it was deleted "
+                        "(STATE_DIR/notify.json keep); text <= 4096, one message")
+    s.add_argument("--pin", action="store_true", help="with --keep: pin the message when it is (re)sent, silently; in a group the bot needs "
+                        "can_pin_messages (Bot API cannot pin a topic in the topic list)")
     s.add_argument("--topic-icon", metavar="EMOJI",
-                   help="with --topic: the topic's icon (getForumTopicIconStickers emoji); overrides notify_topics")
+                   help="with --topic: the topic's icon (getForumTopicIconStickers emoji); works without a notify_topics "
+                        "entry, overrides its icon")
     s.add_argument("text", nargs="*", help="message text (default: stdin)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--html", action="store_true", help="text is Telegram HTML")
@@ -135,14 +146,19 @@ def main(argv=None):
                    help="inline URL button under the message (repeatable, one per row)")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--topic", metavar="KEY",
-                   help="config notify_topics key, else a literal topic name (default: own topic inside a bot run, "
-                        "else Notifications)")
-    g.add_argument("--thread", metavar="ID|LINK", help="send into this topic (message_thread_id or topic link)")
+                   help="config notify_topics key (one per domain: display name + optional icon), else a literal topic "
+                        "name; cached per KEY: a changed name/icon edits the same topic (default: own topic inside a "
+                        "bot run, else Notifications)")
+    g.add_argument("--thread", metavar="ID|LINK",
+                   help="send into this " + THREAD + "; with --silent = a status-only line, no claude turn")
     g.add_argument("--main-chat", action="store_true", help="send to All messages instead of a topic")
     INBOX = ("Needs the running bot: the prompt is posted into the topic as a bot message, then queued in "
              "STATE_DIR/inbox/ and run by the bot like an owner message (queued while it is down). Prints JSON.")
     s = sub.add_parser("spawn", help="new topic + claude session started with PROMPT (args or stdin)",
-                       description=INBOX + " Output: {thread, link, message_id, cwd[, icon]}.")
+                       description=INBOX + " Output: {thread, link, message_id, cwd[, icon]} (+ chat in an owner group, link "
+                                           "t.me/c/...); link = t.me/<bot>/<thread>/2147483647: the int32-max message "
+                                           "id opens the topic at its last message (/<thread> alone opens only the "
+                                           "creation message in the main chat).")
     s.add_argument("--title", required=True, help="topic name")
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--mention", action="append", metavar="ID=NAME",
@@ -152,37 +168,40 @@ def main(argv=None):
     s.add_argument("--icon", help="topic icon emoji (getForumTopicIconStickers); kept as the topic's base icon")
     s.add_argument("--start-icon", metavar="EMOJI",
                    help="create the topic with this icon instead, not kept as base (topic-icon base restores --icon or "
-                        "none); output gets \"icon\" when an icon was set")
+                        "none): a status mark like ❗ that, unlike a later topic-icon, can't be skipped for rate "
+                        "budget; output gets \"icon\" when an icon was set")
     s.add_argument("--system", metavar="TEXT|@FILE",
                    help="appended to claude's system prompt on every run of this topic (topic role)")
     s.add_argument("--settings", metavar="PATH",
-                   help="absolute path of a claude settings JSON passed as --settings on every run of this topic "
-                        "(e.g. a deny list); missing/invalid at run time -> the run is refused, the topic is told")
+                   help="absolute path of a claude settings JSON passed as --settings on every run of this topic, "
+                        "resumes too (e.g. a deny list for unattended sessions); checked at spawn (absolute, JSON "
+                        "object) and at each run: missing/invalid -> the run is refused, the topic is told")
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
     s.add_argument("--show", metavar="TEXT",
                    help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
     s.add_argument("--quiet", action="store_true",
-                   help="make the topic quiet (/quiet): text between steps stays in the status line, only the final "
-                        "answer is posted")
+                   help="make the topic quiet (/quiet), kept for later runs: text between steps stays in the status "
+                        "line, only the final answer is posted")
     s.add_argument("prompt", nargs="*")
     s = sub.add_parser("send", help="PROMPT into an existing topic as if the owner wrote it",
                        description=INBOX + " A live run takes it at once (stdin); else the topic's session resumes.")
-    s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
     s.add_argument("--show", metavar="TEXT",
                    help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
     s.add_argument("--quiet", action="store_true",
-                   help="make the topic quiet (/quiet): text between steps stays in the status line, only the final "
-                        "answer is posted")
+                   help="make the topic quiet (/quiet), kept for later runs: text between steps stays in the status "
+                        "line, only the final answer is posted")
     s.add_argument("prompt", nargs="*")
     s = sub.add_parser("alive", help="is a claude run live (or queued) in a topic? exit 0 yes, 1 no",
                        description="Live = a process with CLAUDE_TG_RUN_TOPIC=<thread> (/proc), a pending request "
-                                   "of the topic in state.json, or an inbox file for it. Prints JSON.")
-    s.add_argument("--thread", required=True, metavar="ID|LINK")
+                                   "of the topic in state.json, or an inbox file for it. A finished turn ends the "
+                                   "process: idle between turns is normal. Prints JSON.")
+    s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s = sub.add_parser("topic-icon", help="set a topic's icon: emoji | off | base")
-    s.add_argument("--thread", required=True, metavar="ID|LINK")
+    s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
                                 "spawn --icon; none = off)")
@@ -222,12 +241,18 @@ def main(argv=None):
         g.add_argument("bot", help="bot id (token part before ':') or @username seen in the bot's logs")
         g.add_argument("--no-restart", action="store_true", help="write the config only")
     s = sub.add_parser("triage", help="auto-triage of notify events: show | on [opts] | off",
-                       description="Config notify_triage (only that key is rewritten; applies to the next notify, no "
-                                   "restart). On: every `notify --topic KEY` event (not --keep / --replace / --file, "
-                                   "not from inside a bot run, not a first line with a check mark) also opens a topic "
-                                   "'🔎 <first line>' whose claude session finds the cause, fixes what is safe and "
-                                   "reports. Same first line (numbers ignored) within the cooldown: counted in the "
-                                   "open topic. Prints the settings as JSON.")
+                       description="Config notify_triage, default off (only that key is rewritten, never edit it by hand; "
+                                   "applies to the next notify, no restart). On: every `notify --topic KEY` event "
+                                   "also opens a topic '🔎 <first line>' and puts a 🔎 button to it under the "
+                                   "notification. Its claude session gets the text + source (key, host, systemd unit, "
+                                   "sender command) and is told: find the cause, fix if safe and in scope, report "
+                                   "cause / fix / what's left; transient + recovered = say so and stop. Skipped for "
+                                   "--keep / --replace / --file / --thread / --main-chat / --no-triage, a notify from "
+                                   "inside a bot run (no recursion), a first line with ✅, keys outside --topics or in "
+                                   "--exclude; notify --triage forces one. Same first line (numbers ignored) within "
+                                   "the cooldown: no new topic, the open one counts it (silent line at #2, #4, #8...). "
+                                   "State STATE_DIR/triage.json. Triage failures only warn; notify's exit code is "
+                                   "unchanged. Prints the settings as JSON.")
     s.add_argument("action", choices=["show", "on", "off"], nargs="?", default="show")
     s.add_argument("--cwd", help="working dir of triage sessions (default: config default_cwd)")
     s.add_argument("--chat", metavar="NAME|ID", help="owner group for triage topics; home = the notification's chat")

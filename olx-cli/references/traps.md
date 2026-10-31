@@ -13,10 +13,8 @@
 
 ## Watches
 
-- Saved with resolved ids + site at add time; run uses newest-first order and the saved `--limit` (default 50).
 - `new` = id never seen by this watch; a refreshed old listing is not new. `drop OLD>NEW` only for numeric same-currency prices. Seen state forgets ids unseen for 60 days.
 - State: `~/.claude/olx/watch/` (`searches.json`, `seen/<name>.json`, `alerted.json`). Override root: `OLX_ROOT`.
-- `--notify` topic `olx` must exist in claude-tg `notify_topics` (not registered by this skill).
 
 ## When it breaks (exit 3)
 
