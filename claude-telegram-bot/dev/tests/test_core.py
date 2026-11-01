@@ -1940,6 +1940,20 @@ class Inbox(unittest.TestCase):
             r = self.ib.alive(51, proc)
             self.assertEqual((r["live"], r["pending"], r["known"]), (True, 1, True))
 
+    def test_topic_icon_off_not_modified_sets_any_then_clears(self):
+        class Stuck(self.Bot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                r = super().call(method, _timeout, _retries, **p)
+                if method == "editForumTopic" and p.get("icon_custom_emoji_id") == "" and not self.__dict__.get("hit"):
+                    self.hit = True
+                    raise TgError(method, 400, "Bad Request: TOPIC_NOT_MODIFIED")
+                return r
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = Stuck()
+            self.ib.topic_icon(bot, self.cfg(), 50, "off")
+            got = [p["icon_custom_emoji_id"] for m, p in bot.calls if m == "editForumTopic"]
+            self.assertEqual(got, ["", "111", ""])
+
     def test_topic_icon_emoji_off_base_and_thread_links(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             (Path(d) / "state.json").write_text(json.dumps({"topics": {"50": {"icon": "222"}}}))
@@ -1958,6 +1972,39 @@ class Inbox(unittest.TestCase):
         self.assertEqual(self.ib.thread_of(" 12 "), 12)
         with self.assertRaises(self.ib.NotifyError):
             self.ib.thread_of("https://example.com/x")
+
+    def test_topic_delete_refuses_general_and_live_tolerates_gone_and_service_forgets_known(self):
+        class Bot(self.Bot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                if method == "deleteForumTopic" and p["message_thread_id"] in (51, 53):
+                    self.calls.append((method, p))
+                if method == "deleteForumTopic" and p["message_thread_id"] == 51:
+                    raise TgError(method, 400, "Bad Request: message thread not found")
+                if method == "deleteForumTopic" and p["message_thread_id"] == 53:
+                    raise TgError(method, 400, "Bad Request: not enough rights to delete")
+                return super().call(method, _timeout, _retries, **p)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            proc = Path(d) / "proc"
+            proc.mkdir()
+            (Path(d) / "state.json").write_text(json.dumps({"topics": {"50": {"cwd": d}}}))
+            bot = Bot()
+            self.assertEqual(self.ib.topic_delete(bot, self.cfg(), 50, proc=proc),
+                             {"thread": 50, "deleted": True, "gone": False})
+            self.assertEqual([i for _, i in self.ib.pending_files()], [{"op": "forget", "chat": 1, "thread": 50}])
+            self.assertEqual(self.ib.topic_delete(bot, self.cfg(), 51, proc=proc),
+                             {"thread": 51, "deleted": False, "gone": True})
+            self.assertEqual(len(self.ib.pending_files()), 1)  # unknown topic: nothing for the service to forget
+            with self.assertRaises(TgError):
+                self.ib.topic_delete(bot, self.cfg(), 53, proc=proc)
+            for thread in (1, 50):  # General; 50 now has a queued inbox file = counts as live
+                with self.assertRaises(self.ib.NotifyError):
+                    self.ib.topic_delete(bot, self.cfg(), thread, proc=proc)
+            self.assertEqual([p["message_thread_id"] for m, p in bot.calls if m == "deleteForumTopic"], [50, 51, 53])
+            b = TopicCommands.bridge(self, d)
+            b.store.update(50, cwd=d)
+            b.drain_inbox()
+            self.assertEqual(self.ib.pending_files(), [])
+            self.assertNotIn("50", json.loads((Path(d) / "state.json").read_text()).get("topics", {}))
 
     def test_spawn_settings_validated_stored_and_passed_on_every_run_fail_closed(self):
         """--settings PATH: absolute + JSON object at spawn; every run (resumes too) gets --settings; the file gone
@@ -2597,6 +2644,20 @@ class GroupCmd(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("pass the id", self.err)
 
+    def test_add_pending_skips_getchat(self):
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.Bot()
+            rc, data, _ = self.run_cli(d, "{}", "add", "team", str(self.G), "--pending", bot=bot)
+            self.assertEqual((rc, data["owner_groups"], self.restarts, bot.calls), (0, {"team": self.G}, [600], []))
+            self.assertIn("pending", self.out)
+            rc, data, _ = self.run_cli(d, None, "add", "team", str(self.G), "--pending")  # idempotent
+            self.assertEqual((rc, self.restarts), (0, []))
+            rc, _, _ = self.run_cli(d, None, "add", "x", "--pending")  # no id
+            self.assertEqual(rc, 2)
+            self.assertIn("needs the id", self.err)
+            rc, _, _ = self.run_cli(d, None, "add", "y", str(self.G), "--pending")  # id taken
+            self.assertEqual(rc, 2)
+
     def test_validation_fix_lines(self):
         with tempfile.TemporaryDirectory() as d:
             bot = self.Bot(chat={"type": "supergroup", "is_forum": False, "title": "T"},
@@ -2898,6 +2959,13 @@ class Mention(unittest.TestCase):
         (t, mode), _ = self.run_({1: "nik"}, "a <b> {who}", ["1=Никита", "2=Саша"])
         self.assertEqual(mode, "html")
         self.assertEqual(t, 'a &lt;b&gt; @nik, <a href="tg://user?id=2">Саша</a>')
+
+    def test_owner_group_chat_resolves_username(self):
+        from src import notify
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = self.Bot({1: "nik"})
+            out = notify.with_mentions(bot, dict(config.DEFAULTS), "❗ {who}, да?", "plain", ["1=Никита"], chat=-1005)
+        self.assertEqual(out, ("❗ @nik, да?", "plain"))
 
     def test_private_mode_names_and_prefix(self):
         (t, mode), calls = self.run_({}, "текст", ["1=Никита"], cfg=dict(config.DEFAULTS))

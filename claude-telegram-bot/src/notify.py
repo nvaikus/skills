@@ -222,12 +222,13 @@ def topic_id(bot, chat: int, key: str, fresh=False, cfg=None):
 MENTION_TTL = 86400
 
 
-def mention(bot, cfg: dict, spec: str):
-    """`ID=Name` (or `ID`) -> (text, needs_html). Group mode: '@username' when the member has one (getChatMember,
-    cached a day), else a text_mention by id (notifies without a username). Private-chat mode: just the name."""
+def mention(bot, cfg: dict, spec: str, chat=None):
+    """`ID=Name` (or `ID`) -> (text, needs_html). Group mode (or `chat` = an owner group): '@username' when the
+    member has one (getChatMember, cached a day), else a text_mention by id (notifies without a username).
+    Private-chat mode: just the name."""
     uid, _, name = str(spec).partition("=")
     uid, name = uid.strip(), name.strip() or uid.strip()
-    group = config.group_id(cfg)
+    group = int(chat) if chat is not None and int(chat) < 0 else config.group_id(cfg)
     if group is None or not uid.lstrip("-").isdigit():
         return name, False
 
@@ -243,12 +244,12 @@ def mention(bot, cfg: dict, spec: str):
     return f'<a href="tg://user?id={int(uid)}">{html.escape(name)}</a>', True
 
 
-def with_mentions(bot, cfg: dict, text: str, mode: str, specs) -> tuple:
+def with_mentions(bot, cfg: dict, text: str, mode: str, specs, chat=None) -> tuple:
     """Put the mentions of `specs` at `{who}` in text (else in front): (text, mode). A text_mention or a non-plain
-    text turns the whole message into HTML (plain text escaped)."""
+    text turns the whole message into HTML (plain text escaped). `chat`: the destination (an owner group too)."""
     if not isinstance(specs, (list, tuple)) or not specs:
         return text, mode
-    ms = [mention(bot, cfg, s) for s in specs]
+    ms = [mention(bot, cfg, s, chat) for s in specs]
     if mode == "md":
         text, mode = fmt.md_to_html(text), "html"
     elif mode == "plain" and any(h for _, h in ms):
@@ -618,7 +619,7 @@ def main(cfg: dict, a) -> int:
         chat = target_chat(cfg, a)
         bot = cli_bot(cfg)
         cfg = with_topic_icon(cfg, topic, getattr(a, "topic_icon", None))
-        text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None))
+        text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None), chat)
         if getattr(a, "keep", None):
             if files or getattr(a, "replace", None) or a.button:
                 raise NotifyError("--keep takes text only (no --file / --replace / --button)")

@@ -689,7 +689,8 @@ class Bridge:
         for path, item in inbox.pending_files():
             try:
                 thread = inbox.apply(self, item)
-                log.info("inbox: prompt %s queued for topic %s", item.get("msg", {}).get("message_id"), thread)
+                if item.get("op") != "forget":  # forget logs itself
+                    log.info("inbox: prompt %s queued for topic %s", item.get("msg", {}).get("message_id"), thread)
             except Exception:
                 log.exception("inbox: %s failed", path.name)
                 bad = path.parent / "bad"

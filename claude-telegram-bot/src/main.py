@@ -24,6 +24,7 @@ examples:
   claude-tg send --thread 123 "next step"   # prompt into a topic as if the owner wrote it (resumes / joins a run)
   claude-tg alive --thread 123              # exit 0 = a claude run is live or queued there, 1 = idle
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
+  claude-tg topic-delete --thread LINK      # delete a topic + its messages (not General, not a live run)
   claude-tg group add team                 # connect the owner group the bot was just added to (never edit the config)
   claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
   claude-tg triage on --cwd ~ --exclude mail   # notify --topic events open a "🔎" investigation topic
@@ -205,6 +206,12 @@ def main(argv=None):
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
                                 "spawn --icon; none = off)")
+    s = sub.add_parser("topic-delete", help="delete a forum topic with all its messages",
+                       description="deleteForumTopic (in a group the bot needs can_delete_messages). Refused (exit 2): "
+                                   "General, a topic with a live or queued claude run. Already gone = ok. A topic "
+                                   "the bot knows is forgotten by the service. Prints JSON {thread, deleted, gone}.")
+    s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s = sub.add_parser("notify-delete", help="delete notifications sent with --replace KEY (or by message id)",
                        description="Deletes the messages stored under each KEY and forgets the KEY; --id deletes "
                                    "message ids in the owner chat. Exit 0 = all deleted (unknown KEY: nothing to do), "
@@ -218,13 +225,17 @@ def main(argv=None):
                                    "rewritten (atomic, other keys + file mode kept), then the bot restarts like "
                                    "`claude-tg restart` (inside a bot run: deferred until idle). add without ID takes "
                                    "the newest `owner added the bot to chat <id>` from the bot's logs and checks: "
-                                   "forum supergroup, bot admin with Manage Topics. Refused in group mode.")
+                                   "forum supergroup, bot admin with Manage Topics (--pending: skipped, for a group the bot "
+                                   "is not in yet). Refused in group mode.")
     gs = s.add_subparsers(dest="action", required=True)
     gs.add_parser("list", help="TSV: name, id, title, forum on/off, bot admin rights")
     g = gs.add_parser("add", help="add (or confirm) an owner group; idempotent")
     g.add_argument("name", help="the --chat NAME used by spawn / send / notify")
     g.add_argument("id", nargs="?", help="supergroup id -100…; default: newest group the owner added the bot to")
     g.add_argument("--no-restart", action="store_true", help="write the config only")
+    g.add_argument("--pending", action="store_true",
+                   help="the bot is not in the group yet (someone else adds it): needs ID, skips the getChat check, "
+                        "so the bot stays when added; `group list` verifies forum/admin later")
     g = gs.add_parser("remove", help="drop an owner group from the config")
     g.add_argument("name")
     g.add_argument("--no-restart", action="store_true", help="write the config only")
@@ -290,7 +301,7 @@ def main(argv=None):
         if a.cmd == "notify-delete":
             from . import notify
             return notify.delete_main(cfg, a)
-        if a.cmd in ("spawn", "send", "alive", "topic-icon"):
+        if a.cmd in ("spawn", "send", "alive", "topic-icon", "topic-delete"):
             from . import inbox
             return inbox.main(cfg, a)
         if a.cmd == "group":

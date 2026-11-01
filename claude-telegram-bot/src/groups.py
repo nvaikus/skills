@@ -129,8 +129,12 @@ def list_groups(cfg) -> int:
     return 0
 
 
-def add(cfg, name: str, chat_id=None, restart=True) -> int:
+def add(cfg, name: str, chat_id=None, restart=True, pending=False) -> int:
+    """pending: the bot is not in the group yet (someone other than the owner adds it): write it without getChat, so
+    membership() keeps the bot when it is added; `claude-tg group list` checks forum/admin afterwards."""
     _private_only(cfg)
+    if pending and chat_id is None:
+        raise GroupError("--pending needs the id: the bot is not in the group, so there is nothing in its logs")
     if not name or name.lstrip("-").isdigit() or name != name.strip():
         raise GroupError(f"bad name {name!r}: use a short word (it is the --chat NAME)")
     groups = {str(k): v for k, v in (raw_config().get("owner_groups") or {}).items()}
@@ -155,6 +159,15 @@ def add(cfg, name: str, chat_id=None, restart=True) -> int:
     other = [n for n, c in known.items() if c == chat_id and n != name]
     if other:
         raise GroupError(f"chat {chat_id} is already owner group {other[0]!r}")
+    if pending:
+        if known.get(name) == chat_id:
+            print(f"{name}\t{chat_id}\t\tunchanged")
+            return 0
+        groups[name] = chat_id
+        write_groups(groups)
+        print(f"{name}\t{chat_id}\t\tadded (pending: add the bot to the group as admin with Manage Topics, "
+              "then `claude-tg group list` checks it)")
+        return _apply(cfg, restart)
     bot, me = _bot(cfg)
     info = inspect(bot, me, chat_id)
     bad = problems(info)
@@ -185,7 +198,7 @@ def main(cfg, a) -> int:
         if a.action == "list":
             return list_groups(cfg)
         if a.action == "add":
-            return add(cfg, a.name, a.id, not a.no_restart)
+            return add(cfg, a.name, a.id, not a.no_restart, getattr(a, "pending", False))
         return remove(cfg, a.name, not a.no_restart)
     except GroupError as e:
         print(f"claude-tg group: {e}", file=sys.stderr)

@@ -60,7 +60,7 @@ def post(bot, chat, thread, prompt, silent=False, show=None, cfg=None, mention=N
     `{who}` of the posted line (notify.with_mentions)."""
     text = (show or prompt).strip()
     text = text if len(text) <= POSTED else text[:POSTED] + "…"
-    text, mode = with_mentions(bot, cfg or {}, text, "plain", mention)
+    text, mode = with_mentions(bot, cfg or {}, text, "plain", mention, chat)
     m = bot.call("sendMessage", chat_id=chat, message_thread_id=thread, text=text,
                  parse_mode="HTML" if mode == "html" else None,
                  disable_notification=silent or None, link_preview_options={"is_disabled": True})
@@ -260,7 +260,39 @@ def topic_icon(bot, cfg, thread, arg, chat=None) -> dict:
     except TgError as e:
         if "NOT_MODIFIED" not in (e.description or "").upper():
             raise
+        if not cid:  # Telegram: an icon set in createForumTopic can't be cleared directly -> set any, then clear
+            try:
+                bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=icon_id(bot, "❗"))
+                bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id="")
+            except TgError as e2:
+                if "NOT_MODIFIED" not in (e2.description or "").upper():
+                    raise
     return {"thread": thread, "icon": cid or None}
+
+
+TOPIC_GONE = re.compile(r"thread not found|topic not found|TOPIC_DELETED|TOPIC_ID_INVALID", re.I)
+
+
+def topic_delete(bot, cfg, thread, chat=None, proc=Path("/proc")) -> dict:
+    """Delete a forum topic with all its messages (bot needs can_delete_messages in a group). Refused: General, a
+    topic with a live / queued claude run. Already gone = ok. A topic this bot knows is forgotten by the service
+    (inbox op `forget`): scripts never write state.json."""
+    chat = chat if chat is not None else owner_chat(cfg)
+    if thread <= 1:
+        raise NotifyError("General can't be deleted")
+    a = alive(thread, proc, chat=chat, cfg=cfg)
+    if a["live"]:
+        raise NotifyError(f"topic {thread}: a claude run is live or queued there (stop it first)")
+    gone = False
+    try:
+        bot.call("deleteForumTopic", chat_id=chat, message_thread_id=thread)
+    except TgError as e:
+        if not TOPIC_GONE.search(e.description or ""):
+            raise
+        gone = True
+    if a["known"]:
+        enqueue({"op": "forget", "chat": chat, "thread": thread})
+    return {"thread": thread, "deleted": not gone, "gone": gone}
 
 
 def _text(a) -> str:
@@ -288,6 +320,8 @@ def main(cfg: dict, a) -> int:
                       getattr(a, "mention", None), chat, getattr(a, "start_icon", None), settings)
         elif a.cmd == "send":
             r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
+        elif a.cmd == "topic-delete":
+            r = topic_delete(bot, cfg, thread_of(ref), chat)
         else:
             r = topic_icon(bot, cfg, thread_of(ref), a.icon, chat)
     except (NotifyError, OSError) as e:
@@ -301,7 +335,11 @@ def main(cfg: dict, a) -> int:
 
 
 def apply(bridge, item: dict):
-    """Bot side: one inbox file -> topic settings + an owner message of that topic."""
+    """Bot side: one inbox file -> topic settings + an owner message of that topic (op `forget`: drop the topic)."""
+    if item.get("op") == "forget":
+        thread, chat = int(item["thread"]), int(item["chat"])
+        bridge.forget(bridge.key(chat, thread), "topic-delete")
+        return thread
     if item.get("op") != "prompt":
         raise ValueError(f"unknown op {item.get('op')!r}")
     thread, chat, msg = int(item["thread"]), int(item["chat"]), item["msg"]
