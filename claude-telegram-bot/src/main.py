@@ -24,6 +24,7 @@ examples:
   claude-tg send --thread 123 "next step"   # prompt into a topic as if the owner wrote it (resumes / joins a run)
   claude-tg alive --thread 123              # exit 0 = a claude run is live or queued there, 1 = idle
   claude-tg topic-icon --thread 123 ❗       # emoji | off | base (icon from /icon or spawn --icon)
+  claude-tg topic-settings --all-matching no-send off   # clear a spawn --settings file on matching topics
   claude-tg topic-delete --thread LINK      # delete a topic + its messages (not General, not a live run)
   claude-tg group add team                 # connect the owner group the bot was just added to (never edit the config)
   claude-tg spawn --chat team --title "Fix X" "do X"   # same in an owner group (config owner_groups name or id)
@@ -206,6 +207,16 @@ def main(argv=None):
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
                                 "spawn --icon; none = off)")
+    s = sub.add_parser("topic-settings", help="set or clear a topic's --settings file (future runs)",
+                       description="The bot keeps spawn --settings per topic for every later run; this changes it via "
+                                   "the service (scripts never write state.json). PATH: absolute JSON object; off = "
+                                   "clear. --all-matching SUBSTR off clears it on every topic whose settings path "
+                                   "contains SUBSTR. A live run keeps its settings. Prints JSON (state before apply).")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--thread", metavar="ID|LINK", help=THREAD)
+    g.add_argument("--all-matching", metavar="SUBSTR", help="every topic (all chats) whose settings path contains SUBSTR")
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
+    s.add_argument("value", metavar="PATH|off")
     s = sub.add_parser("topic-delete", help="delete a forum topic with all its messages",
                        description="deleteForumTopic (in a group the bot needs can_delete_messages). Refused (exit 2): "
                                    "General, a topic with a live or queued claude run. Already gone = ok. A topic "
@@ -301,7 +312,7 @@ def main(argv=None):
         if a.cmd == "notify-delete":
             from . import notify
             return notify.delete_main(cfg, a)
-        if a.cmd in ("spawn", "send", "alive", "topic-icon", "topic-delete"):
+        if a.cmd in ("spawn", "send", "alive", "topic-icon", "topic-settings", "topic-delete"):
             from . import inbox
             return inbox.main(cfg, a)
         if a.cmd == "group":

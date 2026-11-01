@@ -2006,6 +2006,38 @@ class Inbox(unittest.TestCase):
             self.assertEqual(self.ib.pending_files(), [])
             self.assertNotIn("50", json.loads((Path(d) / "state.json").read_text()).get("topics", {}))
 
+    def test_topic_settings_set_clear_and_clear_all_matching_via_service(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            sf, other = Path(d) / "no-send.json", Path(d) / "keep.json"
+            sf.write_text("{}")
+            other.write_text("{}")
+            b = TopicCommands.bridge(self, d)
+            b.store.update(50, cwd=d, settings=str(sf))
+            b.store.update(51, cwd=d, settings=str(sf))
+            b.store.update("-1009:7", cwd=d, settings=str(sf))
+            b.store.update(52, cwd=d, settings=str(other))
+            b.store.update(53, cwd=d)
+            cfg = self.cfg()
+            with self.assertRaises(self.ib.NotifyError):
+                self.ib.topic_settings(cfg, "off", 99)  # unknown topic
+            with self.assertRaises(self.ib.NotifyError):
+                self.ib.topic_settings(cfg, "rel.json", 53)
+            with self.assertRaises(self.ib.NotifyError):
+                self.ib.topic_settings(cfg, str(other), match="no-send")  # all-matching only clears
+            r = self.ib.topic_settings(cfg, "off", 50)
+            self.assertEqual((r["key"], r["settings"], r["was"]), ("50", None, str(sf)))
+            self.ib.topic_settings(cfg, str(other), 53)
+            b.drain_inbox()
+            self.assertNotIn("settings", b.store.topic(50))
+            self.assertEqual(b.store.topic(53)["settings"], str(other))
+            r = self.ib.topic_settings(cfg, "off", match="no-send")
+            self.assertEqual(r["topics"], ["-1009:7", "51"])
+            b.drain_inbox()
+            self.assertEqual(self.ib.pending_files(), [])
+            topics = json.loads((Path(d) / "state.json").read_text())["topics"]
+            self.assertEqual({k: t.get("settings") for k, t in topics.items()},
+                             {"50": None, "51": None, "-1009:7": None, "52": str(other), "53": str(other)})
+
     def test_spawn_settings_validated_stored_and_passed_on_every_run_fail_closed(self):
         """--settings PATH: absolute + JSON object at spawn; every run (resumes too) gets --settings; the file gone
         at run time -> no claude process, the topic is told."""

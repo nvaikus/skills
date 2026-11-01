@@ -689,7 +689,7 @@ class Bridge:
         for path, item in inbox.pending_files():
             try:
                 thread = inbox.apply(self, item)
-                if item.get("op") != "forget":  # forget logs itself
+                if item.get("op") == "prompt":  # forget / settings log themselves
                     log.info("inbox: prompt %s queued for topic %s", item.get("msg", {}).get("message_id"), thread)
             except Exception:
                 log.exception("inbox: %s failed", path.name)

@@ -1,4 +1,4 @@
-"""Scripts -> running bot: `claude-tg spawn | send | alive | topic-icon`.
+"""Scripts -> running bot: `claude-tg spawn | send | alive | topic-icon | topic-settings`.
 
 The bot owns state.json, so a script never writes it. A prompt for a topic is posted into the topic as a bot
 message (the owner sees what was asked, or a short `--show` line standing in for it), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
@@ -12,6 +12,7 @@ Liveness (`alive`): a claude process whose env carries CLAUDE_TG_RUN_TOPIC=<thre
 Target chat: the home chat, or an owner group (config owner_groups) given by `--chat NAME|ID` or implied by a
 `t.me/c/<chat>/<thread>` link. Topics are keyed by config.topic_key (thread ids collide across chats)."""
 import json
+import logging
 import os
 import re
 import sys
@@ -23,6 +24,7 @@ from . import config
 from .botapi import Skipped, TgError
 from .notify import NotifyError, bot_username, cli_bot, icon_id, owner_chat, with_mentions
 
+log = logging.getLogger("claude-tg")
 POSTED = 3900  # visible copy of a prompt; the full text travels in the inbox file
 
 
@@ -295,6 +297,36 @@ def topic_delete(bot, cfg, thread, chat=None, proc=Path("/proc")) -> dict:
     return {"thread": thread, "deleted": not gone, "gone": gone}
 
 
+def _state_topics() -> dict:
+    try:
+        return json.loads((config.STATE_DIR / "state.json").read_text()).get("topics") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def topic_settings(cfg, value, thread=None, chat=None, match=None) -> dict:
+    """Set (absolute JSON-object path) or clear (`off`) a topic's `--settings` file for its future runs, or clear it
+    on every topic whose settings path contains `match`. Applied by the service (inbox op `settings`); a live run
+    keeps what it started with. Prints what state.json shows now (the service applies it within a second)."""
+    off = (value or "").strip().lower() in ("off", "none", "-")
+    path = None if off else read_settings(value)
+    topics = _state_topics()
+    if match is not None:
+        if not off:
+            raise NotifyError("--all-matching only clears: use off")
+        if not match.strip():
+            raise NotifyError("--all-matching needs a non-empty SUBSTR")
+        keys = sorted(k for k, t in topics.items() if match in str((t or {}).get("settings") or ""))
+        enqueue({"op": "settings", "match": match, "settings": None})
+        return {"match": match, "settings": None, "topics": keys}
+    chat = chat if chat is not None else owner_chat(cfg)
+    key = config.topic_key(cfg, chat, thread)
+    if key not in topics:
+        raise NotifyError(f"topic {key}: unknown to the bot (state.json)")
+    enqueue({"op": "settings", "chat": chat, "thread": thread, "settings": path})
+    return {"thread": thread, "key": key, "settings": path, "was": topics[key].get("settings")}
+
+
 def _text(a) -> str:
     text = " ".join(a.prompt) if a.prompt else sys.stdin.read()
     if not text.strip():
@@ -312,6 +344,13 @@ def main(cfg: dict, a) -> int:
             r = alive(thread_of(ref), chat=chat, cfg=cfg)
             print(json.dumps(r))
             return 0 if r["live"] else 1
+        if a.cmd == "topic-settings":
+            if getattr(a, "all_matching", None) is not None:
+                r = topic_settings(cfg, a.value, match=a.all_matching)
+            else:
+                r = topic_settings(cfg, a.value, thread_of(ref), target_chat(cfg, chat_arg, ref))
+            print(json.dumps(r, ensure_ascii=False))
+            return 0
         chat = target_chat(cfg, chat_arg, ref)
         bot = cli_bot(cfg)
         if a.cmd == "spawn":
@@ -340,6 +379,18 @@ def apply(bridge, item: dict):
         thread, chat = int(item["thread"]), int(item["chat"])
         bridge.forget(bridge.key(chat, thread), "topic-delete")
         return thread
+    if item.get("op") == "settings":
+        if item.get("match"):
+            keys = [k for k in bridge.store.topic_keys() if item["match"] in str(bridge.store.topic(k).get("settings") or "")]
+        else:
+            keys = [bridge.key(int(item["chat"]), int(item["thread"]))]
+        for k in keys:
+            if item.get("settings"):
+                bridge.store.update(k, settings=item["settings"])
+            else:
+                bridge.store.unset(k, "settings")
+        log.info("inbox: settings %s on topic(s) %s", item.get("settings") or "cleared", ",".join(keys) or "none")
+        return None
     if item.get("op") != "prompt":
         raise ValueError(f"unknown op {item.get('op')!r}")
     thread, chat, msg = int(item["thread"]), int(item["chat"]), item["msg"]

@@ -52,6 +52,17 @@ class Store:
             self._save()
             return dict(t)
 
+    def unset(self, key, field):
+        """Remove one field of a known topic (unknown topic: nothing)."""
+        with self._lock:
+            t = self.data["topics"].get(str(key))
+            if t is not None and t.pop(field, None) is not None:
+                self._save()
+
+    def topic_keys(self) -> list:
+        with self._lock:
+            return list(self.data["topics"])
+
     def drop(self, key):
         with self._lock:
             self._gone.add(str(key))
