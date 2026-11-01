@@ -68,13 +68,16 @@ def row(e, **extra):
     return r
 
 
-def link(e, msg_id):
+def link(e, msg_id, topic=None):
+    """Forum-topic messages need the topic segment (t.me/<chat>/<topic>/<msg>); without it the app opens
+    only the group. topic=None: General topic or not a forum."""
     if e is None:
         return None
+    path = f"{topic}/{msg_id}" if topic else f"{msg_id}"
     if username(e):
-        return f"https://t.me/{username(e)}/{msg_id}"
+        return f"https://t.me/{username(e)}/{path}"
     if type(e).__name__ == "Channel":
-        return f"https://t.me/c/{e.id}/{msg_id}"
+        return f"https://t.me/c/{e.id}/{path}"
     return None
 
 

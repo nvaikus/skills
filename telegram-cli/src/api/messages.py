@@ -33,8 +33,8 @@ def row(m, chat, sender, text_limit=None):
             "sender_username": peers.username(sender) if sender is not None else None,
             "text": text[:text_limit] + "…" if cut else text, "truncated": cut,
             "media": k, "file": media.file_info(m)[0] if k in media.KINDS else None,
-            "link": peers.link(chat, m.id), "out": bool(getattr(m, "out", False)),
-            "reply_to_msg_id": reply_id(m), "reply_to_me": None,
+            "link": peers.link(chat, m.id, topic_id(m)), "out": bool(getattr(m, "out", False)),
+            "reply_to_msg_id": reply_id(m), "topic_id": topic_id(m), "reply_to_me": None,
             "mentions_me": bool(getattr(m, "mentioned", False)), "my_reaction": my_reaction(m)}
 
 
@@ -57,6 +57,14 @@ def my_reaction(m):
     labels = [lab for _, lab in mine] or [_reaction_label(p.reaction) for p in
                                           getattr(rs, "recent_reactions", None) or [] if getattr(p, "my", False)]
     return " ".join(labels) or None
+
+
+def topic_id(m):
+    """Forum topic id (= id of the topic's root service message); None outside topics and in General."""
+    r = getattr(m, "reply_to", None)
+    if not getattr(r, "forum_topic", False) or getattr(r, "reply_to_peer_id", None) is not None:
+        return None
+    return getattr(r, "reply_to_top_id", None) or getattr(r, "reply_to_msg_id", None)
 
 
 def reply_id(m):
@@ -162,7 +170,7 @@ def search_public(client, query, limit=20, text_limit=None):
 def _receipt(chat, m, schedule=None):
     """schedule set: date = the scheduled time; no link (a scheduled message has no public id yet)."""
     return {"id": m.id, "chat_id": peers.peer_id(chat), "chat": peers.name(chat), "date": iso(schedule or m.date),
-            "link": None if schedule else peers.link(chat, m.id)}
+            "link": None if schedule else peers.link(chat, m.id, topic_id(m))}
 
 
 def send(client, chat, text, markdown=False, reply_to=None, schedule=None):

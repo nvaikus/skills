@@ -305,6 +305,8 @@ class Commands(unittest.TestCase):
         self.assertEqual((rows[4]["out"], rows[4]["reply_to_me"]), (True, False))
         self.assertTrue(rows[3]["reply_to_me"])  # target fetched
         self.assertEqual((rows[2]["reply_to_msg_id"], rows[2]["reply_to_me"]), (None, False))  # bare topic msg
+        self.assertEqual((rows[2]["topic_id"], rows[2]["link"]), (99, "https://t.me/c/500/99/2"))
+        self.assertEqual((rows[5]["topic_id"], rows[5]["link"]), (None, "https://t.me/c/500/5"))
         _, out, _, _ = cli("history", "-100500", "-n", "4", client=c)
         self.assertEqual(out.splitlines()[0], "date\tchat_id\tchat\tmsg_id\tsender\ttext")
 
@@ -360,6 +362,24 @@ class Commands(unittest.TestCase):
         code, _, err, _ = cli("search", "x", "--from", "@ivan")
         self.assertEqual(code, 2)
         self.assertIn("--from needs --chat", err)
+
+    def test_forum_topic_links(self):
+        from src.api import messages
+        forum = Channel(id=700, title="Forum", megagroup=True, username="forum")
+        topic = lambda **kw: SimpleNamespace(forum_topic=True, reply_to_peer_id=None, **kw)
+        cases = [  # (reply_to, topic_id, public link, private link)
+            (None, None, "https://t.me/forum/9", "https://t.me/c/500/9"),  # General / non-forum
+            (SimpleNamespace(reply_to_msg_id=3), None, "https://t.me/forum/9", "https://t.me/c/500/9"),  # plain reply
+            (topic(reply_to_msg_id=429, reply_to_top_id=None), 429, "https://t.me/forum/429/9",
+             "https://t.me/c/500/429/9"),  # bare topic message
+            (topic(reply_to_msg_id=8, reply_to_top_id=429), 429, "https://t.me/forum/429/9",
+             "https://t.me/c/500/429/9"),  # reply inside a topic
+        ]
+        for reply_to, tid, pub, priv in cases:
+            m = msg(9, forum, IVAN, "x", reply_to=reply_to)
+            self.assertEqual(messages.topic_id(m), tid)
+            self.assertEqual(messages.row(m, forum, IVAN)["link"], pub)
+            self.assertEqual(messages.row(m, QA, IVAN)["link"], priv)
 
     def test_search_in_chat_by_name(self):
         _, out, _, client = cli("search", "--chat", "команда qa", "--from", "@ivan", "-j")
