@@ -2660,6 +2660,27 @@ class GeneralMention(unittest.TestCase):
             self.assertEqual(len(b.general.recent(self.G)), 3)                     # first, second, the mention
             self.assertEqual(b.bot.calls, [])
 
+    def test_bare_follow_up_after_our_answer(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            b.handle(self.gen(1, "before anyone"))                                # nothing seen yet: not ours
+            b.say(self.G, bridge.GENERAL, "answer")
+            m = self.gen(2, "so what now?")                                        # right after us: like a reply
+            b.handle(m)
+            self.assertTrue(m["message"]["_mention"])
+            b.handle(self.gen(3, "and one more"))                                  # same person keeps going
+            b.handle(self.gen(4, "agreed", uid=self.B))                            # someone else: not ours
+            b.handle(self.gen(5, "ok"))                                            # after them: not ours
+            b.say(self.G, bridge.GENERAL, "answer")
+            b.handle(self.gen(6, "@dasha look", entities=[{"type": "mention", "offset": 0, "length": 6}]))
+            b.handle(self.gen(7, "ok"))                                            # after a tag of another: not ours
+            b.say(self.G, bridge.GENERAL, "answer")
+            b.handle(self.gen(8, "re", reply_to_message={"message_id": 1, "from": {"id": self.B}}))
+            b.say(self.G, bridge.GENERAL, "answer")
+            b.handle(self.gen(9, "hi", uid=333))                                   # a stranger, overheard
+            b.handle(self.gen(10, "ok"))
+            self.assertEqual([m for _, _, m in b.collected], [2, 3])
+
     def test_group_general_true_keeps_old_behaviour(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d, GroupMode.cfg(self, group_general=True))
@@ -2783,7 +2804,7 @@ class OwnerGroups(unittest.TestCase):
                                   "text": "dm", "date": 0}})                # private General: heard as before
             self.assertEqual([c for c in b.collected if c[0] == self.G], [(self.G, 55, 1)])
             self.assertEqual([m for c, _, m in b.collected if c == 1], [6])  # the private chat as before
-            b.cfg = self.cfg(group_general=True)
+            b.cfg, b.talk = self.cfg(group_general=True), {}                  # a config change = a restart
             b.handle(self.msg(7, thread=None))
             self.assertEqual(b.collected[-1], (self.G, bridge.GENERAL, 7))
 

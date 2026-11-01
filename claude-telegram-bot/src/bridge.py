@@ -461,8 +461,8 @@ class Bridge:
         return False
 
     def general_mention(self, msg: dict) -> bool:
-        """General while ignored, sender already admitted: a mention of the bot (or a reply to its message) goes
-        on - marked `_mention`, with the buffered General messages before it as `_context` - and opens a topic at
+        """General while ignored, sender already admitted: a mention of the bot (or a reply to its message, or a
+        bare follow-up right after its answer - `follows_us`) goes on - marked `_mention`, with the buffered General messages before it as `_context` - and opens a topic at
         flush. Anything else is buffered (no commands, no service messages) and dropped."""
         chat = msg["chat"]["id"]
         if msg.get("forum_topic_created") or msg.get("forum_topic_edited") or any(k in msg for k in GROUP_SERVICE):
@@ -472,8 +472,9 @@ class Bridge:
         album = msg.get("media_group_id")
         if album and album in self.mention_albums:
             return True  # the rest of a mention's album: same burst, same topic
-        if not general.mentions(msg, self.username, self.bot_id):
+        if not general.mentions(msg, self.username, self.bot_id) and not self.follows_us(chat, msg):
             self.general.add(chat, msg)
+            self.spoke(chat, GENERAL, (msg.get("from") or {}).get("id"), False)
             return self.general_ok(msg["chat"])
         msg["_mention"] = True
         msg["_context"] = general.render(self.general.recent(chat))
@@ -482,6 +483,16 @@ class Bridge:
             self.mention_albums = (self.mention_albums + [album])[-20:]
         log.info("General mention in chat %s (message %s): opening a topic", chat, msg["message_id"])
         return True
+
+    def follows_us(self, chat, msg: dict) -> bool:
+        """General while ignored: a person's bare message (no reply to someone else, no mention of anyone) right
+        after our answer there - or after their own message that already followed it - answers us, like a reply.
+        Anyone else in between (a person, a bot we heard, a tag of another) ends it; nothing seen yet: not ours."""
+        if is_bot(msg) or general.addressee(msg, self.username, self.bot_id, GENERAL) is not None:
+            return False
+        uid = (msg.get("from") or {}).get("id")
+        last = (self.talk.get(self.key(chat, GENERAL)) or [None])[-1]
+        return last is not None and (last[0] == self.bot_id or (last[0] == uid and last[1]))
 
     def membership(self, mcm: dict):
         """Added to a group that is not ours -> leave it (it would ignore everything there). Group mode: anything but
