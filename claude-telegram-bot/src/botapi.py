@@ -292,6 +292,10 @@ class Bot:
 
     def upload(self, method, field, path: Path, _timeout=120, **params):
         """multipart/form-data upload (sendDocument etc.)."""
+        return self.upload_many(method, {field: path}, _timeout, **params)
+
+    def upload_many(self, method, files: dict, _timeout=120, **params):
+        """multipart upload of several files, {field: path} (sendMediaGroup: media items name attach://field)."""
         boundary = uuid.uuid4().hex
         parts = []
         for k, v in params.items():
@@ -299,10 +303,12 @@ class Bot:
                 continue
             v = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
-        parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\n'
-            f"Content-Type: {mimetypes.guess_type(path.name)[0] or 'application/octet-stream'}\r\n\r\n".encode() + path.read_bytes() + b"\r\n"
-        )
+        for field, path in files.items():
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\n'
+                f"Content-Type: {mimetypes.guess_type(path.name)[0] or 'application/octet-stream'}\r\n\r\n".encode()
+                + path.read_bytes() + b"\r\n"
+            )
         parts.append(f"--{boundary}--\r\n".encode())
         body = b"".join(parts)
         return self._gated(method, params.get("chat_id"), False, 3,

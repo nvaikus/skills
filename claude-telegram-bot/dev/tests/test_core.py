@@ -1576,21 +1576,100 @@ class Notify(unittest.TestCase):
                 raise TgError(method, 400, self.fail[method])
             return {"message_id": len(self.uploads) + 10}
 
+        def upload_many(self, method, files, _timeout=120, **p):
+            self.uploads.append((method, sorted(files), [f.name for f in files.values()], p))
+            if method in self.fail:
+                raise TgError(method, 400, self.fail[method])
+            base = len(self.uploads) * 100
+            return [{"message_id": base + i} for i in range(len(files))]
+
+    def album_dir(self, d, names):
+        for n in names:
+            (Path(d) / n).write_bytes(b"x")
+        return [f"{d}/{n}" for n in names]
+
+    def test_album_chunks(self):
+        sizes = lambda n: [len(c) for c in self.n.album_chunks(list(range(n)))]
+        self.assertEqual([sizes(2), sizes(10), sizes(11), sizes(21)], [[2], [10], [6, 5], [7, 7, 7]])
+
+    def test_album_caption_media_then_documents(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            bot = self.UpBot()
+            fs = self.album_dir(d, ["a.jpg", "r.html", "b.png", "v.mov"])
+            r = self.n.send_files(bot, cfg, fs, "**done**", "md", silent=True, thread=9)
+            self.assertEqual([u[0] for u in bot.uploads], ["sendMediaGroup", "sendDocument"])
+            m, _, names, p = bot.uploads[0]
+            self.assertEqual(names, ["a.jpg", "b.png", "v.mov"])
+            self.assertEqual((p["chat_id"], p["message_thread_id"], p["disable_notification"]), (7, 9, True))
+            self.assertEqual([(x["type"], x["media"]) for x in p["media"]],
+                             [("photo", "attach://f0"), ("photo", "attach://f1"), ("video", "attach://f2")])
+            self.assertEqual((p["media"][0]["caption"], p["media"][0]["parse_mode"]), ("<b>done</b>", "HTML"))
+            self.assertNotIn("caption", p["media"][1])
+            self.assertTrue(p["media"][2]["supports_streaming"])
+            self.assertEqual(bot.uploads[1][2], "r.html")
+            self.assertEqual(bot.calls, [])
+            self.assertEqual(r["message_ids"], [100, 101, 102, 12])
+
+    def test_album_with_buttons_or_long_text_sends_text_after(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            fs = self.album_dir(d, [f"p{i}.jpg" for i in range(12)])
+            bot = self.UpBot()
+            r = self.n.send_files(bot, cfg, fs, "look", buttons=["A=https://a | B=https://b"], topic=None)
+            self.assertEqual([len(u[2]) for u in bot.uploads], [6, 6])
+            self.assertFalse(any("caption" in x for u in bot.uploads for x in u[3]["media"]))
+            (m, p), = bot.calls
+            self.assertEqual((m, p["text"], len(p["reply_markup"]["inline_keyboard"][0])), ("sendMessage", "look", 2))
+            self.assertEqual(r["message_ids"], list(range(100, 106)) + list(range(200, 206)) + [1])
+            bot = self.UpBot()
+            self.n.send_files(bot, cfg, fs[:2], "y" * 2000, topic=None)
+            self.assertEqual([u[0] for u in bot.uploads], ["sendMediaGroup"])
+            self.assertNotIn("caption", bot.uploads[0][3]["media"][0])
+            self.assertEqual([c[1]["text"] for c in bot.calls], ["y" * 2000])  # after the album
+            bot = self.UpBot()
+            self.n.send_files(bot, cfg, fs[:2], buttons=["A=https://a"], topic=None)
+            self.assertIn("reply_markup", bot.calls[0][1])  # no text: a marker message carries the keyboard
+
+    def test_album_refused_falls_back_one_by_one(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            fs = self.album_dir(d, ["a.jpg", "b.webp"])
+            bot = self.UpBot(fail={"sendMediaGroup": "Bad Request: MEDIA_INVALID"})
+            with mock.patch("sys.stderr"):
+                r = self.n.send_files(bot, cfg, fs, "hi", topic=None)
+            self.assertEqual([u[0] for u in bot.uploads], ["sendMediaGroup", "sendPhoto", "sendPhoto"])
+            self.assertEqual((bot.uploads[1][3]["caption"], "caption" in bot.uploads[2][3]), ("hi", False))
+            self.assertEqual(r["message_ids"], [12, 13])
+
+    def test_one_photo_plus_documents_stays_one_by_one(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            fs = self.album_dir(d, ["a.jpg", "r.pdf"])
+            bot = self.UpBot()
+            self.n.send_files(bot, cfg, fs, "hi", buttons=["A=https://a"], topic=None)
+            self.assertEqual([u[0] for u in bot.uploads], ["sendPhoto", "sendDocument"])
+            self.assertEqual(("caption" in bot.uploads[0][3], "reply_markup" in bot.uploads[1][3]), (True, True))
+
     def test_files_by_type_caption_and_fallback(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             for n in ("v.MP4", "p.png", "r.html"):
                 (Path(d) / n).write_bytes(b"x")
             cfg = dict(config.DEFAULTS, owner_id=7)
-            bot = self.UpBot(fail={"sendPhoto": "Bad Request: IMAGE_PROCESS_FAILED"})
-            r = self.n.send_files(bot, cfg, [f"{d}/v.MP4", f"{d}/p.png", f"{d}/r.html"], "**done**", "md", thread=9)
-            self.assertEqual([u[:2] for u in bot.uploads], [("sendVideo", "video"), ("sendPhoto", "photo"),
-                                                            ("sendDocument", "document"), ("sendDocument", "document")])
+            bot = self.UpBot()
+            r = self.n.send_files(bot, cfg, [f"{d}/v.MP4", f"{d}/r.html"], "**done**", "md", thread=9)
+            self.assertEqual([u[:2] for u in bot.uploads], [("sendVideo", "video"), ("sendDocument", "document")])
             v = bot.uploads[0][3]
             self.assertEqual((v["supports_streaming"], v["caption"], v["parse_mode"], v["message_thread_id"]),
                              (True, "<b>done</b>", "HTML", 9))
-            self.assertNotIn("caption", bot.uploads[3][3])
+            self.assertNotIn("caption", bot.uploads[1][3])
             self.assertEqual(bot.calls, [])  # short text = caption, no message
-            self.assertEqual(r["message_ids"], [11, 13, 14])
+            self.assertEqual(r["message_ids"], [11, 12])
+            bot = self.UpBot(fail={"sendPhoto": "Bad Request: IMAGE_PROCESS_FAILED"})
+            with mock.patch("sys.stderr"):
+                r = self.n.send_files(bot, cfg, [f"{d}/p.png"], topic=None)
+            self.assertEqual([u[:2] for u in bot.uploads], [("sendPhoto", "photo"), ("sendDocument", "document")])
+            self.assertEqual(r["message_ids"], [12])
             bot = self.UpBot()
             self.n.send_files(bot, cfg, [f"{d}/r.html"], "y" * 2000, topic=None)
             self.assertEqual([c[0] for c in bot.calls], ["sendMessage"])  # long text goes before the file

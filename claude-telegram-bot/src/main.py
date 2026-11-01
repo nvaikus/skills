@@ -143,7 +143,9 @@ def main(argv=None):
                         "getChatMember (cached a day), else a text_mention; private mode: the name (repeatable)")
     s.add_argument("--file", action="append", metavar="PATH",
                    help="send a file (repeatable; <= 50 MB): mp4/mov/m4v as streaming video, jpg/png/webp as photo, "
-                        "else as document")
+                        "else as document. 2+ photos/videos = album(s) of <= 10, documents after; text = caption of "
+                        "the album when <= 1024 chars and no --button, else a message after it (that one carries "
+                        "the buttons: an album takes none)")
     s.add_argument("--button", action="append", metavar="TEXT=URL",
                    help="inline button row under the message (repeatable, one row each): TEXT=https://url, or "
                         "TEXT=cb:PREFIX:DATA = a callback button the bot answers by running config `callbacks` "

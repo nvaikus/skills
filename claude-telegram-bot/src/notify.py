@@ -12,7 +12,8 @@ An unknown --topic is a literal name (key == name), as before.
 Target order: --thread ID > --main-chat > --topic KEY > $CLAUDE_TG_RUN_TOPIC (a bot-spawned claude: its own topic)
 > "Notifications". `--chat NAME|ID` (config owner_groups) or a `t.me/c/` --thread link picks an owner group instead
 of the home chat; the run-topic default follows $CLAUDE_TG_RUN_CHAT. Files (--file): video -> sendVideo (streams inline), image -> sendPhoto, else / on error ->
-sendDocument; text becomes the caption when it fits, else a message before the files.
+sendDocument; text becomes the caption when it fits, else a message before the files. 2+ photos/videos -> albums
+(sendMediaGroup, <= 10 each, documents after); see send_files for where the text and buttons go.
 
 --replace KEY: after a successful send, the messages stored under KEY (notify.json "replace") are deleted and the
 new ids take their place - send first, so a failed send never leaves the topic empty. A refused delete (400: too
@@ -37,6 +38,7 @@ GONE = ("message thread not found", "TOPIC_")
 MAX_FILE = 50 * 1024 * 1024  # Bot API upload limit
 MAX_PHOTO = 10 * 1024 * 1024  # sendPhoto limit; bigger images go as documents
 CAPTION = 1024
+ALBUM = 10  # sendMediaGroup: 2..10 photos/videos
 VIDEO = {".mp4", ".mov", ".m4v"}
 PHOTO = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -503,43 +505,106 @@ def method_for(f: Path):
     return "sendDocument", "document", {}
 
 
+def album_chunks(items) -> list:
+    """sendMediaGroup takes 2..10 items: split as evenly as possible (11 -> 6 + 5, never a lone last item)."""
+    n = -(-len(items) // ALBUM)
+    size, extra = divmod(len(items), n)
+    out, i = [], 0
+    for k in range(n):
+        j = i + size + (k < extra)
+        out.append(items[i:j])
+        i = j
+    return out
+
+
+def _upload(bot, dest, f: Path, p: dict) -> dict:
+    """One file by type; a failed photo/video upload retries as a document."""
+    p = dict(p, chat_id=dest.chat, _timeout=120 + f.stat().st_size // (256 * 1024))
+    method, field, extra = method_for(f)
+    try:
+        return dest.do(lambda th: bot.upload(method, field, f, message_thread_id=th, **p, **extra))
+    except TgError as e:
+        if method == "sendDocument":
+            raise
+        print(f"claude-tg notify: {method} failed for {f.name} ({e.description}); sending as a document",
+              file=sys.stderr)
+        return dest.do(lambda th: bot.upload("sendDocument", "document", f, message_thread_id=th, **p))
+
+
+def _album(bot, dest, chunk, caption, silent) -> list:
+    """One sendMediaGroup (photos/videos); a 400 falls back to one upload per file."""
+    media, fs = [], {}
+    for k, f in enumerate(chunk):
+        _, field, extra = method_for(f)
+        item = dict({"type": field, "media": f"attach://f{k}"}, **extra)
+        if caption and k == 0:
+            item["caption"] = caption[0]
+            if caption[1]:
+                item["parse_mode"] = caption[1]
+        media.append(item)
+        fs[f"f{k}"] = f
+    timeout = 120 + sum(f.stat().st_size for f in chunk) // (256 * 1024)
+    try:
+        return list(dest.do(lambda th: bot.upload_many("sendMediaGroup", fs, timeout, chat_id=dest.chat,
+                                                       message_thread_id=th, disable_notification=silent or None,
+                                                       media=media)))
+    except TgError as e:
+        if e.code != 400:
+            raise
+        print(f"claude-tg notify: sendMediaGroup failed ({e.description}); sending the files one by one",
+              file=sys.stderr)
+    out = []
+    for k, f in enumerate(chunk):
+        p = {"disable_notification": silent or None}
+        if caption and k == 0:
+            p["caption"], p["parse_mode"] = caption
+        out.append(_upload(bot, dest, f, p))
+    return out
+
+
 def send_files(bot, cfg: dict, paths, text="", mode="plain", silent=False, topic=DEFAULT_TOPIC, buttons=None,
                thread=None, guard=None, chat=None) -> dict:
-    """Upload files; text = caption of the first file when it fits in one caption, else messages before them.
-    Files the leak guard rejects are replaced by a notice (listed under "blocked")."""
+    """Upload files. Files the leak guard rejects are replaced by a notice (listed under "blocked").
+    One photo/video: text = caption of the first file when it fits in one caption, else messages before them;
+    buttons on the last file. 2+ photos/videos: albums (sendMediaGroup, <= 10 each), documents one by one after;
+    text = caption of the first album item when it fits and there are no buttons, else messages after the albums
+    (an album takes no reply_markup: the last message carries the keyboard)."""
     files = check_files(paths)
     markup = keyboard(buttons)
     dest = _Dest(bot, cfg, topic, thread, chat)
-    sent, blocked = [], []
+    sent, blocked, ok = [], [], []
     parts = chunks(text.strip(), mode) if text.strip() else []
-    caption = parts[0] if len(parts) == 1 and len(parts[0][0]) <= CAPTION else None
-    if parts and not caption:
-        sent += _messages(bot, dest, parts, silent, None)
-    for i, f in enumerate(files):
+    caption = parts[0] if len(parts) == 1 and visible_len(*parts[0]) <= CAPTION else None
+    for f in files:
         why = guard and guard.file_leak(f)
         if why:
             print(f"claude-tg notify: {f} blocked, quotes protected {why}", file=sys.stderr)
             blocked.append(str(f))
             sent += _messages(bot, dest, [(ui.t(ui.lang(cfg), "leak_file"), None)], silent, None)
-            continue
-        p = {"chat_id": dest.chat, "disable_notification": silent or None,
-             "_timeout": 120 + f.stat().st_size // (256 * 1024)}
-        if caption and i == 0:
-            p["caption"], p["parse_mode"] = caption
-        if markup and i == len(files) - 1:
-            p["reply_markup"] = markup
-        method, field, extra = method_for(f)
-
-        def up(th, method=method, field=field, extra=extra):
-            return bot.upload(method, field, f, message_thread_id=th, **p, **extra)
-        try:
-            sent.append(dest.do(up))
-        except TgError as e:
-            if method == "sendDocument":
-                raise
-            print(f"claude-tg notify: {method} failed for {f.name} ({e.description}); sending as a document",
-                  file=sys.stderr)
-            sent.append(dest.do(lambda th: bot.upload("sendDocument", "document", f, message_thread_id=th, **p)))
+        else:
+            ok.append(f)
+    media = [f for f in ok if method_for(f)[0] != "sendDocument"]
+    if len(media) < 2:
+        if parts and not caption:
+            sent += _messages(bot, dest, parts, silent, None)
+        for i, f in enumerate(ok):
+            p = {"disable_notification": silent or None}
+            if caption and i == 0:
+                p["caption"], p["parse_mode"] = caption
+            if markup and i == len(ok) - 1:
+                p["reply_markup"] = markup
+            sent.append(_upload(bot, dest, f, p))
+    else:
+        cap = None if markup else caption
+        for i, c in enumerate(album_chunks(media)):
+            sent += _album(bot, dest, c, cap if i == 0 else None, silent)
+        if parts and not cap and not markup:
+            sent += _messages(bot, dest, parts, silent, None)
+        for f in ok:
+            if f not in media:
+                sent.append(_upload(bot, dest, f, {"disable_notification": silent or None}))
+        if markup:
+            sent += _messages(bot, dest, parts or [("\u2b06\ufe0f", None)], silent, markup)
     return dest.result(sent, **({"blocked": blocked} if blocked else {}))
 
 
