@@ -262,9 +262,15 @@ def topic_icon(bot, cfg, thread, arg, chat=None) -> dict:
     except TgError as e:
         if "NOT_MODIFIED" not in (e.description or "").upper():
             raise
-        if not cid:  # Telegram: an icon set in createForumTopic can't be cleared directly -> set any, then clear
+        if not cid:  # Telegram: an icon set in createForumTopic can't be cleared directly -> set another, then clear
+            for other in filter(None, (icon_id(bot, "❗"), icon_id(bot, "📈"))):  # ❗ already shown -> NOT_MODIFIED
+                try:
+                    bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=other)
+                    break
+                except TgError as e2:
+                    if "NOT_MODIFIED" not in (e2.description or "").upper():
+                        raise
             try:
-                bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id=icon_id(bot, "❗"))
                 bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, icon_custom_emoji_id="")
             except TgError as e2:
                 if "NOT_MODIFIED" not in (e2.description or "").upper():

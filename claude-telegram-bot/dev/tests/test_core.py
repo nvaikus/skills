@@ -2170,6 +2170,28 @@ class Inbox(unittest.TestCase):
             got = [p["icon_custom_emoji_id"] for m, p in bot.calls if m == "editForumTopic"]
             self.assertEqual(got, ["", "111", ""])
 
+    def test_topic_icon_off_start_icon_already_shown_uses_another(self):
+        """light-projects#37-40: the topic shows ❗ from createForumTopic, so setting ❗ is NOT_MODIFIED too and the
+        clear after it stayed a no-op: another icon goes in between."""
+        class Stuck(self.Bot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                if method == "getForumTopicIconStickers":
+                    return [{"emoji": "❗", "custom_emoji_id": "111"}, {"emoji": "📈", "custom_emoji_id": "333"}]
+                r = super().call(method, _timeout, _retries, **p)
+                if method == "editForumTopic" and self.__dict__.get("shown") == p.get("icon_custom_emoji_id", "x"):
+                    raise TgError(method, 400, "Bad Request: TOPIC_NOT_MODIFIED")
+                if method == "editForumTopic" and p.get("icon_custom_emoji_id") == "" and not self.__dict__.get("hit"):
+                    self.hit = True
+                    raise TgError(method, 400, "Bad Request: TOPIC_NOT_MODIFIED")
+                self.shown = p.get("icon_custom_emoji_id") if method == "editForumTopic" else None
+                return r
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            bot = Stuck()
+            bot.shown = "111"
+            self.ib.topic_icon(bot, self.cfg(), 50, "off")
+            got = [p["icon_custom_emoji_id"] for m, p in bot.calls if m == "editForumTopic"]
+            self.assertEqual(got, ["", "111", "333", ""])
+
     def test_topic_icon_emoji_off_base_and_thread_links(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             (Path(d) / "state.json").write_text(json.dumps({"topics": {"50": {"icon": "222"}}}))
