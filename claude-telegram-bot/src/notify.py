@@ -351,6 +351,16 @@ def address(text: str, ps: list) -> str:
         out.append(line)
     return "\n".join(out)
 
+# an answer addressed to someone: leading emoji / markdown / spaces, then @username or a text mention
+MENTION_HEAD = re.compile(r"^[^\w@\[]*(?:@\w|\[[^\]\n]+\]\(tg://user\?id=\d+\))")
+
+
+def waits_on(text: str, ps: list) -> bool:
+    """Final answer opening with a mention (after `address` turns a "Name:" header into one) = it waits on that
+    person (the addressing convention); no mention = the turn waits on nobody."""
+    return bool(MENTION_HEAD.match(address((text or "").strip(), ps)))
+
+
 def chunks(text: str, mode: str) -> list:
     """[(text, parse_mode)] within Telegram's limit. mode: plain | html | md."""
     if mode == "html":

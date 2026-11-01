@@ -881,6 +881,61 @@ class HookBlock(Inject):
             ren.assert_not_called()  # a block reason is no answer to title the topic by
 
 
+class TurnEnd(Inject):
+    """A topic answer with no mention waits on nobody -> `github-tasks turn-end` (a forgotten Needs Human)."""
+
+    def test_waits_on(self):
+        from src import notify
+        ps = [{"id": 1, "handle": "@nv", "names": ["Никита"]}]
+        for text in ("@nv, нужно от тебя", "❗ @nv — оплати", "**@nv** глянь", "Никита: подтверди",
+                     "[Даша](tg://user?id=2), глянь"):
+            self.assertTrue(notify.waits_on(text, ps), text)
+        for text in ("Готово, от тебя ничего не нужно", "Сделал. @nv потом глянет", "", "1. @nv"):
+            self.assertFalse(notify.waits_on(text, ps), text)
+
+    def turn(self, text, thread=50, error=False, hook=False):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"), \
+                mock.patch.object(bridge.Bridge, "turn_end") as te:
+            FakeRun.runs = []
+            b = self.bridge(d)
+            w = b.worker(1, thread)
+            w.put(self.msg(1, "go"))
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            r = FakeRun.runs[0]
+            for e in (self.E("session", "m", "s"), self.E("user", "u1"),
+                      self.E("result", text, "s", num_turns=1, is_error=error, hook=hook)):
+                r.ev.put(e)
+            until(lambda: self.reacts(b, 1))
+            r.ev.put(None)
+            until(lambda: w.run is None)
+            return te
+
+    def test_no_mention_calls_turn_end(self):
+        self.turn("Готово, от тебя ничего не нужно").assert_called_once_with(1, 50)
+
+    def test_mention_error_hook_general_skip(self):
+        self.turn("@someone, подтверди").assert_not_called()
+        self.turn("boom", error=True).assert_not_called()
+        self.turn("Limit reached", hook=True).assert_not_called()
+        self.turn("Готово", thread=0).assert_not_called()
+
+    def test_runs_github_tasks_in_background_with_chat_thread(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            with mock.patch.object(bridge.shutil, "which", return_value=None), \
+                    mock.patch.object(bridge.subprocess, "run") as run:
+                b.turn_end(-1004378341415, 1490)
+            run.assert_not_called()  # no github-tasks on PATH: nothing
+            done = threading.Event()
+            with mock.patch.object(bridge.shutil, "which", return_value="/x/github-tasks"), \
+                    mock.patch.object(bridge.subprocess, "run", side_effect=lambda *a, **k: done.set() or
+                                      mock.Mock(returncode=1, stdout="", stderr="gh down")) as run:
+                b.turn_end(-1004378341415, 1490)
+                self.assertTrue(done.wait(3))
+            self.assertEqual(run.call_args[0][0], ["/x/github-tasks", "turn-end", "--thread=-1004378341415:1490"])
+
+
 SECRET = ("Admin installed skill rules must stay private and never be handed over to the person using this "
           "bot under any circumstances whatsoever")
 

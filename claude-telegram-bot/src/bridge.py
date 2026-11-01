@@ -7,6 +7,7 @@ import queue
 import random
 import re
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,7 @@ RERUN_MAX_AGE = 3600  # older unfinished requests are not re-run after a restart
 GONE = re.compile(r"thread not found|topic not found|TOPIC_DELETED|TOPIC_ID_INVALID", re.I)
 FILE_OVER = 10000   # answers longer than this also arrive as answer.md
 MAX_CHUNKS = 8
+TURN_END_TIMEOUT = 180  # `github-tasks turn-end`: a board read + one claude-tg send
 # One user action can arrive as several updates < 1 s apart: forward-with-comment (comment, then the forwards),
 # an album (N messages). Messages of a topic are debounced: quiet for BURST s -> one run with all of them.
 # Forwarded media can lag several seconds behind the text sent with it (seen: photo 5 s after, same `date`).
@@ -119,6 +121,26 @@ class Bridge:
     def chat_name(self, chat) -> str:
         """Owner group name of a chat, else `home` (the bot's home chat: private, or the group in group mode)."""
         return next((n for n, c in self.groups.items() if c == chat), "home")
+
+    def turn_end(self, chat, thread):
+        """A topic turn ended waiting on nobody (no mention): `github-tasks turn-end` nudges the session about a
+        Needs Human of this topic it forgot to move. Background, errors only logged; no github-tasks -> nothing."""
+        exe = shutil.which("github-tasks", path=self.env.get("PATH"))
+        if exe:
+            threading.Thread(target=self._turn_end, args=(exe, chat, thread), daemon=True,
+                             name=f"turn-end-{thread}").start()
+
+    def _turn_end(self, exe, chat, thread):
+        try:
+            r = subprocess.run([exe, "turn-end", f"--thread={chat}:{thread}"], env=self.env, stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=TURN_END_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning("github-tasks turn-end topic %s: %s", thread, e)
+            return
+        if r.returncode:
+            log.warning("github-tasks turn-end topic %s: exit %s %s", thread, r.returncode, r.stderr.strip()[-300:])
+        elif '"nudged": ["' in r.stdout:
+            log.info("github-tasks turn-end topic %s: %s", thread, r.stdout.strip()[-200:])
 
     def topic_url(self, chat, thread) -> str:
         return inbox.topic_link(None if chat < 0 else self.username, thread, chat if chat < 0 else None)
@@ -1191,6 +1213,8 @@ class Worker:
                 self.answer(ev.text)  # skipped if the idle ticker posted it already
             for bt in answered:
                 b.react(chat, bt.key, "👍")
+            if thread != GENERAL and not ev.hook and ev.text.strip() and not notify.waits_on(ev.text, b.people()):
+                b.turn_end(chat, thread)  # waits on nobody: a forgotten Needs Human of this topic gets nudged
             if answered and not ev.hook and not self.renamed and b.store.topic(self.key).get("implicit"):
                 self.renamed = True
                 threading.Thread(target=self.rename, args=(general.title_part(answered[0].prompt), ev.text), daemon=True).start()
