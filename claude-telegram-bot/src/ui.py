@@ -32,7 +32,7 @@ S = {
         "cmd.delete": "Delete this topic and forget its session", "cmd.help": "How this bot works",
         "in_topic": "/{cmd} works inside a topic.",
         "write_in_topic": "Please write inside a topic: each topic is a separate Claude session.",
-        "general_topic": "🧵 Continuing in a new topic: <a href=\"{link}\">{title}</a>",
+        "general_handoff": "Sounds like a big task - opened a topic for it: <link>",
         "bot_loop": "🔁 {n} bot messages in a row with no human here: I stop answering bots in this topic until "
                     "someone writes.",
         "cmd.icon": "Topic icon: /icon <emoji>, /icon off",
@@ -100,7 +100,7 @@ S = {
         "cmd.delete": "Удалить тему и забыть сессию", "cmd.help": "Как работает бот",
         "in_topic": "/{cmd} работает внутри темы.",
         "write_in_topic": "Пишите, пожалуйста, внутри темы: каждая тема - отдельная сессия Claude.",
-        "general_topic": "🧵 Продолжу в новой теме: <a href=\"{link}\">{title}</a>",
+        "general_handoff": "Звучит как большая задача — завёл под неё топик: <link>",
         "bot_loop": "🔁 Уже {n} сообщений от ботов подряд без людей: перестаю отвечать ботам в этой теме, пока "
                     "кто-нибудь не напишет.",
         "cmd.icon": "Иконка темы: /icon <эмодзи>, /icon off",

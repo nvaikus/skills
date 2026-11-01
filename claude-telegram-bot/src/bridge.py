@@ -114,7 +114,14 @@ class Bridge:
     def hushed(self, key) -> bool:
         """Quiet topic (/quiet, `spawn/send --quiet`): text between tool calls goes into the status message
         instead of separate messages, so only the final answer stays in the topic."""
-        return bool(self.store.topic(key).get("quiet"))
+        return bool(self.store.topic(key).get("quiet")) or str(key).rpartition(":")[2] == str(GENERAL)
+
+    def chat_name(self, chat) -> str:
+        """Owner group name of a chat, else `home` (the bot's home chat: private, or the group in group mode)."""
+        return next((n for n, c in self.groups.items() if c == chat), "home")
+
+    def topic_url(self, chat, thread) -> str:
+        return inbox.topic_link(None if chat < 0 else self.username, thread, chat if chat < 0 else None)
 
     def fail(self, chat, thread, why, detail=""):
         """Friendly one-liner for the owner; the detail only in verbose mode (and always in logs)."""
@@ -511,12 +518,11 @@ class Bridge:
             msgs = self.bursts.pop(k, None)
         if not msgs:
             return
-        if thread == GENERAL:  # a burst sent in All messages -> one new topic for all of it
+        if thread == GENERAL and not msgs[0].get("_mention"):  # a burst sent in All messages -> one new topic
             thread = self.new_topic(chat, msgs[0])
             if thread is None:
                 return
-            if msgs[0].get("_mention"):  # General mention: answer it there with the topic link
-                self.general_link(chat, thread, msgs[0])
+        # a group General mention stays in General: a short-lived session answers it there (notify.general_prompt)
         self.worker(chat, thread).put(msgs)
 
     def note_topic(self, chat, thread, msg):
@@ -548,17 +554,6 @@ class Bridge:
         self.store.update(self.key(chat, thread), title=seed, implicit=True)
         log.info("topic %s auto-created from All messages", self.key(chat, thread))
         return thread
-
-    def general_link(self, chat, thread, msg):
-        """Reply to the mention in General: the new topic's title, linked."""
-        title = self.store.topic(self.key(chat, thread)).get("title") or ""
-        link = inbox.topic_link(None, thread, chat)
-        try:
-            self.bot.call("sendMessage", chat_id=chat, parse_mode="HTML", link_preview_options={"is_disabled": True},
-                          text=self.s("general_topic", link=link, title=html.escape(title)),
-                          reply_parameters={"message_id": msg["message_id"], "allow_sending_without_reply": True})
-        except TgError as e:
-            log.warning("General link reply: %s", e)
 
     def worker(self, chat, thread):
         k = self.key(chat, thread)
@@ -662,12 +657,12 @@ class Bridge:
             if time.time() - msgs[-1].get("date", 0) > RERUN_MAX_AGE:
                 self.store.unpend(key)
                 self.react(chat, mid, "💔")
-                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread, reply_parameters={"message_id": mid},
+                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, reply_parameters={"message_id": mid},
                            text=self.s("restart_resend"))
                 continue
             if e.get("started"):
                 msgs[-1]["_restarted"] = True
-                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread, reply_parameters={"message_id": mid},
+                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, reply_parameters={"message_id": mid},
                            text=self.s("restart_rerun"))
             log.info("restoring unfinished request %s in topic %s (started: %s)", key, thread, bool(e.get("started")))
             self.worker(chat, thread).put(msgs)
@@ -778,6 +773,12 @@ def sender(msg):
         return (f"[From bot: {who} - another AI bot, not a person. Your answer goes to it as a reply to its "
                 f"message; address it as {at}.]")
     return f"[From: {who}]"
+
+
+def mention_target(msgs):
+    """Id of the last General mention of a batch: the General session's answer replies to it."""
+    ids = [m["message_id"] for m in msgs if m.get("_mention")]
+    return ids[-1] if ids else None
 
 
 def bot_target(msgs, thread):
@@ -910,7 +911,7 @@ class Worker:
                 notes.append(sk.note())
                 b.say(self.chat, self.thread, b.skip_text(sk))
             if audio:
-                b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread, action="typing")
+                b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread or None, action="typing")
                 text = media.transcribe(audio, b.cfg, b.env)
                 short = text if len(text) <= 300 else text[:300] + "…"
                 b.say(self.chat, self.thread, f"🎙 {short}")
@@ -1061,7 +1062,14 @@ class Worker:
                 b.store.unpend(self.pk(bt.key))
             b.fail(chat, thread, b.s("why.settings", path=settings), f"settings file missing or not JSON: {settings}")
             return [], None
-        system = "\n\n".join(x for x in (t.get("system"), notify.people_prompt(b.people(), b.group is not None)) if x)
+        if thread == GENERAL:  # General: a fresh, short-lived session per mention (big work moves to a topic)
+            b.store.update(self.key, session_id=None)
+            t = b.store.topic(self.key)
+            role = notify.general_prompt(None if config.home(b.cfg, chat) else b.chat_name(chat), b.s("general_handoff"))
+        else:
+            role = notify.board_prompt(b.chat_name(chat), b.topic_url(chat, thread))
+        system = "\n\n".join(x for x in (t.get("system"), notify.people_prompt(b.people(), b.group is not None),
+                                         role) if x)
         argv = runner.build_argv(b.claude, t["session_id"], b.cfg["claude_args"], b.cfg.get("permission_mode"),
                                  system or None, settings)
         run = runner.Run(argv, cwd, dict(b.env, **{config.RUN_TOPIC_ENV: str(thread), config.RUN_CHAT_ENV: str(chat)}))
@@ -1101,7 +1109,8 @@ class Worker:
                         bt = self.sent.pop(ev.text, None)
                         if bt:
                             self.seen.append(bt)
-                            self.reply_to = bot_target(bt.msgs, self.thread) or self.reply_to
+                            self.reply_to = (mention_target(bt.msgs) if thread == GENERAL
+                                             else bot_target(bt.msgs, self.thread)) or self.reply_to
                         self.idle = False
                 elif ev.kind == "bg":
                     with self.lock:
@@ -1243,7 +1252,7 @@ class Worker:
         if ev.name in self.denials:
             return
         self.denials.add(ev.name)
-        self.b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread,
+        self.b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread or None,
                      text=self.b.s("denied", tool=ev.name))
         if self.st:
             self.st.below()
@@ -1280,7 +1289,7 @@ class Worker:
         if stream_id:
             b.quiet("editMessageText", chat_id=self.chat, message_id=stream_id, text=tail)
             return stream_id
-        sent = b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread, text=tail)
+        sent = b.quiet("sendMessage", chat_id=self.chat, message_thread_id=self.thread or None, text=tail)
         return sent and sent["message_id"]
 
     DRAFT_TTL = 25  # a sendMessageDraft preview stays up ~30 s
@@ -1296,7 +1305,7 @@ class Worker:
         first = True
         while not done.is_set():
             if first or not self.shows_progress():
-                self.b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread, action="typing")
+                self.b.quiet("sendChatAction", chat_id=self.chat, message_thread_id=self.thread or None, action="typing")
             first = False
             done.wait(4)
 
@@ -1422,7 +1431,7 @@ class Status:
                 if self.id:
                     b.quiet("editMessageText", chat_id=chat, message_id=self.id, text=body, reply_markup=kb)
                 else:
-                    sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread, text=body,
+                    sent = b.quiet("sendMessage", chat_id=chat, message_thread_id=self.w.thread or None, text=body,
                                    reply_markup=kb)
                     self.id = sent and sent["message_id"]
             self.shown, self.shown_phase, self.shown_memo, self.at = raw, phase, memo, now

@@ -1290,6 +1290,16 @@ class People(unittest.TestCase):
         self.assertIn("starts with @nik and the ask", notify.people_prompt(ps[:1], False))
         self.assertEqual(notify.people_prompt([], True), "")
 
+    def test_board_and_general_prompts(self):
+        from src import notify
+        b = notify.board_prompt("family", "https://t.me/c/1/2/3")
+        self.assertIn("--area <`github-tasks areas --chat family`", b)
+        self.assertIn("--status \"Needs Human\" --who <name> --session https://t.me/c/1/2/3", b)
+        self.assertIn("<this topic's link>", notify.board_prompt("home", ""))
+        g = notify.general_prompt(None, "X: <link>")
+        self.assertIn("claude-tg spawn --title", g)                          # home chat: no --chat
+        self.assertIn("X: <link>", g)
+
     def test_address_rewrites_name_headers_only(self):
         from src import notify
         ps = [{"id": 1, "handle": "@nik", "names": ["Никита"]}, {"id": 2, "handle": "@sa", "names": ["Саша", "Sasha"]}]
@@ -1883,7 +1893,9 @@ class Inbox(unittest.TestCase):
             run = FakeRun.runs[0]
             self.assertEqual(run.lines, ["сделай X"])
             self.assertIn("--append-system-prompt", run.argv)
-            self.assertEqual(run.argv[run.argv.index("--append-system-prompt") + 1], "manager role")
+            system = run.argv[run.argv.index("--append-system-prompt") + 1]
+            self.assertTrue(system.startswith("manager role\n\n"), system)
+            self.assertIn("github-tasks new", system)                              # the board rule rides along
             self.assertIn("77", b.store.pending())  # request key = the posted message
             run.stop()
             until(lambda: b.workers["400"].run is None)
@@ -2429,15 +2441,9 @@ class GeneralMention(unittest.TestCase):
             self.assertEqual(b.collected, [(self.G, bridge.GENERAL, 1)])
             self.assertEqual(b.general.recent(self.G), [])
 
-    def test_flush_creates_topic_links_it_and_prompt_carries_context(self):
-        class Bot(FakeBot):
-            def call(self, method, _timeout=35, _retries=3, **p):
-                super().call(method, **p)
-                return {"message_thread_id": 77} if method == "createForumTopic" else {"message_id": 1}
-
+    def test_flush_keeps_mention_in_general_and_prompt_carries_context(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             b = self.bridge(d)
-            b.bot = Bot()
             b.handle(self.gen(1, "earlier talk"))
             m = self.at(6, "@my_bot sum it up")
             b.handle(m)
@@ -2446,18 +2452,54 @@ class GeneralMention(unittest.TestCase):
             k, t = b.key(self.G, bridge.GENERAL), object()
             b.bursts[k], b.timers[k] = [m["message"]], t
             b.flush(self.G, bridge.GENERAL, t)
-            calls = dict(b.bot.calls)
-            self.assertEqual(calls["createForumTopic"]["name"], "sum it up")
-            self.assertEqual(calls["sendMessage"]["reply_parameters"]["message_id"], 6)
-            self.assertIn("https://t.me/c/1234567890/77/", calls["sendMessage"]["text"])
-            self.assertIsNone(calls["sendMessage"].get("message_thread_id"))      # the reply stays in General
-            self.assertEqual(put[0][:2], (self.G, 77))
+            self.assertEqual(b.bot.calls, [])                                    # no topic, no link reply
+            self.assertEqual(put[0][:2], (self.G, bridge.GENERAL))
             w = bridge.Worker.__new__(bridge.Worker)
-            w.b, w.chat, w.thread = b, self.G, 77
+            w.b, w.chat, w.thread = b, self.G, bridge.GENERAL
             prompt = w.prompt(put[0][2])
             self.assertLess(prompt.index("earlier talk"), prompt.index("[From: Ann"))
             self.assertLess(prompt.index(general.CONTEXT_CLOSE), prompt.index("@my_bot sum it up"))
-            self.assertNotIn("earlier talk", general.title_part(prompt))
+            self.assertEqual(bridge.mention_target(put[0][2]), 6)                # the answer replies to it
+            self.assertTrue(b.hushed(k))                                         # interim text stays out of General
+
+    def test_general_run_is_fresh_short_lived_and_gets_handoff_role(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            og = OwnerGroups()
+            b = GroupMode.bridge(self, d, og.cfg())
+            b.owner, b.username, b.bot_id = og.OWNER, "my_bot", self.BOT
+            gk = b.key(og.G, bridge.GENERAL)
+            b.store.update(gk, session_id="old")
+            argvs = []
+
+            class Run:
+                def __init__(self, argv, cwd, env):
+                    argvs.append(argv)
+                    self.stderr, self.stopped = [], False
+
+                def send(self, prompt):
+                    return None
+
+                def events(self):
+                    return iter(())
+
+                def close_input(self):
+                    pass
+            with mock.patch.object(runner, "Run", Run), mock.patch.object(b, "people", lambda: []):
+                for th in (bridge.GENERAL, 55):
+                    w = bridge.Worker.__new__(bridge.Worker)
+                    w.b, w.chat, w.thread, w.lock, w.st, w.typing, w.stream_id = b, og.G, th, threading.Lock(), None, None, None
+                    w.ilock = threading.Lock()
+                    w.execute([bridge.Batch([{"message_id": 1}], "p")])
+            gen, topic = argvs
+            self.assertNotIn("--resume", gen)                                    # a fresh session per mention
+            self.assertIsNone(b.store.topic(gk)["session_id"])
+            sg = gen[gen.index("--append-system-prompt") + 1]
+            self.assertIn("claude-tg spawn --chat team ", sg)
+            self.assertIn("завёл под неё топик", sg) if b.lang == "ru" else self.assertIn("opened a topic", sg)
+            self.assertNotIn("github-tasks new", sg)
+            st = topic[topic.index("--append-system-prompt") + 1]
+            self.assertIn("chat `team`", st)
+            self.assertIn("--session https://t.me/c/1112223334/55/", st)
 
     def test_owner_group_mention(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):

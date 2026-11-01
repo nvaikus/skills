@@ -307,6 +307,33 @@ def people_prompt(ps: list, group: bool) -> str:
             "messages. If the work is a tracked task, also record the wait (`github-tasks needs <ref> --action …`).")
 
 
+def board_prompt(chat: str, link: str) -> str:
+    """Topic sessions (--append-system-prompt): work that waits on a person must reach the github-tasks board, else
+    nobody sees it outside this topic (no Needs Human, digest, status)."""
+    link = link or "<this topic's link>"
+    return ("This topic: chat `" + chat + "`, link " + link + ". If the `github-tasks` CLI exists and this "
+            "conversation names no board task ref yet, the topic is untracked: a turn that ends waiting on a person "
+            "(decision, action, access) over non-trivial work (more than a quick answer or a one-message fix) first "
+            "registers it: `github-tasks new --title … --area <`github-tasks areas --chat " + chat + "`, by subject> "
+            "--status \"Needs Human\" --who <name> --session " + link + " [--due D] < body` (body: what is known + the "
+            "ask). Then it is a tracked task (github-tasks skill, executor.md \"Untracked topic\"): a later turn that "
+            "resolves the ask moves it (`set <ref> --status \"In progress\"`) or closes it (`done <ref>`). "
+            "A quick Q&A or chat reply needs no task.")
+
+
+def general_prompt(chat, handoff: str) -> str:
+    """A mention in a group's General (--append-system-prompt): answered right there by a fresh, short-lived
+    session; big work moves to its own topic, spawned by the session. chat: owner group name, None = home chat."""
+    flag = f"--chat {chat} " if chat else ""
+    return ("You answer a mention in this group's General topic: your answer is a reply there. This session is "
+            "short-lived (a fresh one per mention; the General context above is all you know). Answerable or doable "
+            "in about one message (a quick question, a small fix) -> just do it and answer. A big piece of work "
+            "(multi-step research, a real task, anything needing follow-up) -> don't start it here: run `claude-tg "
+            "spawn " + flag + "--title \"<short title>\" --show \"<the ask, one line>\" \"<handoff prompt: the "
+            "request, who asked (their mention), the General context that matters>\"`, then answer only one line "
+            "like: " + handoff + " (the `link` from spawn's JSON). The topic's session does the work.")
+
+
 def address(text: str, ps: list) -> str:
     """A line opening with a person's name as a header ("Name:", "**Name:**") -> their mention, so it notifies."""
     names = sorted({n for p in ps for n in p["names"]}, key=len, reverse=True)

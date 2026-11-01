@@ -58,6 +58,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 
 - Telegram notifies only on a mention. Every run gets an addressing rule appended to its system prompt: the people (group: `allowed_users` via getChatMember; private: the owner via getChat; a day in `cache.json`) with their mention (`@username`, else a `[Name](tg://user?id=N)` text mention) and names + config `people_aliases`.
 - Group: whoever a message asks for something is addressed only by mention, never "Name:". Any mode: a final message that waits on a person starts with the mention(s) + the ask - one message, no separate ping; a tracked task also records the wait (`github-tasks needs --who`).
+- Board: every topic run (not General) also gets its chat name + topic link and the rule: an untracked topic that waits on a person over non-trivial work registers it first (`github-tasks new --area <github-tasks areas --chat NAME> --status "Needs Human" --who … --session <link>`), then follows the github-tasks executor rules; a quick Q&A needs no task.
 - Safety net: an answer line opening with a known name as a header (`Name:`, `**Name:**`) is rewritten to the mention (not in code fences).
 
 ## Fixing the bot from inside the bot

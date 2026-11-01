@@ -47,8 +47,8 @@ Contents: Config `~/.config/claude-tg/config.json` · Group mode · Owner groups
 | `protect_exempt_marker` | `.user-made` | a dir holding this file is not protected (the user's own skills) |
 | `group_id` | null | group mode: the forum supergroup's chat id (`-100…`); null = owner's private chat. Section below |
 | `owner_groups` | `{}` | private mode: name → forum supergroup id (`-100…`) where only the owner talks; CLI `--chat NAME`. Section below |
-| `group_general` | false | groups (`group_id` and `owner_groups`): true = the General topic is heard (every message there opens a topic); false = ignored, commands too, except a mention of the bot (opens a topic with General context). Private chat unaffected |
-| `general_context` | 20 | General ignored: how many recent General messages (admitted senders only) a mention's new topic gets as context; 0 = none |
+| `group_general` | false | groups (`group_id` and `owner_groups`): true = the General topic is heard (every message there opens a topic); false = ignored, commands too, except a mention of the bot (answered in General by a short-lived session with General context; big work → it spawns a topic). Private chat unaffected |
+| `general_context` | 20 | General ignored: how many recent General messages (admitted senders only) a mention's session gets as context; 0 = none |
 | `allowed_users` | `[]` | group mode: Telegram user ids allowed to write / press ⏹; empty = nobody (fail closed, `doctor` FAIL) |
 | `allowed_bots` | `[]` | groups (both kinds): peer bot ids heard when they address this bot; set via `claude-tg bots add` (SKILL.md, Peer bots) |
 | `bot_turns_max` | 6 | peer-bot messages answered in a row per topic without a human message; then ignored there until a human writes; 0 = no cap |
