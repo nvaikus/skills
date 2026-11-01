@@ -14,7 +14,7 @@ claude-tg uninstall               # removes whichever unit is installed
 claude-tg status | logs [-f] [-n N]    # status also shows runs in flight / queued
 claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after every update, never raw systemctl
 claude-tg run                     # foreground, for debugging (stop the service first)
-claude-tg notify [TEXT] [--md|--html] [--silent] [--button TEXT=URL] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E] [--triage|--no-triage]   # bot -> owner; stdin if no TEXT
+claude-tg notify [TEXT] [--md|--html] [--silent] [--button 'TEXT=URL|cb:PREFIX:DATA[ | …]'] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E] [--triage|--no-triage]   # bot -> owner; stdin if no TEXT
 claude-tg triage [show] | on [--cwd DIR] [--chat NAME] [--cooldown MIN] [--topics KEY..|all] [--exclude KEY..|none] | off   # auto-triage of notify events
 claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
 claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--settings ABS.json] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
@@ -59,7 +59,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 - Telegram notifies only on a mention. Every run gets an addressing rule appended to its system prompt: the people (group: `allowed_users` via getChatMember; private: the owner via getChat; a day in `cache.json`) with their mention (`@username`, else a `[Name](tg://user?id=N)` text mention) and names + config `people_aliases`.
 - Group: whoever a message asks for something is addressed only by mention, never "Name:". Any mode: a final message that waits on a person starts with the mention(s) + the ask - one message, no separate ping; a tracked task also records the wait (`github-tasks needs --who`).
 - Board: every topic run (not General) also gets its chat name + topic link and the rule: an untracked topic that waits on a person over non-trivial work registers it first (`github-tasks new --area <github-tasks areas --chat NAME> --status "Needs Human" --who … --session <link>`), then follows the github-tasks executor rules; a quick Q&A needs no task.
-- Board safety net: a topic answer that opens with no mention (waits on nobody) triggers `github-tasks turn-end` in the background when github-tasks is installed; it nudges the session once if a Needs Human of that topic was left behind.
+- Board safety net: every topic answer triggers `github-tasks turn-end` in the background when github-tasks is installed: no mention → it nudges the session once if a Needs Human of that topic was left behind; opens with a mention (`--waits`) in a topic that is no board task → one nudge to register it.
 - Safety net: an answer line opening with a known name as a header (`Name:`, `**Name:**`) is rewritten to the mention (not in code fences).
 
 ## Fixing the bot from inside the bot

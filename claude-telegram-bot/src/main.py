@@ -121,7 +121,7 @@ def main(argv=None):
     s.add_argument("--keep", metavar="KEY",
                    help="one live status message (a board) per chat + KEY: edit it in place (prints edited / unchanged; "
                         "no new message, no sound), send a new one when none is stored or it was deleted "
-                        "(STATE_DIR/notify.json keep); text <= 4096, one message")
+                        "(STATE_DIR/notify.json keep); text <= 4096 visible chars, one message; --button keeps its keyboard")
     s.add_argument("--pin", action="store_true", help="with --keep: pin the message when it is (re)sent, silently; in a group the bot needs "
                         "can_pin_messages (Bot API cannot pin a topic in the topic list)")
     s.add_argument("--topic-icon", metavar="EMOJI",
@@ -145,7 +145,9 @@ def main(argv=None):
                    help="send a file (repeatable; <= 50 MB): mp4/mov/m4v as streaming video, jpg/png/webp as photo, "
                         "else as document")
     s.add_argument("--button", action="append", metavar="TEXT=URL",
-                   help="inline URL button under the message (repeatable, one per row)")
+                   help="inline button row under the message (repeatable, one row each): TEXT=https://url, or "
+                        "TEXT=cb:PREFIX:DATA = a callback button the bot answers by running config `callbacks` "
+                        "PREFIX (<= 64 bytes); ' | ' separates buttons of one row; with --keep too")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--topic", metavar="KEY",
                    help="config notify_topics key (one per domain: display name + optional icon), else a literal topic "

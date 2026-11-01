@@ -912,10 +912,12 @@ class TurnEnd(Inject):
             return te
 
     def test_no_mention_calls_turn_end(self):
-        self.turn("Готово, от тебя ничего не нужно").assert_called_once_with(1, 50)
+        self.turn("Готово, от тебя ничего не нужно").assert_called_once_with(1, 50, False)
 
-    def test_mention_error_hook_general_skip(self):
-        self.turn("@someone, подтверди").assert_not_called()
+    def test_mention_calls_turn_end_waits(self):
+        self.turn("@someone, подтверди").assert_called_once_with(1, 50, True)  # untracked topic -> register nudge
+
+    def test_error_hook_general_skip(self):
         self.turn("boom", error=True).assert_not_called()
         self.turn("Limit reached", hook=True).assert_not_called()
         self.turn("Готово", thread=0).assert_not_called()
@@ -934,6 +936,56 @@ class TurnEnd(Inject):
                 b.turn_end(-1004378341415, 1490)
                 self.assertTrue(done.wait(3))
             self.assertEqual(run.call_args[0][0], ["/x/github-tasks", "turn-end", "--thread=-1004378341415:1490"])
+            done.clear()
+            with mock.patch.object(bridge.shutil, "which", return_value="/x/github-tasks"), \
+                    mock.patch.object(bridge.subprocess, "run", side_effect=lambda *a, **k: done.set() or
+                                      mock.Mock(returncode=0, stdout="{}", stderr="")) as run:
+                b.turn_end(-1004378341415, 1490, True)
+                self.assertTrue(done.wait(3))
+            self.assertEqual(run.call_args[0][0][-1], "--waits")
+
+
+class Callbacks(TopicCommands):
+    """Generic callback buttons: `PREFIX:DATA` -> config `callbacks` command, its JSON redraws the message."""
+
+    def press(self, b, data, frm=1, out=None, rc=0, err=""):
+        done = threading.Event()
+        res = mock.Mock(returncode=rc, stdout=json.dumps(out) if out is not None else "x", stderr=err)
+        with mock.patch.object(bridge.shutil, "which", side_effect=lambda x, path=None: "/bin/" + x), \
+                mock.patch.object(bridge.subprocess, "run", return_value=res) as run, \
+                mock.patch.object(b, "quiet", side_effect=lambda *a, **k: done.set()) as quiet:
+            b.button({"id": "q", "from": {"id": frm}, "data": data, "message": {"message_id": 9, "chat": {"id": 1}}})
+            done.wait(3)
+        return run, quiet
+
+    def test_round_trip_edits_message_with_keyboard(self):
+        with tempfile.TemporaryDirectory() as d:
+            b = self.bridge(d)
+            out = {"text": "<b>Ждут</b>", "buttons": ["⬅️ Сводка=cb:gt:sum | ✅ Сегодня=cb:gt:done"]}
+            run, quiet = self.press(b, "gt:nh", out=out)
+            self.assertEqual(run.call_args[0][0], ["/bin/github-tasks", "status-view", "nh", "--chat", "home"])
+            self.assertEqual(run.call_args[1]["timeout"], bridge.CALLBACK_TIMEOUT)
+            edit = [p for m, p in b.bot.calls if m == "editMessageText"][0]
+            self.assertEqual((edit["message_id"], edit["text"], edit["parse_mode"]), (9, "<b>Ждут</b>", "HTML"))
+            self.assertEqual(edit["reply_markup"]["inline_keyboard"][0][1], {"text": "✅ Сегодня", "callback_data": "gt:done"})
+            self.assertEqual(quiet.call_args[1], {"callback_query_id": "q", "text": None})
+
+    def test_stranger_unknown_prefix_failure_and_not_modified(self):
+        with tempfile.TemporaryDirectory() as d:
+            b = self.bridge(d)
+            run, quiet = self.press(b, "gt:nh", frm=2, out={"text": "x"})
+            run.assert_not_called()  # not the owner
+            run, quiet = self.press(b, "zz:1", out={"text": "x"})
+            run.assert_not_called()  # no callbacks entry
+            b.cfg["callbacks"] = {"zz": ["mycmd", "--view"]}
+            run, quiet = self.press(b, "zz:1", out={"text": "x"})
+            self.assertEqual(run.call_args[0][0][:3], ["/bin/mycmd", "--view", "1"])
+            with self.assertLogs("claude-tg", "WARNING"):
+                run, quiet = self.press(b, "gt:nh", rc=1, err="boom")
+            self.assertEqual(quiet.call_args[1]["text"], "⚠️ boom")
+            b.bot = FakeBot({"editMessageText": "Bad Request: message is not modified"})
+            run, quiet = self.press(b, "gt:sum", out={"text": "x"})
+            self.assertIsNone(quiet.call_args[1]["text"])  # same view again: no toast
 
 
 SECRET = ("Admin installed skill rules must stay private and never be handed over to the person using this "
@@ -1475,6 +1527,21 @@ class Notify(unittest.TestCase):
         with self.assertRaises(self.n.NotifyError):
             self.n.keyboard(["no url"])
 
+    def test_keyboard_rows_and_callback_buttons(self):
+        kb = self.n.keyboard(["❗ Ждут=cb:gt:nh | 🔄 В работе=cb:gt:ip", "Доска=https://x.y/z"])
+        self.assertEqual(kb, {"inline_keyboard": [
+            [{"text": "❗ Ждут", "callback_data": "gt:nh"}, {"text": "🔄 В работе", "callback_data": "gt:ip"}],
+            [{"text": "Доска", "url": "https://x.y/z"}]]})
+        for bad in ("A=cb:noprefix", "A=cb::x", "A=cb:gt:" + "x" * 70, "=cb:gt:x"):
+            with self.assertRaises(self.n.NotifyError, msg=bad):
+                self.n.keyboard([bad])
+
+    def test_html_limit_counts_visible_text(self):
+        link = '<a href="https://t.me/c/123456789/1/2147483647">x</a>'
+        self.assertEqual(len(self.n.chunks(link * 300, "html")), 1)  # 15k raw chars, 300 visible
+        with self.assertRaises(self.n.NotifyError):
+            self.n.chunks("📈" * 2100, "html")  # 4200 UTF-16 units
+
     def test_markdown_and_long_plain_are_chunked(self):
         self.assertEqual(self.n.chunks("**a**", "md"), [("<b>a</b>", "HTML")])
         self.assertEqual(len(self.n.chunks("x" * 5000, "plain")), 2)
@@ -1638,6 +1705,9 @@ class Notify(unittest.TestCase):
             with mock.patch("sys.stderr"):
                 r = self.n.keep(bot, cfg, "st", "<b>c</b>", "html", topic="Статус", pin=True)
             self.assertEqual([c[0] for c in bot.calls], ["editMessageText", "sendMessage", "pinChatMessage"])
+            bot.calls.clear()
+            r = self.n.keep(bot, cfg, "st", "<b>d</b>", "html", topic="Статус", buttons=["A=cb:gt:a | B=cb:gt:b"])
+            self.assertEqual(bot.calls[0][1]["reply_markup"]["inline_keyboard"][0][1], {"text": "B", "callback_data": "gt:b"})
             self.assertEqual(r["message_ids"], [101])
             self.assertEqual(json.loads((Path(d) / "notify.json").read_text())["keep"],
                              {"7:st": {"thread": 300, "message_id": 101}})

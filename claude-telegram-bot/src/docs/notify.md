@@ -9,3 +9,5 @@ Read when touching `notify.py`. User-facing behavior: `../../references/notify.m
 - Default target = `$CLAUDE_TG_RUN_TOPIC` inside a run.
 - `--replace KEY` / `notify-delete`: ids per key in `notify.json` `replace`, send before delete, 400 delete = forget, transient = keep for retry.
 - `--keep KEY`: `notify.json` `keep["<chat>:<key>"]` = {thread, message_id}, editMessageText in place, `not modified` = unchanged, other 400 = gone → resend (+ pin).
+- `keyboard(buttons)`: each `--button` = a row, `' | '` splits; `button()` = url or `cb:` → callback_data (prefix + `:` required, ≤ 64 bytes). `keep` passes reply_markup on edit and send. `chunks(html)` measures `visible_len` (tags stripped, entities unescaped, UTF-16).
+- Callback clicks: `Bridge.button` (auth as ⏹) → `callback_cmd` (built-in `CALLBACKS` + config `callbacks`, `shutil.which`) → thread `callback`: run `argv DATA --chat <name>` (CALLBACK_TIMEOUT), edit message with its JSON, answer the query after (toast on error, `not modified` ignored).

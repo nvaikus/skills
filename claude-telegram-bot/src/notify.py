@@ -361,25 +361,42 @@ def waits_on(text: str, ps: list) -> bool:
     return bool(MENTION_HEAD.match(address((text or "").strip(), ps)))
 
 
+def visible_len(body: str, parse=None) -> int:
+    """Length Telegram counts against its limit: the text after entity parsing, in UTF-16 code units."""
+    if parse == "HTML":
+        body = html.unescape(re.sub(r"<[^>]*>", "", body))
+    return len(body.encode("utf-16-le")) // 2
+
+
 def chunks(text: str, mode: str) -> list:
     """[(text, parse_mode)] within Telegram's limit. mode: plain | html | md."""
     if mode == "html":
-        if len(text) > fmt.LIMIT:
-            raise NotifyError(f"html text is {len(text)} chars; Telegram allows {fmt.LIMIT}")
+        n = visible_len(text, "HTML")
+        if n > fmt.LIMIT:
+            raise NotifyError(f"html text is {n} visible chars; Telegram allows {fmt.LIMIT}")
         return [(text, "HTML")]
     if mode == "md":
         return [(fmt.md_to_html(c), "HTML") for c in fmt.split_md(text)]
     return [(text[i:i + fmt.LIMIT], None) for i in range(0, len(text), fmt.LIMIT)] or [("", None)]
 
 
+CB = "cb:"  # --button TEXT=cb:PREFIX:DATA -> callback_data PREFIX:DATA (bridge.callback runs config `callbacks`)
+
+
+def button(b: str) -> dict:
+    label, sep, val = b.partition("=")
+    label, val = label.strip(), val.strip()
+    if sep and label and val.startswith(("https://", "http://", "tg://")):
+        return {"text": label, "url": val}
+    data = val[len(CB):] if val.startswith(CB) else ""
+    if sep and label and ":" in data and data.partition(":")[0] and len(data.encode()) <= 64:
+        return {"text": label, "callback_data": data}
+    raise NotifyError(f"--button wants TEXT=URL or TEXT=cb:PREFIX:DATA (<= 64 bytes), got {b!r}")
+
+
 def keyboard(buttons) -> dict:
-    """["Text=https://url", ...] -> inline keyboard, one button per row."""
-    rows = []
-    for b in buttons or []:
-        label, sep, url = b.partition("=")
-        if not (sep and label.strip() and url.strip().startswith(("https://", "http://", "tg://"))):
-            raise NotifyError(f"--button wants TEXT=URL, got {b!r}")
-        rows.append([{"text": label.strip(), "url": url.strip()}])
+    """["Text=https://url", "A=cb:gt:x | B=cb:gt:y", ...] -> inline keyboard, one row per item, ' | ' splits a row."""
+    rows = [[button(x) for x in b.split(" | ")] for b in buttons or []]
     return {"inline_keyboard": rows} if rows else None
 
 
@@ -556,12 +573,14 @@ def replace(bot, key: str, r: dict):
 
 
 def keep(bot, cfg: dict, key: str, text: str, mode="plain", topic=DEFAULT_TOPIC, thread=None, chat=None,
-         pin=False, silent=True) -> dict:
+         pin=False, silent=True, buttons=None) -> dict:
     """--keep KEY: one message per (chat, KEY) kept up to date in place (a status board). Stored message in the same
     topic -> editMessageText (`"unchanged": true` when Telegram says not modified, `"edited": true` else). None yet,
     or the edit is refused (deleted message / topic: any 400) -> a new message (+ pinChatMessage with `pin`, silent),
-    its id stored in notify.json "keep". One message only: text over the limit is an error."""
+    its id stored in notify.json "keep". One message only: text over the limit is an error. `buttons`: its keyboard
+    (sent and edited with the text; none = an edit drops it)."""
     text = text.strip()
+    markup = keyboard(buttons)
     if not text:
         raise NotifyError("empty text")
     parts = chunks(text, mode)
@@ -574,7 +593,7 @@ def keep(bot, cfg: dict, key: str, text: str, mode="plain", topic=DEFAULT_TOPIC,
     if old and old.get("thread") == dest.thread:
         try:
             bot.call("editMessageText", chat_id=dest.chat, message_id=old["message_id"], text=body, parse_mode=parse,
-                     link_preview_options={"is_disabled": True})
+                     link_preview_options={"is_disabled": True}, reply_markup=markup)
             return dest.result([old], edited=True)
         except TgError as e:
             if "message is not modified" in e.description:
@@ -582,7 +601,7 @@ def keep(bot, cfg: dict, key: str, text: str, mode="plain", topic=DEFAULT_TOPIC,
             if e.code != 400:
                 raise
             print(f"claude-tg notify: kept message {key} gone ({e.description}); sending a new one", file=sys.stderr)
-    sent = _messages(bot, dest, [(body, parse)], silent, None)
+    sent = _messages(bot, dest, [(body, parse)], silent, markup)
     mid = sent[0]["message_id"]
     extra = {"created": True}
     if pin:
@@ -658,9 +677,9 @@ def main(cfg: dict, a) -> int:
         cfg = with_topic_icon(cfg, topic, getattr(a, "topic_icon", None))
         text, mode = with_mentions(bot, cfg, text, mode, getattr(a, "mention", None), chat)
         if getattr(a, "keep", None):
-            if files or getattr(a, "replace", None) or a.button:
-                raise NotifyError("--keep takes text only (no --file / --replace / --button)")
-            r = keep(bot, cfg, a.keep, text, mode, topic, thread, chat, getattr(a, "pin", False), a.silent)
+            if files or getattr(a, "replace", None):
+                raise NotifyError("--keep takes text only (no --file / --replace)")
+            r = keep(bot, cfg, a.keep, text, mode, topic, thread, chat, getattr(a, "pin", False), a.silent, a.button)
             print(json.dumps(r))
             return 0
         if files:

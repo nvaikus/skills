@@ -1,6 +1,7 @@
 """The bot: long-poll loop, owner lock, one worker thread per topic (serial inside a topic,
 parallel across topics), progress UX, final answer delivery."""
 import html
+import json
 import logging
 import os
 import queue
@@ -27,6 +28,8 @@ GONE = re.compile(r"thread not found|topic not found|TOPIC_DELETED|TOPIC_ID_INVA
 FILE_OVER = 10000   # answers longer than this also arrive as answer.md
 MAX_CHUNKS = 8
 TURN_END_TIMEOUT = 180  # `github-tasks turn-end`: a board read + one claude-tg send
+CALLBACKS = {"gt": ["github-tasks", "status-view"]}  # button prefix -> argv; config `callbacks` merges over it
+CALLBACK_TIMEOUT = 10  # a callback command must answer within it (the button spinner waits for the answer)
 # One user action can arrive as several updates < 1 s apart: forward-with-comment (comment, then the forwards),
 # an album (N messages). Messages of a topic are debounced: quiet for BURST s -> one run with all of them.
 # Forwarded media can lag several seconds behind the text sent with it (seen: photo 5 s after, same `date`).
@@ -122,17 +125,18 @@ class Bridge:
         """Owner group name of a chat, else `home` (the bot's home chat: private, or the group in group mode)."""
         return next((n for n, c in self.groups.items() if c == chat), "home")
 
-    def turn_end(self, chat, thread):
-        """A topic turn ended waiting on nobody (no mention): `github-tasks turn-end` nudges the session about a
-        Needs Human of this topic it forgot to move. Background, errors only logged; no github-tasks -> nothing."""
+    def turn_end(self, chat, thread, waits=False):
+        """A topic turn ended: `github-tasks turn-end` nudges the session about a Needs Human of this topic it forgot
+        to move (waits on nobody), or (`waits`: the answer starts with a person's mention) about registering this
+        untracked topic as a board task. Background, errors only logged; no github-tasks -> nothing."""
         exe = shutil.which("github-tasks", path=self.env.get("PATH"))
         if exe:
-            threading.Thread(target=self._turn_end, args=(exe, chat, thread), daemon=True,
+            threading.Thread(target=self._turn_end, args=(exe, chat, thread, waits), daemon=True,
                              name=f"turn-end-{thread}").start()
 
-    def _turn_end(self, exe, chat, thread):
+    def _turn_end(self, exe, chat, thread, waits=False):
         try:
-            r = subprocess.run([exe, "turn-end", f"--thread={chat}:{thread}"], env=self.env, stdin=subprocess.DEVNULL,
+            r = subprocess.run([exe, "turn-end", f"--thread={chat}:{thread}", *(["--waits"] if waits else [])], env=self.env, stdin=subprocess.DEVNULL,
                                capture_output=True, text=True, timeout=TURN_END_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired) as e:
             log.warning("github-tasks turn-end topic %s: %s", thread, e)
@@ -503,18 +507,60 @@ class Bridge:
         self.quiet("leaveChat", chat_id=chat["id"])
 
     def button(self, cq):
-        """⏹ under the status message: stops the current run (queue kept, like the draft stop button)."""
-        mid = (cq.get("message") or {}).get("message_id")
+        """Inline buttons, authorized like messages (owner / admitted group members). "stop" under the status message:
+        stops the current run (queue kept, like the draft stop button). `PREFIX:DATA` with a `callbacks` command:
+        callback() redraws the message off the polling thread."""
+        msg = cq.get("message") or {}
+        mid = msg.get("message_id")
         hit = None
         if self.group is not None:
-            ok = self.admits((cq.get("message") or {}).get("chat") or {}, {"from": cq.get("from")})
+            ok = self.admits(msg.get("chat") or {}, {"from": cq.get("from")})
         else:
             ok = cq["from"]["id"] == self.owner
-        if ok and cq.get("data") == "stop":
+        data = cq.get("data") or ""
+        if ok and data != "stop" and mid and self.callback_cmd(data):
+            threading.Thread(target=self.callback, args=(cq,), daemon=True, name="callback").start()
+            return
+        if ok and data == "stop":
             hit = next((w for w in list(self.workers.values()) if w.st and w.st.id == mid and w.run), None)
             if hit:
                 hit.stop(drop_queue=False)
         self.quiet("answerCallbackQuery", callback_query_id=cq["id"], text=self.s("stopped" if hit else "idle"))
+
+    def callback_cmd(self, data):
+        """argv for callback_data `PREFIX:DATA` (CALLBACKS + config `callbacks`), its command resolved on PATH; None =
+        no such prefix or the command is not installed."""
+        prefix, sep, _ = (data or "").partition(":")
+        argv = {**CALLBACKS, **(self.cfg.get("callbacks") or {})}.get(prefix) if sep else None
+        exe = argv and shutil.which(os.path.expanduser(argv[0]), path=self.env.get("PATH"))
+        return [exe, *argv[1:]] if exe else None
+
+    def callback(self, cq):
+        """Run `<argv> DATA --chat <chat name>` (CALLBACK_TIMEOUT); its stdout JSON {"text": HTML, "buttons": [rows as
+        notify --button]} replaces the message in place, keyboard included. The query is answered after it (the
+        spinner stops), with a short toast on failure; "not modified" (same view again) is no failure."""
+        msg = cq["message"]
+        chat = msg["chat"]["id"]
+        argv = self.callback_cmd(cq["data"])
+        toast = None
+        try:
+            r = subprocess.run([*argv, cq["data"].partition(":")[2], "--chat", self.chat_name(chat)], env=self.env,
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=CALLBACK_TIMEOUT)
+            if r.returncode:
+                raise RuntimeError((r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1])
+            out = json.loads(r.stdout)
+            self.bot.call("editMessageText", chat_id=chat, message_id=msg["message_id"], text=out["text"],
+                          parse_mode="HTML", link_preview_options={"is_disabled": True},
+                          reply_markup=notify.keyboard(out.get("buttons")))
+        except TgError as e:
+            if "not modified" not in e.description:
+                toast = f"⚠️ {e.description}"
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError, RuntimeError,
+                notify.NotifyError) as e:
+            toast = f"⚠️ {e}"
+        if toast:
+            log.warning("callback %r: %s", cq["data"], toast)
+        self.quiet("answerCallbackQuery", callback_query_id=cq["id"], text=(toast or "")[:200] or None)
 
     def collect(self, chat, thread, msg):
         """Debounce per topic: every new message restarts the timer; the burst runs once, as one prompt."""
@@ -1213,8 +1259,9 @@ class Worker:
                 self.answer(ev.text)  # skipped if the idle ticker posted it already
             for bt in answered:
                 b.react(chat, bt.key, "👍")
-            if thread != GENERAL and not ev.hook and ev.text.strip() and not notify.waits_on(ev.text, b.people()):
-                b.turn_end(chat, thread)  # waits on nobody: a forgotten Needs Human of this topic gets nudged
+            if thread != GENERAL and not ev.hook and ev.text.strip():
+                # waits on nobody: a forgotten Needs Human gets nudged; waits on a person: an untracked topic too
+                b.turn_end(chat, thread, notify.waits_on(ev.text, b.people()))
             if answered and not ev.hook and not self.renamed and b.store.topic(self.key).get("implicit"):
                 self.renamed = True
                 threading.Thread(target=self.rename, args=(general.title_part(answered[0].prompt), ev.text), daemon=True).start()
