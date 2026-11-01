@@ -3423,3 +3423,62 @@ class Triage(unittest.TestCase):
                                                     "exclude": ["mail", "events"]})
             self.assertEqual(m.main(["triage", "off"]), 0)
             self.assertFalse(json.loads((Path(d) / "c.json").read_text())["notify_triage"]["enabled"])
+
+
+class ShortTitles(unittest.TestCase):
+    """Topic names fit the phone's topic sidebar (titles.TITLE_MAX), cut only on word boundaries."""
+
+    def test_fit_keeps_short_and_cuts_on_words(self):
+        from src import titles
+        self.assertEqual(titles.fit("Страховка Альбы"), "Страховка Альбы")
+        self.assertEqual(titles.fit("Отправить документы в страховую Fidelidade"), "Отправить документы")
+        self.assertEqual(titles.fit("Выбрать слот у ветеринара на неделе"), "Выбрать слот")
+        for t in ("a " * 40, "Отправить документы в страховую Fidelidade", "x" * 40):
+            self.assertLessEqual(len(titles.fit(t)), titles.TITLE_MAX)
+        self.assertEqual(titles.fit("x" * 30), "x" * 23 + "…")
+
+    def test_clean_strips_markup_and_fits(self):
+        from src import titles
+        self.assertEqual(titles.clean('"Ремонт **машины**."\nextra'), "Ремонт машины")
+        self.assertEqual(titles.clean(""), "")
+        self.assertIn(str(titles.TITLE_MAX), bridge.TITLE_PROMPT)
+
+    def test_auto_title_is_cut_to_budget(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = TopicCommands.bridge(None, d)
+            w = bridge.Worker(b, 1, 50)
+            with mock.patch.object(runner, "one_shot", return_value="Очень длинное название темы про всё"):
+                w.rename("q", "a")
+            name = b.bot.calls[-1][1]["name"]
+            self.assertLessEqual(len(name), 24)
+            self.assertEqual(name, "Очень длинное название")
+
+    def test_title_cli(self):
+        from src import main as m
+        cfg = dict(config.DEFAULTS)
+        a = mock.Mock(text=["Записать", "Альбу", "к", "неврологу"])
+        with mock.patch.object(runner, "one_shot", return_value="Альба к неврологу") as os_, \
+                mock.patch("sys.stdout") as out:
+            self.assertEqual(m.title_main(cfg, a), 0)
+        self.assertIn("Альбу к неврологу", os_.call_args[0][1])
+        out.write.assert_any_call("Альба к неврологу")
+        with mock.patch.object(runner, "one_shot", return_value=""), mock.patch("sys.stderr"):
+            self.assertEqual(m.title_main(cfg, a), 1)
+
+    def test_topic_rename_and_store_op(self):
+        from src import inbox
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = TopicCommands.bridge(None, d)
+            b.store._save()
+            cfg = dict(config.DEFAULTS, owner_id=1)
+            bot = FakeBot()
+            r = inbox.topic_rename(bot, cfg, 50, "  Страховка  Альбы ", chat=1)
+            self.assertEqual(r, {"thread": 50, "title": "Страховка Альбы", "unchanged": False})
+            self.assertEqual(bot.calls, [("editForumTopic", {"chat_id": 1, "message_thread_id": 50, "name": "Страховка Альбы"})])
+            item = json.loads(next((Path(d) / "inbox").iterdir()).read_text())
+            inbox.apply(b, item)
+            self.assertEqual((b.store.topic(50)["title"], b.store.topic(50)["implicit"]), ("Страховка Альбы", False))
+            same = FakeBot({"editForumTopic": "Bad Request: TOPIC_NOT_MODIFIED"})
+            self.assertTrue(inbox.topic_rename(same, cfg, 50, "Страховка Альбы", chat=1)["unchanged"])
+            with self.assertRaises(TgError):
+                inbox.topic_rename(FakeBot({"editForumTopic": "Bad Request: message thread not found"}), cfg, 51, "x", chat=1)

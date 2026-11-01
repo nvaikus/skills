@@ -17,7 +17,7 @@ Setup steps for each mode: `setup.md`.
 - Connect / drop one only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config (tenant hooks block that path). `add` checks forum + bot admin with Manage Topics (prints the fix otherwise), rewrites only `owner_groups`, restarts (from a bot run: deferred). Idempotent.
 - Someone other than the owner adds the bot (the bot leaves any group not in `owner_groups` unless the owner added it): register first with `group add NAME ID --pending` (no getChat, the bot need not be in it yet), then add the bot; `group list` verifies forum/admin.
 - In those groups only the owner is heard (+ Peer bots below); anyone else, other bots, anonymous admins are ignored. Every topic is its own session, like in the private chat. A group not in `owner_groups`: the bot stays if the owner added it (logs its id), else leaves.
-- `spawn` / `send` / `alive` / `topic-icon` / `topic-settings` / `topic-delete` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
+- `spawn` / `send` / `alive` / `topic-icon` / `topic-settings` / `topic-delete` / `topic-rename` / `notify` / `notify-delete` take `--chat NAME|ID`; default = the private chat. A `t.me/c/<chat>/<thread>` link carries its chat, so `--thread LINK` needs no `--chat`. Runs get `CLAUDE_TG_RUN_CHAT` next to `CLAUDE_TG_RUN_TOPIC`: `notify` and `restart` reports from inside a run go back to its own chat.
 - Group limits apply there (no drafts, ~20 msg/min).
 
 ## Peer bots (two bots talking in one group)

@@ -303,6 +303,27 @@ def topic_delete(bot, cfg, thread, chat=None, proc=Path("/proc")) -> dict:
     return {"thread": thread, "deleted": not gone, "gone": gone}
 
 
+def topic_rename(bot, cfg, thread, name, chat=None) -> dict:
+    """editForumTopic name (as given, <= 128); the service updates its stored title (inbox op `title`: /status shows
+    it, the auto-title never overrides it). Same name = ok (TOPIC_NOT_MODIFIED)."""
+    chat = chat if chat is not None else owner_chat(cfg)
+    name = " ".join(name.split())[:128]
+    if not name:
+        raise NotifyError("empty name")
+    if thread <= 1:
+        raise NotifyError("General can't be renamed here")
+    unchanged = False
+    try:
+        bot.call("editForumTopic", chat_id=chat, message_thread_id=thread, name=name)
+    except TgError as e:
+        if "TOPIC_NOT_MODIFIED" not in (e.description or ""):
+            raise
+        unchanged = True
+    if config.topic_key(cfg, chat, thread) in _state_topics():
+        enqueue({"op": "title", "chat": chat, "thread": thread, "title": name})
+    return {"thread": thread, "title": name, "unchanged": unchanged}
+
+
 def _state_topics() -> dict:
     try:
         return json.loads((config.STATE_DIR / "state.json").read_text()).get("topics") or {}
@@ -367,6 +388,8 @@ def main(cfg: dict, a) -> int:
             r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
         elif a.cmd == "topic-delete":
             r = topic_delete(bot, cfg, thread_of(ref), chat)
+        elif a.cmd == "topic-rename":
+            r = topic_rename(bot, cfg, thread_of(ref), " ".join(a.name), chat)
         else:
             r = topic_icon(bot, cfg, thread_of(ref), a.icon, chat)
     except (NotifyError, OSError) as e:
@@ -385,6 +408,10 @@ def apply(bridge, item: dict):
         thread, chat = int(item["thread"]), int(item["chat"])
         bridge.forget(bridge.key(chat, thread), "topic-delete")
         return thread
+    if item.get("op") == "title":
+        k = bridge.key(int(item["chat"]), int(item["thread"]))
+        bridge.store.update(k, title=item["title"], implicit=False)
+        return None
     if item.get("op") == "settings":
         if item.get("match"):
             keys = [k for k in bridge.store.topic_keys() if item["match"] in str(bridge.store.topic(k).get("settings") or "")]

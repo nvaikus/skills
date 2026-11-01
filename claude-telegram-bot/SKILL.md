@@ -23,6 +23,8 @@ claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
 claude-tg topic-settings --thread ID|LINK|--all-matching SUBSTR <ABS.json|off>   # change a topic's spawn --settings for future runs (SUBSTR: off only)
 claude-tg topic-delete --thread ID|LINK   # topic + all its messages; refuses General and a live run
+claude-tg topic-rename --thread ID|LINK NAME   # rename a topic (bot's /status title too); NAME as given
+claude-tg title [TEXT]   # short topic name (<= 24 chars, 1-3 words) via title_model; stdin if no TEXT; exit 1 = none
 claude-tg group list | add NAME [ID] [--no-restart] | remove NAME   # owner groups; add w/o ID = newest group the owner added the bot to
 claude-tg bots list | add BOT | remove BOT [--no-restart]   # peer bots heard in groups (allowed_bots); BOT = id or @name from the logs
 claude-tg profile [--name T] [--description T] [--short T] [--photo FILE|--photo-remove] [--lang CODE]   # bot's own name / empty-chat text / about / avatar; no flags = show
@@ -52,7 +54,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 ## Owner groups (private mode + extra forum groups)
 
 - One owner, a project's topics in their own forum group: user creates it and makes the bot admin with Manage Topics; connect only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config.
-- Then `spawn` / `send` / `alive` / `topic-icon` / `topic-settings` / `topic-delete` / `notify` / `notify-delete` take `--chat NAME|ID`; a `t.me/c/...` link carries its chat. Rules: `references/groups.md`.
+- Then `spawn` / `send` / `alive` / `topic-icon` / `topic-settings` / `topic-delete` / `topic-rename` / `notify` / `notify-delete` take `--chat NAME|ID`; a `t.me/c/...` link carries its chat. Rules: `references/groups.md`.
 
 ## Addressing people (every mode)
 

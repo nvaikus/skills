@@ -73,6 +73,26 @@ def run(cfg):
     bridge.serve()
 
 
+def title_main(cfg, a) -> int:
+    from . import runner, titles
+    text = " ".join(a.text) if a.text else sys.stdin.read()
+    if not text.strip():
+        print("claude-tg title: empty text (args or stdin)", file=sys.stderr)
+        return 2
+    env = runner.ChildEnv("", cfg["env_files"], cfg["claudeai_connectors"]).get()
+    try:
+        cwd = str(config.STATE_DIR) if config.STATE_DIR.is_dir() else env["HOME"]
+        name = titles.name(config.claude_bin(cfg), text.strip(), env, cwd, cfg["title_model"])
+    except Exception as e:  # timeout, claude missing: the caller falls back
+        print(f"claude-tg title: {e}", file=sys.stderr)
+        return 1
+    if not name:
+        print("claude-tg title: no name from the title model", file=sys.stderr)
+        return 1
+    print(name)
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="claude-tg", description=TOP, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -211,6 +231,17 @@ def main(argv=None):
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("icon", help="emoji from getForumTopicIconStickers, off, or base (the topic's /icon or "
                                 "spawn --icon; none = off)")
+    s = sub.add_parser("topic-rename", help="rename a forum topic (editForumTopic; the bot's /status title too)",
+                       description="NAME as given (<= 128 chars, no cut to the title budget: pick it short, e.g. via "
+                                   "`claude-tg title`). Gone topic = exit 1. Prints JSON {thread, title, unchanged}.")
+    s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
+    s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
+    s.add_argument("name", nargs="+")
+    s = sub.add_parser("title", help="short topic name (<= 24 chars, 1-3 words) for TEXT (args or stdin)",
+                       description="Same title model + rules as the auto-title of implicit topics, for other tools "
+                                   "naming topics (e.g. github-tasks). Prints one line; exit 1 = the model gave "
+                                   "nothing (caller falls back), 2 = empty text.")
+    s.add_argument("text", nargs="*")
     s = sub.add_parser("topic-settings", help="set or clear a topic's --settings file (future runs)",
                        description="The bot keeps spawn --settings per topic for every later run; this changes it via "
                                    "the service (scripts never write state.json). PATH: absolute JSON object; off = "
@@ -316,7 +347,9 @@ def main(argv=None):
         if a.cmd == "notify-delete":
             from . import notify
             return notify.delete_main(cfg, a)
-        if a.cmd in ("spawn", "send", "alive", "topic-icon", "topic-settings", "topic-delete"):
+        if a.cmd == "title":
+            return title_main(cfg, a)
+        if a.cmd in ("spawn", "send", "alive", "topic-icon", "topic-settings", "topic-delete", "topic-rename"):
             from . import inbox
             return inbox.main(cfg, a)
         if a.cmd == "group":

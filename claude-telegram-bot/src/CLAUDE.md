@@ -33,13 +33,14 @@ Keep this file one screen. Entry `claude-tg.py` → `src/main.py:main`.
 | `general.py` | General mention detection (UTF-16 entity offsets), ring buffer per chat, context block |
 | `ui.py` | every bot-facing string (`S[lang][key]`, en + ru, same keys), tool → phase, status line |
 | `runner.py` | claude argv, env scrub, process group kill, one-shot titles |
+| `titles.py` | topic-name budget `TITLE_MAX` (24), title prompts, word-boundary `fit`; `claude-tg title` |
 | `streamjson.py` / `fmt.py` | pure parsers: stream-json → events; markdown → Telegram HTML + splitter |
 | `media.py` | attachment download (cloud ≤ 20 MB, local server above, `Skipped`), model-cli STT |
 | `localapi.py` | `claude-tg local-api`: user unit `claude-tg-botapi`, `serve` resolves secret refs (env/cred) into env and execs the server, probe for doctor |
 | `guard.py` | leak filter: sorted N-word window hashes of `protected_paths`, `match` / `file_leak`; `Bridge.leak`, `Worker.answer` / `_stream` (one notice per turn, tripped block stops streaming), detailed `Status`, `fail`, `notify` |
 | `notify.py` | `claude-tg notify`: owner chat, topic registry, `--file`, `--replace` / `--keep`, caches in `notify.json` / `cache.json` (`docs/notify.md`) |
 | `triage.py` | `claude-tg triage` (writes only config `notify_triage`) + `after_notify`: gating (`skip`), `inbox.spawn` of a "🔎" topic, dedupe by `signature` in `STATE_DIR/triage.json` under flock, button via `editMessageReplyMarkup`; never raises into notify |
-| `inbox.py` | `spawn` / `send` / `alive` / `topic-icon`: inbox files (CLI side) + `apply` (bot side), liveness from `/proc` env + pending + inbox |
+| `inbox.py` | `spawn` / `send` / `alive` / `topic-icon` / `topic-rename`: inbox files (CLI side) + `apply` (bot side), liveness from `/proc` env + pending + inbox |
 | `groups.py` | `claude-tg group list/add/remove`: rewrites only config `owner_groups` (atomic, mode kept; tenants can't touch the config path), chat id from the bot's journal (`service.journal`), getChat/getChatMember checks, `service.restart` |
 | `peerbots.py` | `claude-tg bots list/add/remove`: rewrites only config `allowed_bots` (`groups.write_key`); `@name` → id from `ignored: bot ID (@name)` journal lines |
 | `botprofile.py` | `claude-tg profile`: getMy*/setMy* name, descriptions, profile photo |
