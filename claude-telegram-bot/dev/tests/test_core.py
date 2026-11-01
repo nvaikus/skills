@@ -3026,6 +3026,9 @@ class Triage(unittest.TestCase):
         self.assertNotEqual(a, self.tr.signature(7, "mail", self.EVENT))
         self.assertTrue(self.tr.title(self.EVENT).startswith("\U0001f50e cud-limits: ClickHouse down"))
         self.assertLessEqual(len(self.tr.title("x" * 300)), self.tr.TITLE + 2)
+        ev = "<b>github-tasks-dispatch</b> \u2014 \u274c failed in 30.9s\n<pre>x</pre>"
+        self.assertEqual(self.tr.title(ev), "\U0001f50e github-tasks-dispatch: failed")
+        self.assertEqual(self.tr.first_line("<b>a &amp; b</b>"), "a & b")
 
     def test_new_topic_then_dedupe_with_button(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):

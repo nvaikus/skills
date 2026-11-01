@@ -11,6 +11,7 @@ N = 2, 4, 8, ... (a deleted topic -> a new one). State: STATE_DIR/triage.json un
 The notification gets a URL button to the triage topic (editMessageReplyMarkup after the send).
 Every failure here is a stderr warning: notify's output and exit code stay as without triage."""
 import fcntl
+import html
 import json
 import os
 import re
@@ -28,6 +29,8 @@ OK_MARK = "✅"
 MARKS = re.compile("[❌⚠❗‼\U0001f525\U0001f494\U0001f6a8✅️]")
 NOISE = re.compile(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b|\d+", re.I)
 GONE = ("message thread not found", "TOPIC_")
+TAGS = re.compile(r"<[^>]+>")
+TOOK = re.compile(r"\s+in\s+\d+(?:\.\d+)?\s*(?:ms|s|m|min|h)\b")  # "failed in 30.9s": run time, noise in a title
 
 PROMPT = """A system event was just reported to the owner via `claude-tg notify`. Investigate it.
 
@@ -52,7 +55,9 @@ def settings(cfg: dict) -> dict:
 
 
 def first_line(text: str) -> str:
-    return next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    """First non-empty line as plain text: notify text is HTML, a topic name / show line is not."""
+    lines = (html.unescape(TAGS.sub("", ln)).strip() for ln in (text or "").splitlines())
+    return next((ln for ln in lines if ln), "")
 
 
 def signature(chat, key: str, text: str) -> str:
@@ -61,7 +66,7 @@ def signature(chat, key: str, text: str) -> str:
 
 
 def title(text: str) -> str:
-    t = " ".join(MARKS.sub("", first_line(text)).replace(" — ", ": ").split()).strip(" :-")
+    t = " ".join(TOOK.sub("", MARKS.sub("", first_line(text))).replace(" — ", ": ").split()).strip(" :-")
     return "\U0001f50e " + (t if len(t) <= TITLE else t[:TITLE - 1].rstrip() + "…")
 
 
