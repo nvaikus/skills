@@ -3482,7 +3482,8 @@ class ShortTitles(unittest.TestCase):
         from src import titles
         with mock.patch.object(runner, "one_shot", side_effect=["Продукт против конкурентов и всех", "Продукт vs аналоги"]):
             self.assertEqual(titles.name("c", "t", {}, "/", "m"), "Продукт vs аналоги")
-        with mock.patch.object(runner, "one_shot", return_value="Продукт против конкурентов и всех"), \
+        with mock.patch.object(runner, "one_shot", side_effect=["Продукт против конкурентов и всех",
+                                                                "Имя для текста: длинный пересказ инструкции"]), \
                 mock.patch("sys.stderr") as err:
             self.assertEqual(titles.name("c", "t", {}, "/", "m"), "Продукт против")
         self.assertIn("cut on a word boundary", "".join(c[0][0] for c in err.write.call_args_list))

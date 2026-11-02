@@ -58,7 +58,7 @@ def name(claude, text: str, env, cwd, model, n: int = TITLE_MAX, timeout: int = 
     if len(t) > n:
         t2 = _line(runner.one_shot(claude, SHORTER_PROMPT.format(name=t, n=n, t=text[:3000]), env, cwd, model,
                                    timeout))
-        t = t2 if t2 and len(t2) <= n else (t2 or t)
+        t = t2 if t2 and len(t2) <= n else t  # a long retry is often junk (the prompt echoed): keep the first
         if len(t) > n:
             warn(f"model name {t!r} is over {n} chars, cut on a word boundary: {fit(t, n)!r}")
     return fit(t, n)
