@@ -74,15 +74,13 @@ def run(cfg):
 
 
 def title_main(cfg, a) -> int:
-    from . import runner, titles
+    from . import titles
     text = " ".join(a.text) if a.text else sys.stdin.read()
     if not text.strip():
         print("claude-tg title: empty text (args or stdin)", file=sys.stderr)
         return 2
-    env = runner.ChildEnv("", cfg["env_files"], cfg["claudeai_connectors"]).get()
     try:
-        cwd = str(config.STATE_DIR) if config.STATE_DIR.is_dir() else env["HOME"]
-        name = titles.name(config.claude_bin(cfg), text.strip(), env, cwd, cfg["title_model"])
+        name = titles.for_text(cfg, text)
     except Exception as e:  # timeout, claude missing: the caller falls back
         print(f"claude-tg title: {e}", file=sys.stderr)
         return 1

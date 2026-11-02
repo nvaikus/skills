@@ -3299,6 +3299,12 @@ class Triage(unittest.TestCase):
     CFG = dict(config.DEFAULTS, owner_id=7, notify_triage={"enabled": True})
     EVENT = "cud-limits — ❌ ClickHouse down since 12:01 (try 3)\nHTTP Error 500\nhost home"
 
+    def setUp(self):
+        from src import titles  # the title model is never called from tests
+        p = mock.patch.object(titles, "for_text", return_value="ClickHouse down")
+        self.namer = p.start()
+        self.addCleanup(p.stop)
+
     def args(self, **kw):
         base = dict(triage=None, keep=None, replace=None, file=None, button=None)
         return mock.Mock(**dict(base, **kw))
@@ -3345,10 +3351,17 @@ class Triage(unittest.TestCase):
         self.assertEqual(self.tr.signature(7, "k", "job \u2014 \u274c failed"),
                          self.tr.signature(7, "k", "job \u2014 failed (2): 3f9a2c1d"))
         self.assertNotEqual(a, self.tr.signature(7, "mail", self.EVENT))
-        self.assertTrue(self.tr.title(self.EVENT).startswith("\U0001f50e cud-limits: ClickHouse down"))
-        self.assertLessEqual(len(self.tr.title("x" * 300)), self.tr.TITLE + 2)
-        ev = "<b>github-tasks-dispatch</b> \u2014 \u274c failed in 30.9s\n<pre>x</pre>"
-        self.assertEqual(self.tr.title(ev), "\U0001f50e github-tasks-dispatch: failed")
+        with mock.patch("sys.stderr") as err:  # no cfg: word cut to the budget, with a warning
+            self.assertEqual(self.tr.title(self.EVENT), "\U0001f50e cud-limits: ClickHouse")
+            self.assertLessEqual(len(self.tr.title("x" * 300)), 24)
+        self.assertTrue(err.write.called)
+        self.assertEqual(self.tr.title("<b>backup</b> \u2014 \u274c failed in 30.9s\n<pre>x</pre>"),
+                         "\U0001f50e backup: failed")
+        self.assertEqual(self.tr.title(self.EVENT, self.CFG), "\U0001f50e ClickHouse down")
+        self.assertIn("HTTP Error 500", self.namer.call_args[0][1])
+        self.namer.side_effect = TimeoutError("slow")
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self.tr.title(self.EVENT, self.CFG), "\U0001f50e cud-limits: ClickHouse")
         self.assertEqual(self.tr.first_line("<b>a &amp; b</b>"), "a & b")
 
     def test_new_topic_then_dedupe_with_button(self):
@@ -3361,7 +3374,7 @@ class Triage(unittest.TestCase):
             self.assertEqual((out["new"], out["count"], out["thread"]), (True, 1, 901))
             create = [p for m, p in bot.calls if m == "createForumTopic"]
             self.assertEqual(len(create), 1)
-            self.assertTrue(create[0]["name"].startswith("\U0001f50e cud-limits"))
+            self.assertEqual(create[0]["name"], "\U0001f50e ClickHouse down")
             item = json.loads(next((Path(d) / "inbox").glob("*.json")).read_text())
             self.assertIn("HTTP Error 500", item["msg"]["text"])
             self.assertIn("notify topic `system`", item["msg"]["text"])
@@ -3464,6 +3477,15 @@ class ShortTitles(unittest.TestCase):
         out.write.assert_any_call("Альба к неврологу")
         with mock.patch.object(runner, "one_shot", return_value=""), mock.patch("sys.stderr"):
             self.assertEqual(m.title_main(cfg, a), 1)
+
+    def test_name_retries_when_model_overshoots(self):
+        from src import titles
+        with mock.patch.object(runner, "one_shot", side_effect=["Продукт против конкурентов и всех", "Продукт vs аналоги"]):
+            self.assertEqual(titles.name("c", "t", {}, "/", "m"), "Продукт vs аналоги")
+        with mock.patch.object(runner, "one_shot", return_value="Продукт против конкурентов и всех"), \
+                mock.patch("sys.stderr") as err:
+            self.assertEqual(titles.name("c", "t", {}, "/", "m"), "Продукт против")
+        self.assertIn("cut on a word boundary", "".join(c[0][0] for c in err.write.call_args_list))
 
     def test_topic_rename_and_store_op(self):
         from src import inbox

@@ -20,11 +20,12 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, ui
+from . import config, titles, ui
 from .botapi import TgError
 
 DEFAULTS = {"enabled": False, "cooldown_minutes": 360, "cwd": None, "chat": None, "topics": [], "exclude": []}
-TITLE = 64
+TITLE = titles.TITLE_MAX - 2  # the "🔎 " prefix takes 2 of the topic name budget
+NAME_TIMEOUT = 30  # title model inside notify: a slow model must not hold the failing job long
 OK_MARK = "✅"
 MARKS = re.compile("[❌⚠❗‼\U0001f525\U0001f494\U0001f6a8✅️]")
 NOISE = re.compile(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b|\d+", re.I)
@@ -65,9 +66,19 @@ def signature(chat, key: str, text: str) -> str:
     return f"{chat}:{key}:{' '.join(line.split())}"
 
 
-def title(text: str) -> str:
+def title(text: str, cfg: dict = None) -> str:
+    """🔎 + a short name: the plain first line when it fits, else the title model (cfg given), else a word cut
+    with a stderr warning."""
     t = " ".join(TOOK.sub("", MARKS.sub("", first_line(text))).replace(" — ", ": ").split()).strip(" :-")
-    return "\U0001f50e " + (t if len(t) <= TITLE else t[:TITLE - 1].rstrip() + "…")
+    if len(t) > TITLE and cfg:
+        body = html.unescape(TAGS.sub("", text or "")).strip()
+        try:
+            t = titles.for_text(cfg, TOOK.sub("", MARKS.sub("", body))[:600], TITLE, NAME_TIMEOUT) or t
+        except Exception as e:  # timeout, claude missing
+            titles.warn(f"triage name: {e}")
+    if len(t) > TITLE:
+        titles.warn(f"triage topic name cut on a word boundary: {titles.fit(t, TITLE)!r}")
+    return "\U0001f50e " + titles.fit(t, TITLE)
 
 
 def skip(cfg: dict, a, topic, text: str, blocked=False, env=None):
@@ -173,7 +184,7 @@ def open_topic(bot, cfg: dict, key: str, text: str, r: dict, now=None, src=None)
             out = {"thread": e["thread"], "link": e["link"], "new": False, "count": e["count"]}
         else:
             chat = config.chat_ref(cfg, s["chat"]) if s["chat"] else r["chat"]
-            sp = inbox.spawn(bot, cfg, title(text), s["cwd"], prompt(key, text, now, src or origin()), silent=True,
+            sp = inbox.spawn(bot, cfg, title(text, cfg), s["cwd"], prompt(key, text, now, src or origin()), silent=True,
                              show=ui.t(ui.lang(cfg), "triage_show", event=first_line(text)[:300]), chat=chat)
             e = {"thread": sp["thread"], "chat": sp.get("chat", chat), "link": sp["link"], "at": now, "count": 1}
             out = {"thread": e["thread"], "link": e["link"], "new": True, "count": 1}
