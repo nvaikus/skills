@@ -10,6 +10,7 @@ EPILOG = """examples:
 
 Photos come at their original size (OLX's own width x height). Files are named <id>-NN.jpg and
 overwritten on rerun. -j adds url. Listing without photos -> nothing written, a note.
+A photo gone from the CDN (404) is skipped with a note; the rest still download, exit 0.
 """
 
 
@@ -26,7 +27,9 @@ def run(ctx, args):
         raise UsageError("--max must be >= 1")
     o, _ = offers.lookup(args.ref, query.site(query.flags_of(args), ctx.cfg))
     out = args.out or f"olx-{o['id']}"
-    rows = photos.download(o, out, args.max)
+    rows, missing = photos.download(o, out, args.max)
+    if missing:
+        ctx.note(f"photo {', '.join(map(str, missing))} gone from the CDN, skipped")
     if not rows:
         ctx.note(f"listing {o['id']} has no photos")
     elif args.sheet:

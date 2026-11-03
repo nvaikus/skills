@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from ..core import http
-from ..core.errors import CliError, UsageError
+from ..core.errors import Broken, CliError, UsageError
 
 SHEET_CELL = 400   # px per tile side
 SHEET_COLS = 4
@@ -22,17 +22,26 @@ def links(o):
 
 
 def download(o, out_dir, limit=None):
-    """-> rows {n, path, bytes, url}. Files: <dir>/<id>-NN.jpg (overwritten)."""
+    """-> (rows {n, path, bytes, url}, missing [n]). Files: <dir>/<id>-NN.jpg (overwritten).
+    A photo the CDN no longer has (404/410) is skipped into `missing`, not fatal: listings keep dead photo links."""
     todo = links(o)[:limit] if limit else links(o)
     d = Path(out_dir).expanduser()
     d.mkdir(parents=True, exist_ok=True)
-    rows = []
+    rows, missing = [], []
     for n, url in todo:
-        data = http.get(url, want="bytes")
+        try:
+            data = http.get(url, want="bytes")
+        except Broken:
+            raise
+        except CliError as e:
+            if e.status not in (404, 410):
+                raise
+            missing.append(n)
+            continue
         p = d / f"{o['id']}-{n:02d}.jpg"
         p.write_bytes(data)
         rows.append({"n": n, "path": str(p), "bytes": len(data), "url": url})
-    return rows
+    return rows, missing
 
 
 def sheet(o, rows, out_dir):

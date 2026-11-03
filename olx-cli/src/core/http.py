@@ -122,7 +122,8 @@ def get(url, params=None, want="json"):
         if status >= 400:
             body = _json(text)
             health(u.netloc, u.path, "http", status)
-            raise CliError(f"HTTP {status} from {u.netloc}{u.path}: {message(body)}", status=status, body=body)
+            detail = ctype or "no body" if want == "bytes" else message(body)  # an image body is binary, never print it
+            raise CliError(f"HTTP {status} from {u.netloc}{u.path}: {detail}", status=status, body=body)
         if want == "bytes":  # HTML where an image was expected
             health(u.netloc, u.path, "schema", "HTML instead of a file")
             raise Broken(f"OLX answered HTML instead of a file on {u.netloc}{u.path} (HTTP {status})", status=status)

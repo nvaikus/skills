@@ -12,7 +12,7 @@ from unittest import mock
 
 from support import ROOT, TMP, fixture, run, write_config  # noqa: E402  (sets the test environment first)
 
-from src.api import offers  # noqa: E402
+from src.api import offers, photos  # noqa: E402
 from src.core import http  # noqa: E402
 from src.core.errors import Broken, CliError  # noqa: E402
 
@@ -334,6 +334,18 @@ class Photos(Base):
         self.assertIn("olxcdn.com", data[0]["url"])
         self.assertEqual(run("photos", "674669746", "--max", "0")[0], 2)
         self.assertEqual(run("photos", "123456789", "-o", d)[0], 2)
+
+    def test_dead_photo_skipped(self):
+        d = f"{TMP}/dead"
+        o = fixture("offer.json")["data"]
+        dead = urllib.parse.urlparse(photos.links(o)[1][1]).path
+        self.fake.fail[dead] = CliError("HTTP 404", status=404)
+        rc, out, err = run("photos", "674669746", "-o", d, "--max", "3")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([ln.split("\t")[0] for ln in out.strip().split("\n")[1:]], ["1", "3"])
+        self.assertIn("photo 2 gone", err)
+        self.fake.fail[dead] = CliError("HTTP 500", status=500)
+        self.assertEqual(run("photos", "674669746", "-o", d, "--max", "3")[0], 1)
 
     def test_no_photos(self):
         o = fixture("offer.json")
