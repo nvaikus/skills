@@ -12,8 +12,9 @@ import urllib.request
 from . import paths
 from .errors import Broken, CliError
 
-UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/130.0.0.0 Safari/537.36")
+# Live-proven 2026-11-05: a browser UA (Chrome, Firefox) without the rest of a browser's headers gets 403
+# from CloudFront on /api/v1/offers/<id>/ (search, regions and HTML pages still pass); a plain client UA passes everywhere.
+UA = "olx-cli/1.0"
 TIMEOUT = 20      # seconds per attempt
 RETRIES = 2       # 429 / 5xx / network only
 MAX_WAIT = 30     # a longer Retry-After is reported, not slept through

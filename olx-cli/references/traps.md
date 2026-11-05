@@ -19,7 +19,7 @@
 ## When it breaks (exit 3)
 
 - The endpoint is unofficial: CloudFront / bot walls or schema changes can stop it any day. Every request outcome goes to `~/.claude/olx/health.tsv` (`ts host path ok|blocked|schema|http|network detail`); `olx doctor` shows 30-day counts and the last failure. That file is the experiment's answer to "how often does it break".
-- Known trigger: CloudFront 403s a TLS ClientHello with the `post_handshake_auth` extension (Python urllib's default context, `curl --http1.1`). `core/http.tls_context()` turns it off — never revert. A new 403 → compare with `curl -s -o /dev/null -w '%{http_code}' 'https://www.olx.pt/api/v1/offers/?query=x&limit=1'` (HTTP/2): curl ok + CLI blocked = fingerprinting again.
+- Known trigger: CloudFront 403s a TLS ClientHello with the `post_handshake_auth` extension (Python urllib's default context, `curl --http1.1`). `core/http.tls_context()` turns it off — never revert. A new 403 → compare with `curl -s -o /dev/null -w '%{http_code}' 'https://www.olx.pt/api/v1/offers/?query=x&limit=1'` (HTTP/2): curl ok + CLI blocked = fingerprinting again. Also UA-based: a browser UA without browser headers is 403'd on `/offers/<id>/` (2026-11-05), so `core/http.UA` stays a plain client string.
 - Schema change → `need()` guards in `api/olx.py` / `offers.py` name the missing field; re-record fixtures from a live response and fix the parser.
 - Fallback if the API is walled for good: drive the site in a real browser with `playwright-cli`. Not built.
 
