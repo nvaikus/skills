@@ -56,6 +56,7 @@ class Bridge:
         self.child_env = runner.ChildEnv(token, cfg["env_files"], cfg["claudeai_connectors"])
         self.claude = config.claude_bin(cfg)
         self.workers = {}  # topic key (config.topic_key) -> Worker
+        self.starting = {}  # topic key -> last `github-tasks turn-start` thread (turn_end waits for it)
         self.bursts = {}  # topic key (GENERAL too) -> [msgs] still collecting, see collect()
         self.timers = {}
         self.lock = threading.Lock()
@@ -121,26 +122,49 @@ class Bridge:
         """Owner group name of a chat, else `home` (the bot's home chat: private, or the group in group mode)."""
         return next((n for n, c in self.groups.items() if c == chat), "home")
 
+    def turn_start(self, chat, thread, msgs):
+        """People wrote in a topic: `github-tasks turn-start` moves an open Needs Human of this topic that waits on one
+        of them to In progress (the session need not remember it). Only real Telegram messages from people (never
+        bots, scripts' inbox prompts, nudges); background, errors only logged; no github-tasks -> nothing."""
+        uids = list(dict.fromkeys(str(m["from"]["id"]) for m in msgs if (m.get("from") or {}).get("id")
+                                  and not is_bot(m) and not m.get("sender_chat")))
+        exe = uids and thread != GENERAL and shutil.which("github-tasks", path=self.env.get("PATH"))
+        if not exe:
+            return
+        argv = [exe, "turn-start", f"--thread={chat}:{thread}", f"--from={','.join(uids)}",
+                *([f"--owner={self.owner}"] if self.owner else [])]
+        t = threading.Thread(target=self._hook, args=(argv, "turn-start", thread, '"flipped": ["'), daemon=True,
+                             name=f"turn-start-{thread}")
+        with self.lock:
+            self.starting[self.key(chat, thread)] = t
+        t.start()
+
     def turn_end(self, chat, thread, waits=False):
         """A topic turn ended: `github-tasks turn-end` nudges the session about a Needs Human of this topic it forgot
-        to move (waits on nobody), or (`waits`: the answer starts with a person's mention) about registering this
-        untracked topic as a board task. Background, errors only logged; no github-tasks -> nothing."""
+        to move (waits on nobody), or (`waits`: the answer starts with a person's mention) about recording the wait
+        of an item `turn-start` moved to In progress, or registering this untracked topic as a board task.
+        Background, after this topic's pending turn-start; errors only logged; no github-tasks -> nothing."""
         exe = shutil.which("github-tasks", path=self.env.get("PATH"))
         if exe:
-            threading.Thread(target=self._turn_end, args=(exe, chat, thread, waits), daemon=True,
+            argv = [exe, "turn-end", f"--thread={chat}:{thread}", *(["--waits"] if waits else [])]
+            with self.lock:
+                before = self.starting.get(self.key(chat, thread))
+            threading.Thread(target=self._hook, args=(argv, "turn-end", thread, '": ["', before), daemon=True,
                              name=f"turn-end-{thread}").start()
 
-    def _turn_end(self, exe, chat, thread, waits=False):
+    def _hook(self, argv, what, thread, hit, before=None):
+        if before is not None:
+            before.join(TURN_END_TIMEOUT)  # its flip first: turn-end must see the item In progress, never nudge it
         try:
-            r = subprocess.run([exe, "turn-end", f"--thread={chat}:{thread}", *(["--waits"] if waits else [])], env=self.env, stdin=subprocess.DEVNULL,
-                               capture_output=True, text=True, timeout=TURN_END_TIMEOUT)
+            r = subprocess.run(argv, env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                               timeout=TURN_END_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired) as e:
-            log.warning("github-tasks turn-end topic %s: %s", thread, e)
+            log.warning("github-tasks %s topic %s: %s", what, thread, e)
             return
         if r.returncode:
-            log.warning("github-tasks turn-end topic %s: exit %s %s", thread, r.returncode, r.stderr.strip()[-300:])
-        elif '"nudged": ["' in r.stdout:
-            log.info("github-tasks turn-end topic %s: %s", thread, r.stdout.strip()[-200:])
+            log.warning("github-tasks %s topic %s: exit %s %s", what, thread, r.returncode, r.stderr.strip()[-300:])
+        elif hit in r.stdout:
+            log.info("github-tasks %s topic %s: %s", what, thread, r.stdout.strip()[-200:])
 
     def topic_url(self, chat, thread) -> str:
         return inbox.topic_link(None if chat < 0 else self.username, thread, chat if chat < 0 else None)
@@ -598,6 +622,7 @@ class Bridge:
             if thread is None:
                 return
         # a group General mention stays in General: a short-lived session answers it there (notify.general_prompt)
+        self.turn_start(chat, thread, msgs)
         self.worker(chat, thread).put(msgs)
 
     def note_topic(self, chat, thread, msg):

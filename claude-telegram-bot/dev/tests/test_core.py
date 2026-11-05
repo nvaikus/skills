@@ -14,6 +14,9 @@ from src import botapi  # noqa: E402
 from src.botapi import TgError  # noqa: E402
 from src.store import Store  # noqa: E402
 
+_which = bridge.shutil.which  # hermetic: a test never runs the real github-tasks hooks (tests patch `which` to see them)
+bridge.shutil.which = lambda cmd, *a, **k: None if cmd == "github-tasks" else _which(cmd, *a, **k)
+
 SID = "8e5b94ae-ad9e-466e-9d4b-070cef431048"
 
 
@@ -943,6 +946,68 @@ class TurnEnd(Inject):
                 b.turn_end(-1004378341415, 1490, True)
                 self.assertTrue(done.wait(3))
             self.assertEqual(run.call_args[0][0][-1], "--waits")
+
+
+class TurnStart(Inject):
+    """A person's Telegram message in a topic -> `github-tasks turn-start` (auto Needs Human -> In progress)."""
+
+    def hook(self, b, msgs, thread=50, chat=1):
+        done = threading.Event()
+        with mock.patch.object(bridge.shutil, "which", return_value="/x/github-tasks"), \
+                mock.patch.object(bridge.subprocess, "run", side_effect=lambda *a, **k: done.set() or
+                                  mock.Mock(returncode=0, stdout='{"flipped": []}', stderr="")) as run:
+            b.turn_start(chat, thread, msgs)
+            done.wait(1)
+        return run
+
+    def test_people_only_with_owner(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            msgs = [dict(m, **{"from": {"id": 7}}) for m in self.msg(1, "да")] + \
+                [{"message_id": 2, "from": {"id": 7}}, {"message_id": 3, "from": {"id": 9, "is_bot": True}},
+                 {"message_id": 4, "from": {"id": 8}}]
+            run = self.hook(b, msgs, chat=-1004378341415, thread=1490)
+            self.assertEqual(run.call_args[0][0], ["/x/github-tasks", "turn-start", "--thread=-1004378341415:1490",
+                                                   "--from=7,8", "--owner=1"])
+            self.assertIn(b.key(-1004378341415, 1490), b.starting)
+
+    def test_bots_synthetic_general_skip(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            self.hook(b, [{"message_id": 3, "from": {"id": 9, "is_bot": True}}]).assert_not_called()
+            self.hook(b, self.msg(1, "inbox prompt")).assert_not_called()  # no `from`: a script's message
+            self.hook(b, [{"message_id": 2, "from": {"id": 7}}], thread=bridge.GENERAL).assert_not_called()
+
+    def test_flush_runs_it_inbox_does_not(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(bridge.Bridge, "turn_start") as ts, mock.patch.object(bridge.Bridge, "worker") as wk:
+            b = self.bridge(d)
+            msgs = [{"message_id": 2, "from": {"id": 1}, "chat": {"id": 1}}]
+            b.bursts[b.key(1, 50)] = msgs
+            t = b.timers[b.key(1, 50)] = object()
+            b.flush(1, 50, t)
+            ts.assert_called_once_with(1, 50, msgs)
+            wk.return_value.put.assert_called_once_with(msgs)
+
+    def test_turn_end_waits_for_turn_start(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            b = self.bridge(d)
+            order, gate = [], threading.Event()
+
+            def run(argv, **k):
+                if argv[1] == "turn-start":
+                    gate.wait(3)
+                order.append(argv[1])
+                return mock.Mock(returncode=0, stdout="{}", stderr="")
+            with mock.patch.object(bridge.shutil, "which", return_value="/x/github-tasks"), \
+                    mock.patch.object(bridge.subprocess, "run", side_effect=run):
+                b.turn_start(1, 50, [{"message_id": 2, "from": {"id": 1}}])
+                b.turn_end(1, 50, True)
+                until(lambda: True)
+                self.assertEqual(order, [])
+                gate.set()
+                until(lambda: len(order) == 2)
+            self.assertEqual(order, ["turn-start", "turn-end"])
 
 
 class Callbacks(TopicCommands):
