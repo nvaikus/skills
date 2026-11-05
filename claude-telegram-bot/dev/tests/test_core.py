@@ -1107,6 +1107,8 @@ class ServiceMode(unittest.TestCase):
         self.assertNotIn("User=", t)
         self.assertNotIn(str(config.SYSTEM_TOKEN), t)
         self.assertIn(f"LoadCredential=token:{config.SYSTEM_TOKEN}", service.unit_text(cfg))
+        for mode in ("user", "system"):  # child OOM must not take down the bot
+            self.assertIn("OOMPolicy=continue", service.unit_text(cfg, mode))
 
     def test_mode_detection(self):
         with tempfile.TemporaryDirectory() as d:

@@ -39,6 +39,8 @@ ExecStart={python} {entry} run
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
+# a run's child (ffmpeg, build) hitting the memory cap: kill only it, not the bot and every session
+OOMPolicy=continue
 
 [Install]
 WantedBy=multi-user.target
@@ -57,6 +59,8 @@ ExecStart={python} {entry} run
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
+# a run's child (ffmpeg, build) hitting the memory cap: kill only it, not the bot and every session
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target
