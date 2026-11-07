@@ -68,7 +68,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 5 | agent | service stopped (or not installed yet): `claude-tg chats` → `chat` row = `group_id`, `user` rows = ids for `allowed_users`. Reads pending updates without confirming them; 409 = the service is polling, stop it first. Those messages run when the bot starts. Empty (messages sent before the bot was admin are never delivered): `tg-cli chats "<title>"` → the `-100…` row (a second plain-id row = pre-migration group, ignore), `tg-cli history <id> -j` → `sender_id`s |
 | 6 | agent | config `"group_id": -100…, "allowed_users": [id, id]` → `claude-tg doctor` (`group`, `group_admin`, `allowed_users` ok) → `claude-tg install` / `restart` |
 
-- Runtime behavior (routing, General and mentions there, sender tags, limits, topic links): SKILL.md "Group mode".
+- Runtime behavior (routing, General and mentions there, sender tags, limits, topic links): `groups.md` (Group mode).
 - Switching an existing bot between modes: notify topics are recreated in the new chat; old topic sessions in state.json point at the old chat - start from a fresh bot or clear `topics`.
 
 ## Owner groups (private mode, extra forum groups)
@@ -80,7 +80,7 @@ Restart after edits or skill updates: `claude-tg restart` (waits until no run is
 | 3 | agent | `claude-tg group list` / `claude-tg doctor` (`group <name>`, `group <name> admin` ok). Never edit the config by hand |
 
 - Topic state is keyed `"<chat>:<thread>"` for these groups; private-chat topics keep their plain keys.
-- Behavior (who is heard, General, limits): SKILL.md "Owner groups".
+- Behavior (who is heard, General, limits): `groups.md` (Owner groups).
 - A supergroup id changes when Telegram migrates a basic group: use the `-100…` id that `doctor` accepts.
 
 ## Files over 20 MB (optional local Bot API server)

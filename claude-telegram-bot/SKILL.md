@@ -53,8 +53,7 @@ claude-tg local-api install|status|uninstall   # optional local Bot API server: 
 
 ## Owner groups (private mode + extra forum groups)
 
-- One owner, a project's topics in their own forum group: user creates it and makes the bot admin with Manage Topics; connect only via `claude-tg group add NAME [ID]` / `remove NAME`, never by editing the config.
-- Then `spawn` / `send` / `alive` / `topic-icon` / `topic-settings` / `topic-delete` / `topic-rename` / `notify` / `notify-delete` take `--chat NAME|ID`; a `t.me/c/...` link carries its chat. Rules: `references/groups.md`.
+- One owner, a project's topics in their own forum group (connect, `--chat`, who is heard) → read `references/groups.md` before `group add` or any `--chat` call.
 
 ## Addressing people (every mode)
 
