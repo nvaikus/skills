@@ -8,6 +8,7 @@ Keep this file one screen. Entry `tg-cli.py` → `src/main.py:main`; re-execs un
 - A command never talks to Telethon directly and never prints: it calls `api/`, hands rows to `ctx.write`. `-j` / `--fields` / `--no-header` come free from `main`.
 - stdout = data only; stderr = `# ` notes and `tg-cli: <error>`. BrokenPipe → exit 0.
 - Exit: 0 ok · 1 Telegram/runtime · 2 usage/config/not logged in/not found/ambiguous · 3 refused (nothing sent) · 4 needs Premium · 130. Raise `CliError`/`UsageError`/`Refused`/`Cannot`; never branch on message text.
+- `tg.connect()` holds the per-account `<session>.lock` (flock; msvcrt on Windows) until `client.disconnect()` (wrapped) or exit, re-entrant per process. Never open a Telethon session without it: concurrent writers = sqlite "database is locked".
 - Credentials never in argv: API keys from env/config, codes and 2FA from a tty prompt.
 - `send` has no preview/--force by user decision: "if sent, then sent". The rail that stays: an ambiguous or unknown target is exit 2 and nothing is sent. `WRITE = True` marks it (and login/logout) so tests never hit them live.
 - `--public` never passes `allow_paid_stars`; out of free slots is exit 3.

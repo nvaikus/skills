@@ -1,11 +1,24 @@
 """Telethon boundary: import, connect, raw TL requests, error translation. Tests patch this module."""
 import os
+import sys
+import time
 
 from .. import VERSION
 from . import config
 from .errors import Cannot, CliError, UsageError
 
 FLOOD_SLEEP = 30  # FloodWait up to this many seconds is slept through; longer -> exit 1
+LOCK_TIMEOUT = 300  # s to wait for another process using the same account; env TG_CLI_LOCK_TIMEOUT overrides
+BUSY_TIMEOUT_MS = 30000  # sqlite busy_timeout on the session db: backstop for brief foreign writes
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
 
 
 def telethon():
@@ -17,7 +30,89 @@ def telethon():
     return t
 
 
-def connect(cfg, account, need_auth=True):
+# ---- per-account inter-process lock ------------------------------------------
+# Telethon's SQLite session keeps a write transaction open while the client runs, so a second process on the
+# same account dies with "database is locked" (and two live clients on one auth key are unsafe anyway). Every
+# connect() takes an exclusive flock on <session>.lock first and holds it until client.disconnect() or process
+# exit; other users of the account wait (bounded) instead of crashing. Re-entrant within one process.
+
+_held = {}  # lock path -> [fd, refcount]
+
+
+def _try_lock(fd):
+    if fcntl:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+    if msvcrt:  # lock one byte far past the pid text so other processes can still read the holder
+        os.lseek(fd, 1 << 20, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    return True  # no locking primitive: degrade to the old behavior (sqlite "locked" -> clear exit 1)
+
+
+def _holder(lock):
+    try:
+        with open(lock, encoding="utf-8", errors="replace") as f:
+            return f.read(200).strip()
+    except OSError:
+        return ""
+
+
+def lock_account(path, timeout=None):
+    """Take the account lock for session file `path`; wait up to `timeout` s (None: env / LOCK_TIMEOUT)."""
+    lock = str(path) + ".lock"
+    if lock in _held:
+        _held[lock][1] += 1
+        return lock
+    if timeout is None:
+        try:
+            timeout = float(os.environ.get("TG_CLI_LOCK_TIMEOUT") or LOCK_TIMEOUT)
+        except ValueError:
+            raise UsageError("TG_CLI_LOCK_TIMEOUT must be a number of seconds") from None
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + timeout
+    while not _try_lock(fd):
+        if time.monotonic() >= deadline:
+            os.close(fd)
+            who = _holder(lock)
+            raise CliError(f"account session {path.stem!r} is busy: another process holds {lock}"
+                           f"{f' (pid {who})' if who else ''} for over {timeout:g} s - wait for it to finish or "
+                           f"raise TG_CLI_LOCK_TIMEOUT")
+        time.sleep(0.2)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, f"{os.getpid()} {os.path.basename(sys.argv[0] or 'python')} since "
+                 f"{time.strftime('%Y-%m-%d %H:%M:%S')}".ljust(120).encode())
+    _held[lock] = [fd, 1]
+    return lock
+
+
+def unlock_account(lock):
+    entry = _held.get(lock)
+    if not entry:
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        del _held[lock]
+        os.close(entry[0])  # closing the fd drops flock / msvcrt lock
+
+
+def _busy_timeout(client):
+    conn = getattr(getattr(client, "session", None), "_conn", None)  # Telethon SQLiteSession internals
+    if conn is not None:
+        try:
+            conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        except Exception:  # noqa: BLE001  (backstop only; never fail connect over it)
+            pass
+
+
+def connect(cfg, account, need_auth=True, lock_timeout=None):
+    """Connected TelegramClient for `account`. Holds the account lock until client.disconnect() / process exit."""
     t = telethon()
     api_id, api_hash = config.api_creds(cfg)
     path = config.session_path(account)
@@ -26,12 +121,32 @@ def connect(cfg, account, need_auth=True):
                          f"tg-cli --account {account} login (known: {', '.join(config.accounts()) or 'none'})")
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
-    client = t.TelegramClient(str(path.with_suffix("")), api_id, api_hash, device_model="tg-cli",
-                              app_version=VERSION, flood_sleep_threshold=FLOOD_SLEEP)
-    client.parse_mode = None  # text goes out exactly as given; --markdown opts in
-    client.connect()
-    if path.exists():
-        os.chmod(path, 0o600)  # the session file IS full account access
+    lock = lock_account(path, lock_timeout)
+    held = [True]
+
+    def release():
+        if held[0]:
+            held[0] = False
+            unlock_account(lock)
+    try:
+        client = t.TelegramClient(str(path.with_suffix("")), api_id, api_hash, device_model="tg-cli",
+                                  app_version=VERSION, flood_sleep_threshold=FLOOD_SLEEP)
+        _busy_timeout(client)
+        client.parse_mode = None  # text goes out exactly as given; --markdown opts in
+        original = client.disconnect
+
+        def disconnect(*a, **k):
+            try:
+                return original(*a, **k)
+            finally:
+                release()
+        client.disconnect = disconnect  # Telethon's log_out() calls self.disconnect() too
+        client.connect()
+        if path.exists():
+            os.chmod(path, 0o600)  # the session file IS full account access
+    except BaseException:
+        release()
+        raise
     if need_auth and not client.is_user_authorized():
         client.disconnect()
         raise UsageError(f"account {account!r}: session is no longer authorized (revoked or expired) - "
