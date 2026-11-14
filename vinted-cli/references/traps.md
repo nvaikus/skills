@@ -4,9 +4,7 @@
 
 - Source = the `/catalog` web page's Next.js flight data, 96 rows per page, at most 10 pages: 960 rows is the hard window of any query (`total` notes are capped there too). Narrow filters to reach the rest.
 - Results span the site's whole shipping area (vinted.pt shows FR/ES/IT sellers too). Neither rows nor item pages expose a location: no "near me" filter.
-- Query is fuzzy (descriptions, other languages, other categories). `--must w1,w2` keeps titles containing every word (prefix, accents ignored) and scans only `--limit` rows, so it can return fewer.
 - Promoted items are mixed in and obey the filters; kept, flagged `promoted` in `-j`, counted in the stderr note.
-- `total` = price + buyer-protection fee as Vinted shows it; shipping is extra (`show`: "from X" = cheapest option, may be 0 during promos).
 - Unknown ids (size from another category, made-up brand id) are ignored silently by Vinted: more rows, not an error.
 - Names (categories, conditions in rows, colors in cards) are in the site's language; filter names in the CLI are English and site-independent (`vinted conditions`, `vinted colors`). Category `--grep` also matches the English URL slug ("trainers").
 - Ambiguous `--category NAME` → exit 2 with the candidate ids.
@@ -17,7 +15,6 @@
 
 - Sold items just vanish (not reported).
 - State: `~/.claude/vinted/watch/` (`searches.json`, `seen/<name>.json`, `alerted.json`). Override root: `VINTED_ROOT`.
-- `--notify` topic `vinted` must exist in claude-tg `notify_topics` (not registered by this skill).
 
 ## When it breaks (exit 3)
 

@@ -25,18 +25,18 @@ vinted watch run [--notify]                            # only NEW items + price 
 
 - stdout TSV (`-j` JSON with more fields: fee, was, promoted, favourites, seller_id, photo; `--fields a,b`, `--no-header`); stderr `# ` notes; `show` prints markdown (`-j` = flat dict).
 - Exit `0` ok · `1` Vinted/network failure · `2` usage, unknown name, item not found · `3` Vinted broke: blocked (Cloudflare) or page data changed → read `references/traps.md` "When it breaks".
-- Columns: `price` = item price (after a seller discount); `total` = price + buyer-protection fee, shipping extra; `brand`, `size`, `cond` as the site words them.
-- Vinted's query is fuzzy: add `--category`, `--brand` and/or `--must` when results drift. Names are in the site's language.
+- Columns: `price` = item price (after a seller discount); `total` = price + buyer-protection fee as Vinted shows it, shipping extra (`show`: "from X" = cheapest option, may be 0 during promos); `brand`, `size`, `cond` as the site words them.
+- Vinted's query is fuzzy (matches descriptions, other languages, other categories): add `--category`, `--brand` and/or `--must w1,w2` when results drift. `--must` keeps titles containing every word (prefix, accents ignored) and scans only `--limit` rows, so it can return fewer.
 - Never: selling, messaging sellers, buying, offers, favourites — no code path for them.
 
 ## Scheduling
 
 - `vinted watch run --notify` is cron-ready: no prompts, empty stdout when nothing changed, one Telegram message per run with hits and failures (`claude-tg notify --topic vinted`; `--topic` / config `notify_topic` override).
-- Schedule it as a clockmaster job (e.g. every 2-6 h; requests are paced 1.5 s apart). Register topic `vinted` in claude-tg `notify_topics` first if it is not there.
+- Schedule it as a clockmaster job (e.g. every 2-6 h; requests are paced 1.5 s apart). Register topic `vinted` in claude-tg `notify_topics` first if it is not there (this skill does not register it).
 
 | when | read |
 |---|---|
-| exit 3, odd results (location, totals, filters ignored, ids), watch semantics, messaging sellers, fallback | `references/traps.md` |
+| exit 3, odd results (location, 960-row cap, filters ignored, ids, site-language names), watch semantics, messaging sellers, fallback | `references/traps.md` |
 
 ## Memory
 

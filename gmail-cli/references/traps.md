@@ -9,7 +9,6 @@
 ## Read
 - Quote stripping is heuristic (Gmail/Apple/Outlook headers in EN/RU/PT/ES/DE/FR/IT/NL/PL, `> ` lines, `-- ` signatures, "Sent from my ..."). Missing context → `--full`.
 - Long messages cut at 6000 chars per message; the cut line names the command for the rest.
-- Reading never marks as read; `mark-read` does.
 
 ## Organize
 - Archive = remove `INBOX`; the message stays in All Mail. Category tabs are labels `CATEGORY_*` (shown without the prefix; `modify --add PROMOTIONS` works).

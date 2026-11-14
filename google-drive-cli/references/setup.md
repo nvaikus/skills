@@ -3,7 +3,7 @@
 ## Layout
 - `~/.claude/gdrive/<profile>/`: `config.json` (client id/secret, project, mount choice; chmod 600), `rclone.conf` (token, chmod 600), `index/`, `index.sqlite`. Root `config.json` = `default_profile`. Survives skill updates.
 - Shared by profiles: `~/.local/share/gdrive/` (rclone `bin/`, mount records `mounts/`, `logs/` incl. `index-<profile>.log`). Disposable VFS cache: `~/.cache/gdrive/<profile>/<mount id>` (NOT disposable while `status` shows pending uploads).
-- Rename = `profiles --rename OLD NEW`, never `mv`: it also moves the cache root (pending uploads resume after remount), the index log, rewrites mount records/units and reinstalls the index service. Exit 3 while OLD is mounted/syncing/indexing. `GDRIVE_PROFILE` and scripts naming OLD stay stale.
+- Rename = `profiles --rename OLD NEW`, never `mv`: it also moves the cache root (pending uploads resume after remount), the index log, rewrites mount records/units and reinstalls the index service.
 - v0.1 `~/.gdrive.json` + `~/.config/gdrive/rclone.conf`: imported once by `onboard` into a profile that has no client; never read again.
 
 ## Automatic mode (`--mode auto`)
