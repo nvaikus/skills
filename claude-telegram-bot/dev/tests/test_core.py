@@ -1539,6 +1539,34 @@ class Notify(unittest.TestCase):
             r = self.run_send(d, Bot(), text="x")
             self.assertEqual(r["thread"], 301)
 
+    def test_network_blip_is_retried(self):
+        class Bot(FakeBot):
+            fails = 2
+
+            def call(self, method, _timeout=35, _retries=3, **p):
+                self.calls.append((method, p))
+                if method == "sendMessage" and self.fails:
+                    self.fails -= 1
+                    raise TgError(method, 0, "network: [Errno 104] Connection reset by peer")
+                return {"message_id": 7}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(self.n.time, "sleep") as sl:
+            (Path(d) / "notify.json").write_text('{"topics": {"Notifications": 300}}')
+            r = self.run_send(d, Bot(), text="x")
+            self.assertEqual(r["message_ids"], [7])
+            self.assertEqual([c.args[0] for c in sl.call_args_list], list(self.n.NET_BACKOFF))
+
+    def test_network_down_still_fails(self):
+        class Bot(FakeBot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                self.calls.append((method, p))
+                raise TgError(method, 0, "network: down")
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(self.n.time, "sleep"):
+            (Path(d) / "notify.json").write_text('{"topics": {"Notifications": 300}}')
+            bot = Bot()
+            with self.assertRaises(TgError):
+                self.run_send(d, bot, text="x")
+            self.assertEqual(len(bot.calls), len(self.n.NET_BACKOFF) + 1)
+
     def test_registry_key_creates_named_topic_with_icon(self):
         class Bot(FakeBot):
             def call(self, method, _timeout=35, _retries=3, **p):

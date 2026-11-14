@@ -437,6 +437,9 @@ def target_chat(cfg, a, env=None):
         return None
 
 
+NET_BACKOFF = (2, 6)  # seconds before each retry of a send that failed on the network
+
+
 class _Dest:
     """Owner chat + thread; a cached topic deleted in the client is recreated once. An explicit thread is not."""
 
@@ -447,12 +450,24 @@ class _Dest:
 
     def do(self, fn):
         try:
-            return fn(self.thread)
+            return self._net_retry(fn)
         except TgError as e:
             if not (self.topic and self.thread and any(g in e.description for g in GONE)):
                 raise
             self.thread = topic_id(self.bot, self.chat, self.topic, fresh=True, cfg=self.cfg)
-            return fn(self.thread)
+            return self._net_retry(fn)
+
+    def _net_retry(self, fn):
+        """A network blip (code 0: reset, timeout, DNS) is retried after NET_BACKOFF; a rare duplicate
+        beats a lost notification."""
+        for wait in NET_BACKOFF:
+            try:
+                return fn(self.thread)
+            except TgError as e:
+                if e.code != 0:
+                    raise
+                time.sleep(wait)
+        return fn(self.thread)
 
     def result(self, sent, **extra):
         return dict({"chat": self.chat, "thread": self.thread, "message_ids": [m.get("message_id") for m in sent]},
