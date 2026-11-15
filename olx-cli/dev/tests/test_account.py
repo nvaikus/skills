@@ -49,7 +49,7 @@ class AccountBase(Base):
     def pw(self, up=True, **kw):
         fake = FakePw(**kw)
         for obj, name, val in ((browser, "_call", fake), (browser.shutil, "which", lambda n: "/bin/playwright-cli"),
-                               (browser, "debug_up", lambda cfg: up)):
+                               (browser, "debug_up", lambda cfg: up), (browser, "port_holders", lambda n: [])):
             p = mock.patch.object(obj, name, val)
             p.start()
             self.addCleanup(p.stop)
@@ -57,6 +57,30 @@ class AccountBase(Base):
 
 
 class TestBrowser(AccountBase):
+    def test_keepalive_fresh_tab_and_busy_skip(self):
+        fake = self.pw(results={"login": {"status": "ok", "logged_in": True}})
+        code, out, err = run("login", "--keepalive")
+        self.assertEqual(code, 0)
+        self.assertTrue(fake.params("login")["keepalive"])
+        self.assertIn("newPage()", fake.scripts["login"])
+        import fcntl
+        from src.core import paths
+        with open(paths.sub("browser") / "olx.lock", "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            code, out, err = run("login", "--keepalive")
+            self.assertEqual((code, out), (0, ""))
+            self.assertIn("keep-alive skipped", err)
+
+    def test_foreign_chrome_on_port_refused(self):
+        self.pw()
+        with mock.patch.object(browser, "port_holders", lambda n: ["/tmp/other-profile"]):
+            code, out, err = run("login")
+        self.assertEqual(code, 1)
+        self.assertIn("belongs to another Chrome", err)
+
+    def test_inbox_pins_buyer_tab(self):
+        self.assertIn("/myaccount/answers/?my_ads=0", (browser.JS / "prelude.js").read_text())
+
     def test_help(self):
         for cmd in ("login", "msg send", "msg list"):
             rc, out, _ = run(*cmd.split(), "-h")

@@ -22,10 +22,12 @@
 - One API call per watch per run; eBay's default quota is ~5000 Browse calls/day per app (exit 1 "rate limit" when hit).
 
 ## Account (cart, msg, login)
-- Needs `playwright-cli` (npm `@playwright/cli`) and Chrome. Session `ebay` (config `browser_session` / env `EBAY_BROWSER_SESSION`); a separate session = separate profile = separate login.
+- Needs `playwright-cli` (npm `@playwright/cli`) and Chrome. The CLI starts a plain Chrome (`--user-data-dir=~/.claude/ebay/browser/profiles/<session> --remote-debugging-port=9336`) and attaches session `ebay` over CDP (config `browser_session` / env `EBAY_BROWSER_SESSION`, `browser_port` / env `EBAY_BROWSER_PORT`, `browser_chrome`). A separate session = separate profile = separate login. The first start copies the old `playwright-cli open --persistent` profile (`ud-<session>-chrome`). A Chrome of another profile on the port → exit 1, never driven.
+- eBay's sign-in cookies (`s`, `ebay`, `ds1`, `ds2`) are session-only unless "Stay signed in" is ticked: every Chrome restart signs out. Keep the Chrome running (below) and tick the box when signing in.
+- Bot-run headless host (`claude -p` per message kills the process tree): config `browser_launch_prefix` `["systemd-run", "--user", "--unit=ebay-browser-{ts}", "--setenv=DISPLAY={display}", "--setenv=PATH={path}", "--working-directory={cwd}"]` puts Chrome in its own unit. Stop: `systemctl --user stop 'ebay-browser-*'`.
+- Keep-alive: schedule `ebay login --keepalive` every few hours (clockmaster): loads the site in a fresh tab and closes it, the user's tab stays; another `ebay` command running → skipped, exit 0; signed out → exit 5 (notify the user). Commands share a lock: a second one waits up to 300 s.
 - Headless Linux server (no desktop): config `browser_display` (e.g. `":99"`) = an always-on Xvfb display used when env has no `DISPLAY`; `browser_view_url` = the user's remote view of it (noVNC link, tailnet-only). With the URL set, exit-5 texts carry it: send the user that link, wait for "done", rerun. Never headless Chrome (captcha wall), never copy a profile from another machine (eBay sees a new device anyway).
 - Headless Linux host: install `xdotool` (`apt install xdotool`). Sessions share one Xvfb display with no window manager, so another session's browser can bury this one; before every exit 5 the CLI raises its own window (`xdotool windowraise`). Missing xdotool → a `# ` stderr note, the command still works.
-- One action at a time per session: two parallel `ebay cart`/`msg` calls drive the same tab.
 - Exit 5 "captcha": eBay challenges after bursts of automated page loads; the user solves it in the Chrome window. Space out calls; don't loop.
 - Signed-in check = cookie `ebay` with `sin=in`; an expired login that keeps the cookie shows up as a redirect to `signin.*` - also exit 5.
 - Cart `price`/`shipping` are display strings in the site's language and the listing's currency; `seller` is the store label, not the user id.

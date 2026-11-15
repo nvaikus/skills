@@ -703,9 +703,10 @@ def with_topic_icon(cfg: dict, topic, icon) -> dict:
     return dict(cfg, notify_topics={**(cfg.get("notify_topics") or {}), topic: {**spec(cfg, topic), "icon": icon}})
 
 
-def forget(bot, cfg: dict, keys, ids, chat=None) -> int:
+def forget(bot, cfg: dict, keys, ids, chat=None, or_edit=None) -> int:
     """`claude-tg notify-delete`: delete the messages stored under KEYs and/or explicit ids in the owner chat.
-    0 = all gone (unknown KEY = nothing to do), 1 = some not deleted (transient ones stay under their KEY)."""
+    0 = all gone (unknown KEY = nothing to do), 1 = some not deleted (transient ones stay under their KEY).
+    `or_edit`: an id refused for good (400) is edited to that text instead (`collapse`); edited counts as done."""
     data = _load()
     reps = data.setdefault("replace", {})
     failed = []
@@ -721,9 +722,24 @@ def forget(bot, cfg: dict, keys, ids, chat=None) -> int:
         else:
             reps.pop(key)
     if ids:
-        failed += delete_ids(bot, owner_chat(cfg) if chat is None else chat, ids, "notify-delete")[0]
+        dest = owner_chat(cfg) if chat is None else chat
+        bad, keep = delete_ids(bot, dest, ids, "notify-delete")
+        failed += [i for i in bad if i in keep or not collapse(bot, dest, i, or_edit)] if or_edit else bad
     _save(data)
     return 1 if failed else 0
+
+
+def collapse(bot, chat: int, mid: int, text: str) -> bool:
+    """--or-edit: a message the bot may no longer delete (private chat, > 48 h) is edited in place to TEXT,
+    keyboard dropped. True = edited (or already showing TEXT)."""
+    try:
+        bot.call("editMessageText", chat_id=chat, message_id=mid, text=text, link_preview_options={"is_disabled": True})
+    except TgError as e:
+        if "message is not modified" not in e.description:
+            print(f"claude-tg notify-delete: message {mid} not edited either ({e.description})", file=sys.stderr)
+            return False
+    print(f"claude-tg notify-delete: message {mid} edited instead", file=sys.stderr)
+    return True
 
 
 def delete_main(cfg: dict, a) -> int:
@@ -735,7 +751,7 @@ def delete_main(cfg: dict, a) -> int:
         if getattr(a, "chat", None):
             from .inbox import target_chat as pick
             chat = pick(cfg, a.chat)
-        return forget(cli_bot(cfg), cfg, a.key, a.id or [], chat)
+        return forget(cli_bot(cfg), cfg, a.key, a.id or [], chat, getattr(a, "or_edit", None))
     except NotifyError as e:
         print(f"claude-tg notify-delete: {e}", file=sys.stderr)
         return 2

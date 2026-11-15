@@ -15,7 +15,8 @@
 - Headless Linux host run by a bot (`claude -p` per message kills the process tree): start Chrome in its own unit:
   `["systemd-run", "--user", "--unit=olx-browser-{ts}", "--setenv=DISPLAY={display}", "--setenv=PATH={path}", "--working-directory={cwd}"]`. The CLI sets `XDG_RUNTIME_DIR` when missing. Stop: `systemctl --user stop 'olx-browser-*'`.
 - Desktop (Mac): no config needed; the headed window opens on screen.
-- One action at a time per session: two parallel `olx msg` calls drive the same tab.
+- One action at a time per session: commands share a lock; a second one waits up to 300 s. A Chrome of another profile on the port → exit 1, never driven (seen: a scheduled job's Chrome on 9335).
+- Keep-alive: schedule `olx login --keepalive` every few hours (clockmaster): checks in a fresh tab, closed when signed in, the user's tab stays; busy → skipped, exit 0; signed out → exit 5 (notify the user). `access_token` lives 24 h, the `login.olx.<tld>` session 29 days: a visit within that renews it.
 
 ## How it works (live 2026-11-15 olx.pt; the EU sites share one frontend)
 
@@ -24,7 +25,7 @@
 - Composer: `textarea[name="message.text"]` + the form's `button[type=submit]` (shown once there is text); max 5000 chars.
 - Bubbles: `data-testid=sent-message | received-message` (aria-label names the sender), text `[data-testid=message]`, `[data-testid=message-status-label]` = time, or a sending / undelivered / read note. Sent = a new own bubble with the text whose label shows a digit (time).
 - Inbox rows: `data-testid=conversations-list-item-<cid>`; name, ad title, snippet, date testids `list-item-*`. A status icon before the snippet = own last message (`last_by=me`); bold = unread.
-- Selectors were read from olx.pt's chat bundles while signed out; the signed-in pages were not seen yet. Thread order assumed oldest first. A wrong row → read the dump / ARIA, fix `src/api/js/prelude.js`, add a `// live <date>` note.
+- Inbox: two tabs, "A comprar" `?my_ads=0` (buyer chats, the one read) and "A anunciar" `?my_ads=1`; the bare URL opens the last used tab. Empty inbox = `[data-testid=empty-list]` (live 2026-11-15 signed in). Bubbles not seen signed in yet; thread order assumed oldest first. A wrong row → read the dump / ARIA, fix `src/api/js/prelude.js`, add a `// live <date>` note.
 - An image-only last message from the other side shows an attachment icon: `last_by` may say `me`. `msg list --conversation CID` to check.
 
 ## Failures

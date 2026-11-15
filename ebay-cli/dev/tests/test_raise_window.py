@@ -16,7 +16,8 @@ CFG = {"browser_display": ":99"}
 
 
 def OWN_PROFILE():
-    return "/x/.cache/ms-playwright/daemon/0a1b/ud-ebay-chrome"
+    from src.core import paths
+    return str(paths.sub("browser", "profiles", "ebay"))
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "X11 raise is Linux-only")

@@ -6,8 +6,9 @@ from . import browser, offers, olx
 MAX_TEXT = 5000  # chat bundle 2026-11: "You can only write up to 5000 characters per message"
 
 
-def login(cfg, s):
-    r = browser.run(cfg, "login", {}, olx.SITES[s])
+def login(cfg, s, keepalive=False):
+    """keepalive: the scheduled session touch - checks in a fresh tab, skips (Busy) when another command runs."""
+    r = browser.run(cfg, "login", {"keepalive": keepalive}, olx.SITES[s], lock_wait=0 if keepalive else browser.LOCK_WAIT)
     if not r.get("logged_in"):
         raise browser.human_step(cfg, f"sign in to OLX in the Chrome window (browser session '{browser.session(cfg)}'): its sign-in page"
                       f" is open{browser.view_hint(cfg)}; email + password or Google/Apple/Facebook. Then rerun `olx login`")

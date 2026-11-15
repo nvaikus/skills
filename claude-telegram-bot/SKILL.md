@@ -16,7 +16,7 @@ claude-tg restart [--wait SEC] [--now]   # waits until idle - use this after eve
 claude-tg run                     # foreground, for debugging (stop the service first)
 claude-tg notify [TEXT] [--md|--html] [--silent] [--button 'TEXT=URL|cb:PREFIX:DATA[ | …]'] [--file PATH]... [--topic KEY|--thread ID|LINK|--main-chat] [--chat NAME] [--replace KEY] [--keep KEY [--pin]] [--topic-icon E] [--triage|--no-triage]   # bot -> owner; stdin if no TEXT
 claude-tg triage [show] | on [--cwd DIR] [--chat NAME] [--cooldown MIN] [--topics KEY..|all] [--exclude KEY..|none] | off   # auto-triage of notify events
-claude-tg notify-delete [KEY]... [--id MSG]...   # delete what --replace KEY last sent (exit 1 = some not deleted)
+claude-tg notify-delete [KEY]... [--id MSG]... [--or-edit TEXT]   # delete what --replace KEY last sent; --or-edit: edit a too-old --id instead (exit 1 = some not deleted)
 claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--settings ABS.json] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
 claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle

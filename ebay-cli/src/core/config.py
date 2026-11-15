@@ -15,6 +15,9 @@ DEFAULTS = {
     "browser_session": None,  # playwright-cli session for account commands (None = "ebay")
     "browser_display": None,  # X display for the headed browser when env has none, e.g. ":99" (always-on Xvfb)
     "browser_view_url": None,  # where the user sees that browser remotely (noVNC link): exit-5 texts point there
+    "browser_port": None,  # Chrome remote-debugging port (None = 9336)
+    "browser_chrome": None,  # Chrome executable when not on the usual path
+    "browser_launch_prefix": None,  # argv before the Chrome command, e.g. systemd-run (placeholders {ts} {display} {path} {cwd})
 }
 ENV = {"market": "EBAY_MARKET", "ship_to": "EBAY_SHIP_TO", "zip": "EBAY_ZIP"}
 

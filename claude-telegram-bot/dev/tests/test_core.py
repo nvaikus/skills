@@ -1823,6 +1823,33 @@ class Notify(unittest.TestCase):
             self.assertEqual(bot.calls, [("deleteMessage", {"chat_id": 7, "message_id": 102}),
                                          ("deleteMessage", {"chat_id": 7, "message_id": 55})])
 
+    def test_forget_or_edit_collapses_undeletable_ids(self):
+        class Bot(FakeBot):
+            fail = {}
+
+            def call(self, method, _timeout=35, _retries=3, **p):
+                self.calls.append((method, p))
+                if (method, p["message_id"]) in self.fail:
+                    raise TgError(method, *self.fail[(method, p["message_id"])])
+                return True
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            cfg = dict(config.DEFAULTS, owner_id=7)
+            bot = Bot()
+            old = (400, "Bad Request: message can't be deleted for everyone")
+            bot.fail = {("deleteMessage", 1): old, ("deleteMessage", 2): old, ("deleteMessage", 3): (0, "network"),
+                        ("editMessageText", 2): (400, "Bad Request: message to edit not found")}
+            with mock.patch("sys.stderr"):
+                self.assertEqual(self.n.forget(bot, cfg, [], [1], or_edit="done"), 0)
+                self.assertEqual(bot.calls[-1], ("editMessageText", {"chat_id": 7, "message_id": 1, "text": "done",
+                                                 "link_preview_options": {"is_disabled": True}}))
+                self.assertEqual(self.n.forget(bot, cfg, [], [2], or_edit="done"), 1)  # edit refused too
+                bot.calls.clear()
+                self.assertEqual(self.n.forget(bot, cfg, [], [3], or_edit="done"), 1)  # transient: no edit
+                self.assertEqual([c[0] for c in bot.calls], ["deleteMessage"])
+                bot.fail[("editMessageText", 1)] = (400, "Bad Request: message is not modified")
+                self.assertEqual(self.n.forget(bot, cfg, [], [1], or_edit="done"), 0)
+                self.assertEqual(self.n.forget(bot, cfg, [], [1]), 1)  # no --or-edit: plain failure
+
     def test_failed_send_keeps_previous_replace(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             (Path(d) / "notify.json").write_text('{"replace": {"dg": {"chat": 7, "message_ids": [9]}}}')

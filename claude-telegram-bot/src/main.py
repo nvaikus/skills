@@ -263,6 +263,8 @@ def main(argv=None):
                                    "2 = usage.")
     s.add_argument("key", nargs="*", help="--replace KEY(s)")
     s.add_argument("--id", type=int, action="append", metavar="MSG", help="message id in the owner chat (repeatable)")
+    s.add_argument("--or-edit", metavar="TEXT", help="with --id: a message that can't be deleted for good (private "
+                   "chat, older than 48 h) is edited to TEXT instead, buttons removed; edited counts as deleted")
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s = sub.add_parser("group", help="owner groups (private mode): list | add NAME [ID] | remove NAME",
                        description="Manages config owner_groups without hand-editing the config: only that key is "

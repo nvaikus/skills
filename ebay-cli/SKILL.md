@@ -26,7 +26,7 @@ ebay msg list                                        # inbox, last_by=them = ans
 
 ## Account (browser)
 
-`cart`, `msg`, `login` drive a headed Chrome (playwright-cli session `ebay`, persistent profile) logged in as the user. Exit 5 = a human step: not signed in (run `ebay login`) or an eBay captcha; tell the user at once what to do in the Chrome window (on a headless server the error carries a remote-view link: send it), rerun after he says done. `msg send` is not idempotent and does not retry: after exit 1 or any unclear failure the message may already be out, never rerun it before `ebay msg list --item ID`. On exit 1 read the dump (`.png` + `.txt`) the error names before retrying.
+`cart`, `msg`, `login` drive a plain headed Chrome on its own profile (playwright-cli session `ebay` over CDP) logged in as the user. Exit 5 = a human step: not signed in (run `ebay login`) or an eBay captcha; tell the user at once what to do in the Chrome window (on a headless server the error carries a remote-view link: send it), rerun after he says done. `msg send` is not idempotent and does not retry: after exit 1 or any unclear failure the message may already be out, never rerun it before `ebay msg list --item ID`. On exit 1 read the dump (`.png` + `.txt`) the error names before retrying.
 
 ## Contract
 

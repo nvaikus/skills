@@ -47,8 +47,9 @@ def variation_id(item_id, spec, loc):
     return hits[0]["itemId"].split("|")[2]
 
 
-def login(cfg, market=None):
-    r = browser.run(cfg, "login", {}, market)
+def login(cfg, market=None, keepalive=False):
+    """keepalive: the scheduled session touch - checks in a fresh tab, skips (Busy) when another command runs."""
+    r = browser.run(cfg, "login", {"keepalive": keepalive}, market, lock_wait=0 if keepalive else browser.LOCK_WAIT)
     if not r.get("logged_in"):
         raise browser.human_step(cfg, f"log in to eBay in the Chrome window that just opened (browser session "
                       f"'{browser.session(cfg)}'){browser.view_hint(cfg)}, then rerun `ebay login`")

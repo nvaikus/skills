@@ -8,8 +8,19 @@
   const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
   // live 2026-11-15 olx.pt: signed out, /myaccount/* redirects (client side) to login.olx.<tld>/?client_id=...
   const onLogin = () => /^https?:\/\/login\.olx\./.test(page.url());
-  // the account pages answer under /myaccount/answer[s]/ on every OLX EU site (one shared frontend, olxeuweb)
-  const INBOX = WWW + '/myaccount/answers/';
+  // live 2026-11-15: access_token lives 24 h, the login.olx.<tld> session (SID) 29 days; an expired token bounces
+  // through login.* and back by itself. Signed out = still on login.* after LOGIN_SETTLE ms.
+  const LOGIN_SETTLE = 6000;
+  let loginSince = 0;
+  const signedOut = () => {
+    if (!onLogin()) { loginSince = 0; return false; }
+    if (!loginSince) loginSince = Date.now();
+    return Date.now() - loginSince >= LOGIN_SETTLE;
+  };
+  // the account pages answer under /myaccount/answer[s]/ on every OLX EU site (one shared frontend, olxeuweb).
+  // live 2026-11-15 signed in: two tabs, "A comprar" ?my_ads=0 (buyer chats) and "A anunciar" ?my_ads=1 (own ads);
+  // the bare URL opens the last used one (seen: ?my_ads=1), so pin the buyer tab
+  const INBOX = WWW + '/myaccount/answers/?my_ads=0';
   const SEL = {
     // live 2026-11-15 (ad page + chat bundles): data-testid attributes, the same in every site language
     adChat: '[data-testid=ad-contact-message-button], [data-testid=chat-button]',
@@ -36,7 +47,10 @@
   async function go(url) {
     await page.goto(url, {timeout: T.nav, waitUntil: 'domcontentloaded'});
     await page.waitForLoadState('load', {timeout: T.nav}).catch(() => {});
-    if (onLogin()) throw LOGIN;
+    if (onLogin()) {  // maybe a token refresh bouncing back
+      await page.waitForURL(u => !/^https?:\/\/login\.olx\./.test(String(u)), {timeout: LOGIN_SETTLE}).catch(() => {});
+      if (onLogin()) throw LOGIN;
+    }
     await checkCaptcha();
     await dismissCookies();
   }
@@ -54,8 +68,8 @@
   async function openInbox() {
     // the redirect to login.* happens after the page loads: wait for the list or the sign-in page
     await go(INBOX);
-    const r = await waitFor(async () => onLogin() ? 'login'
-      : (await page.locator(SEL.inboxPage).first().count()) ? 'inbox' : null, T.el, 'conversation list');
+    const r = await waitFor(async () => signedOut() ? 'login'
+      : (!onLogin() && await page.locator(SEL.inboxPage).first().count()) ? 'inbox' : null, T.el + LOGIN_SETTLE, 'conversation list');
     if (r === 'login') throw LOGIN;
   }
 
@@ -105,7 +119,7 @@
     }
     step = 'wait-chat';
     // a desktop ad page may open the chat in a popup instead of routing: the composer is the proof either way
-    const r = await waitFor(async () => onLogin() ? 'login'
+    const r = await waitFor(async () => signedOut() ? 'login'
       : (await page.locator(SEL.input).first().isVisible().catch(() => false)) ? 'chat' : null, T.nav, 'chat composer');
     if (r === 'login') throw LOGIN;
     await checkCaptcha();

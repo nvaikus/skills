@@ -18,21 +18,22 @@ LINE = {"id": "111111111111", "title": "ThinkPad", "price": "EUR 10,00", "shippi
 
 
 class FakePw:
-    """Replaces browser._call: answers `list`, `open`, `run-code` (reads the generated script)."""
+    """Replaces browser._call: answers `list`, `attach`, `run-code` (reads the generated script)."""
 
     def __init__(self, results=None, is_open=True):
         self.results = results or {}
         self.open = is_open
+        self.name = "ebay"
         self.calls, self.scripts = [], {}
 
     def __call__(self, args, timeout):
         self.calls.append(args)
         ok = lambda out: subprocess.CompletedProcess(args, 0, out, "")  # noqa: E731
         if args[0] == "list":
-            return ok(json.dumps({"browsers": [{"name": "ebay", "status": "open"}] if self.open else []}))
-        if args[1] == "open":
-            self.open = True
-            return ok("opened")
+            return ok(json.dumps({"browsers": [{"name": self.name, "status": "open"}] if self.open else []}))
+        if args[1] == "attach":
+            self.open, self.name = True, args[0].removeprefix("-s=")
+            return ok("attached")
         script = Path(args[-1].split("=", 1)[1])
         action = re.match(r"run-(\w+?)-\d+\.js", script.name).group(1)
         text = script.read_text()
@@ -47,14 +48,15 @@ class FakePw:
 
 
 class AccountBase(Base):
-    def pw(self, **kw):
+    def pw(self, up=True, **kw):
         fake = FakePw(**kw)
-        p = mock.patch.object(browser, "_call", fake)
-        p.start()
-        self.addCleanup(p.stop)
-        w = mock.patch.object(browser.shutil, "which", lambda n: "/bin/playwright-cli")
-        w.start()
-        self.addCleanup(w.stop)
+        self.started = []
+        for obj, name, val in ((browser, "_call", fake), (browser.shutil, "which", lambda n: "/bin/playwright-cli"),
+                               (browser, "debug_up", lambda cfg: up), (browser, "port_holders", lambda n: []),
+                               (browser, "start_chrome", lambda cfg, name, url: self.started.append(name))):
+            p = mock.patch.object(obj, name, val)
+            p.start()
+            self.addCleanup(p.stop)
         return fake
 
 
@@ -65,12 +67,13 @@ class TestBrowser(AccountBase):
             self.assertEqual(rc, 0, cmd)
             self.assertIn("usage: ebay", out)
 
-    def test_opens_headed_persistent_when_closed(self):
-        fake = self.pw(is_open=False, results={"cart_list": {"status": "ok", "lines": [LINE]}})
+    def test_starts_plain_chrome_and_attaches_over_cdp(self):
+        fake = self.pw(up=False, is_open=False, results={"cart_list": {"status": "ok", "lines": [LINE]}})
         rc, out, _ = run("cart", "list")
         self.assertEqual(rc, 0)
-        opened = [c for c in fake.calls if len(c) > 1 and c[1] == "open"][0]
-        self.assertEqual(opened[:5], ["-s=ebay", "open", "--browser=chrome", "--headed", "--persistent"])
+        self.assertEqual(self.started, ["ebay"])
+        self.assertIn(["-s=ebay", "attach", "--cdp=http://127.0.0.1:9336"], fake.calls)
+        self.assertFalse([c for c in fake.calls if len(c) > 1 and c[1] == "open"])
         p = fake.params("cart_list")
         self.assertEqual(p["domain"], "ebay.de")
         self.assertEqual(self.tsv(out)[0]["id"], "111111111111")
@@ -108,11 +111,43 @@ class TestBrowser(AccountBase):
     def test_script_error_and_missing_cli(self):
         self.pw()
         with mock.patch.object(browser, "_call", lambda a, t: subprocess.CompletedProcess(a, 0, '{"isError": true, "error": "x"}', "")):
-            with mock.patch.object(browser, "is_open", lambda n: True):
+            with mock.patch.object(browser, "attached", lambda n: True):
                 self.assertEqual(run("cart", "list")[0], 1)
         with mock.patch.object(browser.shutil, "which", lambda n: None):
             with self.assertRaisesRegex(UsageError, "playwright-cli not found"):
                 browser._cli()
+
+    def test_keepalive_fresh_tab_and_busy_skip(self):
+        fake = self.pw(results={"login": {"status": "ok", "logged_in": True}})
+        rc, _, _ = run("login", "--keepalive")
+        self.assertEqual(rc, 0)
+        self.assertTrue(fake.params("login")["keepalive"])
+        import fcntl
+        from src.core import paths
+        with open(paths.sub("browser") / "ebay.lock", "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            rc, out, err = run("login", "--keepalive")
+        self.assertEqual((rc, out), (0, ""))
+        self.assertIn("keep-alive skipped", err)
+
+    def test_foreign_chrome_on_port_refused(self):
+        self.pw()
+        with mock.patch.object(browser, "port_holders", lambda n: ["/tmp/other"]):
+            rc, _, err = run("login")
+        self.assertEqual(rc, 1)
+        self.assertIn("belongs to another Chrome", err)
+
+    def test_profile_copied_from_old_playwright_profile(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            old = Path(t) / "ms-playwright" / "daemon" / "h" / "ud-zz-chrome"
+            (old / "Default").mkdir(parents=True)
+            (old / "Default" / "Cookies").write_text("c")
+            (old / "SingletonLock").write_text("x")
+            with mock.patch.dict("os.environ", {"XDG_CACHE_HOME": t}), mock.patch.object(browser.sys, "platform", "linux"):
+                d = browser.profile_dir("zz")
+            self.assertEqual((d / "Default" / "Cookies").read_text(), "c")
+            self.assertFalse((d / "SingletonLock").exists())
 
     def test_login(self):
         self.pw(results={"login": {"status": "ok", "logged_in": False}})

@@ -5,6 +5,7 @@ messages go through the web UI. Never a Playwright-launched or headless Chrome: 
 One JS file per action in js/, prefixed by js/prelude.js; params go in as JSON, a dict comes back:
   {"status": "ok", ...} | {"status": "login"} | {"status": "captcha"} | {"status": "usage", "error"} | {"status": "fail", "step", "error", ...dump}
 Never posts, buys or pays: the rail test greps js/ for those controls."""
+import contextlib
 import json
 import os
 import re
@@ -25,7 +26,58 @@ TIMEOUTS = {"nav": 60000, "el": 20000, "verify": 30000}  # ms: page load, one co
 RUN_TIMEOUT = 240  # s: whole action incl. a dump; every browser wait is bounded on its own
 CAPTCHA = ("OLX shows a captcha / security check in the olx Chrome window: the user solves it{where}. Then rerun;"
            " space out calls")
+LOCK_WAIT = 300  # s: a command waits this long for another one in the same browser session, then gives up
 NOT_LOGGED_IN = "not signed in to OLX in the olx browser: run `olx login` (the user signs in once{where})"
+
+
+class Busy(CliError):
+    """Another command drives this browser session right now."""
+
+
+@contextlib.contextmanager
+def session_lock(cfg, wait=LOCK_WAIT):
+    """One action at a time per browser session: two commands would drive the same tab. wait=0 -> Busy at once
+    (the keep-alive skips instead of queueing). No fcntl (Windows) -> no lock."""
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    with open(paths.sub("browser") / f"{session(cfg)}.lock", "w") as f:
+        deadline = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() >= deadline:
+                    raise Busy(f"browser session '{session(cfg)}' is busy with another olx command"
+                               + (f" for {wait} s" if wait else "") + "; rerun when it is done") from None
+                time.sleep(1)
+        yield
+
+
+def port_holders(port_no):
+    """--user-data-dir of every browser process listening as --remote-debugging-port=port_no; Linux /proc only."""
+    dirs = []
+    for d in Path("/proc").glob("[0-9]*"):
+        try:
+            line = (d / "cmdline").read_bytes().decode("utf-8", "replace").replace("\0", " ").strip()
+        except OSError:
+            continue
+        if re.search(r"(?:^|\s)--type=", line) or not re.search(rf"(?:^|\s)--remote-debugging-port={port_no}(?:\s|$)", line):
+            continue
+        dirs += re.findall(r"(?:^|\s)--user-data-dir=(.+?)(?=\s--|$)", line)
+    return dirs
+
+
+def check_port_owner(cfg, prof):
+    """A Chrome of another job on our debug port would be driven as if it were ours (seen: a scheduled job's Chrome
+    on 9335 -> "not signed in" in a foreign profile). Refuse instead."""
+    holders = port_holders(port(cfg))
+    if holders and str(prof) not in holders:
+        raise CliError(f"debug port {port(cfg)} belongs to another Chrome (profile {holders[0]}), not the olx one"
+                       f" ({prof}): stop that one or set config browser_port to a free port")
 
 
 def view_hint(cfg):
@@ -207,8 +259,10 @@ def ensure_open(cfg, name, url="about:blank"):
     """Headed plain Chrome on the session's own profile, attached over CDP; re-attaches to a running one."""
     if not debug_up(cfg):
         start_chrome(cfg, name, url)
-    elif attached(name):
-        return False
+    else:
+        check_port_owner(cfg, paths.sub("browser", "profiles", name))
+        if attached(name):
+            return False
     r = _call([f"-s={name}", "attach", f"--cdp={cdp_url(cfg)}"], 60)
     if not attached(name):
         raise CliError(f"could not attach to Chrome on {cdp_url(cfg)}: {(r.stderr or r.stdout).strip()[-300:]}")
@@ -263,8 +317,13 @@ def interpret(cfg, action, out):
                    + (f" | dump: {where} (read it before retrying)" if where else ""))
 
 
-def run(cfg, action, params, host):
+def run(cfg, action, params, host, lock_wait=LOCK_WAIT):
     """Run js/<action>.js in the olx browser session on www.olx.<site> -> result dict (status ok)."""
+    with session_lock(cfg, lock_wait):
+        return _run(cfg, action, params, host)
+
+
+def _run(cfg, action, params, host):
     name = session(cfg)
     ensure_open(cfg, name)
     params = {**params, "host": host, "dumpDir": str(paths.sub("dumps")), "T": TIMEOUTS}
