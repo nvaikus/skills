@@ -1,7 +1,8 @@
 """Scripts -> running bot: `claude-tg spawn | send | alive | topic-icon | topic-settings`.
 
 The bot owns state.json, so a script never writes it. A prompt for a topic is posted into the topic as a bot
-message (the owner sees what was asked, or a short `--show` line standing in for it), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
+message (the owner sees what was asked, or a short `--show` line standing in for it; `send --hidden` posts nothing:
+the message is synthetic, a negative id, see `hidden_msg`), then queued as a file in STATE_DIR/inbox/; the bot's inbox thread
 (`Bridge.drain_inbox`, every second) turns each file into an owner message of that topic: same queue, same
 resume, same mid-run stdin injection. Files wait while the bot is down. Topic settings (cwd, title, base icon,
 appended system prompt, `--settings` file, quiet flag) travel in the same file and are applied by the bot before the prompt runs.
@@ -69,6 +70,20 @@ def post(bot, chat, thread, prompt, silent=False, show=None, cfg=None, mention=N
     return {"message_id": m["message_id"], "chat": {"id": chat, "type": "private" if chat > 0 else "supergroup"},
             "from": {"id": chat},
             "message_thread_id": thread, "date": int(time.time()), "text": prompt}
+
+
+def hidden_msg(chat, thread, prompt) -> dict:
+    """A prompt nobody sees in Telegram (`send --hidden`, e.g. a hook nudge): no post, a synthetic message whose id
+    is negative (real ids are > 0, so it never collides with one) and unique (request key in the bot). The bot never
+    reacts to it nor replies to it (Bridge.react, restore)."""
+    return {"message_id": -(time.time_ns() // 1000 % 2_000_000_000 + 1), "_hidden": True,
+            "chat": {"id": chat, "type": "private" if chat > 0 else "supergroup"}, "from": {"id": chat},
+            "message_thread_id": thread, "date": int(time.time()), "text": prompt}
+
+
+def real(mid) -> bool:
+    """A message that exists in Telegram (not a `hidden_msg`): reactions and replies only target these."""
+    return isinstance(mid, int) and mid > 0
 
 
 LAST_MSG = 2147483647  # int32 max: a message that doesn't exist -> Telegram opens the topic at its last message
@@ -186,14 +201,15 @@ def spawn(bot, cfg, title, cwd, prompt, icon=None, system=None, silent=False, sh
     return out if config.home(cfg, chat) else dict(out, chat=chat)
 
 
-def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False, chat=None) -> dict:
+def send(bot, cfg, thread, prompt, silent=False, show=None, quiet=False, chat=None, hidden=False) -> dict:
+    """`hidden`: nothing is posted in the topic, the prompt only reaches the session (hidden_msg)."""
     chat = chat if chat is not None else owner_chat(cfg)
-    msg = post(bot, chat, thread, prompt, silent, show)
+    msg = hidden_msg(chat, thread, prompt) if hidden else post(bot, chat, thread, prompt, silent, show)
     item = {"op": "prompt", "thread": thread, "chat": chat, "msg": msg}
     if quiet:
         item["topic"] = {"quiet": True}
     enqueue(item)
-    return {"thread": thread, "message_id": msg["message_id"]}
+    return dict({"thread": thread, "message_id": msg["message_id"]}, **({"hidden": True} if hidden else {}))
 
 
 def _proc_topics(proc=Path("/proc"), cfg=None) -> dict:
@@ -385,7 +401,9 @@ def main(cfg: dict, a) -> int:
             r = spawn(bot, cfg, a.title, a.cwd, _text(a), a.icon, read_system(a.system), a.silent, a.show, a.quiet,
                       getattr(a, "mention", None), chat, getattr(a, "start_icon", None), settings)
         elif a.cmd == "send":
-            r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat)
+            if getattr(a, "hidden", False) and a.show:
+                raise NotifyError("--hidden posts nothing: drop --show")
+            r = send(bot, cfg, thread_of(ref), _text(a), a.silent, a.show, a.quiet, chat, getattr(a, "hidden", False))
         elif a.cmd == "topic-delete":
             r = topic_delete(bot, cfg, thread_of(ref), chat)
         elif a.cmd == "topic-rename":

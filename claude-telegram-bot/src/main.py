@@ -214,6 +214,9 @@ def main(argv=None):
     s.add_argument("--silent", action="store_true", help="post the prompt without sound")
     s.add_argument("--show", metavar="TEXT",
                    help="post this short line in the topic instead of the prompt (claude still gets the full prompt)")
+    s.add_argument("--hidden", action="store_true",
+                   help="post nothing in the topic: the prompt only reaches the session (e.g. a hook nudge); its "
+                        "answer is posted as usual. Excludes --show")
     s.add_argument("--quiet", action="store_true",
                    help="make the topic quiet (/quiet), kept for later runs: text between steps stays in the status "
                         "line, only the final answer is posted")

@@ -18,7 +18,7 @@ claude-tg notify [TEXT] [--md|--html] [--silent] [--button 'TEXT=URL|cb:PREFIX:D
 claude-tg triage [show] | on [--cwd DIR] [--chat NAME] [--cooldown MIN] [--topics KEY..|all] [--exclude KEY..|none] | off   # auto-triage of notify events
 claude-tg notify-delete [KEY]... [--id MSG]... [--or-edit TEXT]   # delete what --replace KEY last sent; --or-edit: edit a too-old --id instead (exit 1 = some not deleted)
 claude-tg spawn --title T [--cwd DIR] [--icon E] [--start-icon E] [--system TEXT|@FILE] [--settings ABS.json] [--silent] [--show TEXT] [--quiet] [--chat NAME] [PROMPT]   # new topic + session; stdin if no PROMPT
-claude-tg send --thread ID|LINK [--silent] [--show TEXT] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume)
+claude-tg send --thread ID|LINK [--silent] [--show TEXT | --hidden] [--quiet] [PROMPT]   # prompt into a topic as the owner (live run: stdin; else resume); --hidden: nothing posted, session only (hook nudges)
 claude-tg alive --thread ID|LINK   # exit 0 = run live or queued there, 1 = idle
 claude-tg topic-icon --thread ID|LINK <emoji|off|base>   # base = icon from /icon or spawn --icon
 claude-tg topic-settings --thread ID|LINK|--all-matching SUBSTR <ABS.json|off>   # change a topic's spawn --settings for future runs (SUBSTR: off only)

@@ -646,6 +646,21 @@ class Burst(TopicCommands):
 
 
 class RestartSafety(unittest.TestCase):
+    def test_hidden_prompt_is_restored_without_any_notice(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+            s = Store(Path(d) / "state.json", "/tmp")
+            now = __import__("time").time()
+            s.pend(-5, thread=5, chat=1, msgs=[{"message_id": -5, "_hidden": True, "date": now, "text": "a"}],
+                   started=True)
+            s.pend(-6, thread=6, chat=1, msgs=[{"message_id": -6, "_hidden": True, "date": now - 7200, "text": "b"}],
+                   started=True)
+            b = bridge.Bridge(dict(config.DEFAULTS, owner_id=1, reactions=True), "tok")
+            b.bot, put = FakeBot(), []
+            b.worker = lambda chat, thread: mock.Mock(put=lambda msgs: put.append((thread, msgs)))
+            b.restore()
+            self.assertEqual([(t, m[-1]["message_id"]) for t, m in put], [(5, -5)])
+            self.assertEqual(b.bot.calls, [])  # no reaction, no "restarted" / "resend" line for a hidden prompt
+
     def test_pending_survives_and_is_restored(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
             s = Store(Path(d) / "state.json", "/tmp")
@@ -734,6 +749,40 @@ class Inject(TopicCommands):
     def reacts(self, b, mid):
         return [p["reaction"][0]["emoji"] if p["reaction"] else None
                 for m, p in b.bot.calls if m == "setMessageReaction" and p["message_id"] == mid]
+
+    def test_hidden_send_posts_nothing_and_its_answer_is_no_reply(self):
+        """github-tasks nudges: `send --hidden` reaches the session only; the answer posts normally."""
+        from src import inbox as ib
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \
+                mock.patch.object(runner, "Run", FakeRun), mock.patch.object(bridge.Worker, "rename"):
+            FakeRun.runs = []
+            cli = Inbox.Bot()
+            r = ib.send(cli, dict(config.DEFAULTS, owner_id=1), 50, "nudge: update the status", hidden=True)
+            self.assertEqual(cli.calls, [])  # nothing posted in the topic
+            self.assertTrue(r["hidden"] and r["message_id"] < 0)
+            b = self.bridge(d)
+            b.drain_inbox()
+            until(lambda: FakeRun.runs and FakeRun.runs[0].lines)
+            run = FakeRun.runs[0]
+            self.assertEqual(run.lines, ["nudge: update the status"])
+            self.assertIn(str(r["message_id"]), b.store.pending())
+            for e in (self.E("session", "m", "s50"), self.E("user", "u1"), self.E("result", "done", "s50")):
+                run.ev.put(e)
+            until(lambda: self.answers(b) == ["done"])
+            run.ev.put(None)
+            until(lambda: b.workers["50"].run is None)
+            sent = [p for m, p in b.bot.calls if m == "sendMessage" and p.get("parse_mode")]
+            self.assertNotIn("reply_parameters", sent[0])
+            self.assertFalse([p for m, p in b.bot.calls if m == "setMessageReaction"])
+            self.assertEqual(b.store.pending(), {})
+            b.workers["50"].close()
+
+    def test_hidden_and_show_are_exclusive(self):
+        from src import inbox as ib
+        a = __import__("argparse").Namespace(cmd="send", thread="50", chat=None, prompt=["x"], silent=False,
+                                             show="🔁 line", quiet=False, hidden=True)
+        with mock.patch.object(ib, "cli_bot", lambda cfg: Inbox.Bot()), mock.patch("sys.stderr"):
+            self.assertEqual(ib.main(dict(config.DEFAULTS, owner_id=1), a), 2)
 
     def test_message_goes_into_the_running_process_while_a_helper_runs(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)), \

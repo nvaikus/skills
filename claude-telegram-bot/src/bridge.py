@@ -220,7 +220,7 @@ class Bridge:
         log.info("topic %s forgotten: %s", key, why)
 
     def react(self, chat, mid, emoji):
-        if not self.cfg.get("reactions", False):
+        if not self.cfg.get("reactions", False) or not inbox.real(mid):  # a hidden prompt has no message
             return
         self.quiet("setMessageReaction", chat_id=chat, message_id=mid,
                    reaction=[{"type": "emoji", "emoji": emoji}] if emoji else [])
@@ -751,19 +751,24 @@ class Bridge:
     # ---------- restart safety ----------
     def restore(self):
         """Re-run requests a previous process accepted but did not finish (restart, crash)."""
-        for key, e in sorted(self.store.pending().items(), key=lambda kv: int(kv[0].rpartition(":")[2])):
+        for key, e in sorted(self.store.pending().items(), key=lambda kv: ((kv[1].get("msgs") or [{}])[-1].get("date", 0),
+                                                                        int(kv[0].rpartition(":")[2]))):
             msgs, chat, thread = e["msgs"], e["chat"], e["thread"]
             mid = msgs[-1]["message_id"]
+            seen = inbox.real(mid)  # a hidden prompt (send --hidden) stays hidden: no notice about it either
+            reply = {"reply_parameters": {"message_id": mid, "allow_sending_without_reply": True}}
             if time.time() - msgs[-1].get("date", 0) > RERUN_MAX_AGE:
                 self.store.unpend(key)
                 self.react(chat, mid, "💔")
-                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, reply_parameters={"message_id": mid},
-                           text=self.s("restart_resend"))
+                if seen:
+                    self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, **reply,
+                               text=self.s("restart_resend"))
                 continue
             if e.get("started"):
                 msgs[-1]["_restarted"] = True
-                self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, reply_parameters={"message_id": mid},
-                           text=self.s("restart_rerun"))
+                if seen:
+                    self.quiet("sendMessage", chat_id=chat, message_thread_id=thread or None, **reply,
+                               text=self.s("restart_rerun"))
             log.info("restoring unfinished request %s in topic %s (started: %s)", key, thread, bool(e.get("started")))
             self.worker(chat, thread).put(msgs)
 
