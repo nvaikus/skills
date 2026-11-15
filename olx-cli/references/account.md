@@ -11,6 +11,7 @@
   - `browser_display`: X display on Linux when the env has none, e.g. an always-on Xvfb `":99"`.
   - `browser_view_url` (env `OLX_VIEW_URL`): the user's remote view of that display (noVNC link). Exit-5 texts carry it.
   - `browser_launch_prefix`: argv before the Chrome command, placeholders `{ts}` `{display}` `{path}` `{cwd}`.
+- Headless Linux host: install `xdotool` (`apt install xdotool`). Sessions share one Xvfb display with no window manager, so another session's browser can bury this one; before every exit 5 the CLI raises its own window (`xdotool windowraise`). Missing xdotool → a `# ` stderr note, the command still works.
 - Headless Linux host run by a bot (`claude -p` per message kills the process tree): start Chrome in its own unit:
   `["systemd-run", "--user", "--unit=olx-browser-{ts}", "--setenv=DISPLAY={display}", "--setenv=PATH={path}", "--working-directory={cwd}"]`. The CLI sets `XDG_RUNTIME_DIR` when missing. Stop: `systemctl --user stop 'olx-browser-*'`.
 - Desktop (Mac): no config needed; the headed window opens on screen.

@@ -24,6 +24,7 @@
 ## Account (cart, msg, login)
 - Needs `playwright-cli` (npm `@playwright/cli`) and Chrome. Session `ebay` (config `browser_session` / env `EBAY_BROWSER_SESSION`); a separate session = separate profile = separate login.
 - Headless Linux server (no desktop): config `browser_display` (e.g. `":99"`) = an always-on Xvfb display used when env has no `DISPLAY`; `browser_view_url` = the user's remote view of it (noVNC link, tailnet-only). With the URL set, exit-5 texts carry it: send the user that link, wait for "done", rerun. Never headless Chrome (captcha wall), never copy a profile from another machine (eBay sees a new device anyway).
+- Headless Linux host: install `xdotool` (`apt install xdotool`). Sessions share one Xvfb display with no window manager, so another session's browser can bury this one; before every exit 5 the CLI raises its own window (`xdotool windowraise`). Missing xdotool → a `# ` stderr note, the command still works.
 - One action at a time per session: two parallel `ebay cart`/`msg` calls drive the same tab.
 - Exit 5 "captcha": eBay challenges after bursts of automated page loads; the user solves it in the Chrome window. Space out calls; don't loop.
 - Signed-in check = cookie `ebay` with `sin=in`; an expired login that keeps the cookie shows up as a redirect to `signin.*` - also exit 5.

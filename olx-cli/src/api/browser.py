@@ -7,6 +7,7 @@ One JS file per action in js/, prefixed by js/prelude.js; params go in as JSON, 
 Never posts, buys or pays: the rail test greps js/ for those controls."""
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -34,6 +35,57 @@ def view_hint(cfg):
         return (f" - the browser runs on this host: send the user the link {url} (live browser screen, also on a phone)"
                 " and wait for his \"done\"")
     return " in the Chrome window on this machine"
+
+
+def chrome_pids(match):
+    """Browser (not renderer) processes whose --user-data-dir satisfies match(path); Linux /proc only."""
+    pids = []
+    for d in Path("/proc").glob("[0-9]*"):
+        try:  # Chrome rewrites its argv into one space-joined string: parse the joined line, not NUL fields
+            line = (d / "cmdline").read_bytes().decode("utf-8", "replace").replace("\0", " ").strip()
+        except OSError:
+            continue
+        if re.search(r"(?:^|\s)--type=", line):
+            continue
+        if any(match(u) for u in re.findall(r"(?:^|\s)--user-data-dir=(.+?)(?=\s--|$)", line)):
+            pids.append(int(d.name))
+    return pids
+
+
+def raise_window(cfg, display, match, label):
+    """Best-effort, before every exit-5 human step: put this session's Chrome window on top of its X display.
+    Several sessions share one always-on Xvfb with no window manager (windowactivate fails there), so another
+    session's newer window buries ours. Windows carry _NET_WM_PID = the browser pid. Never fails the command."""
+    if not sys.platform.startswith("linux") or not display:
+        return
+    headless = bool(cfg.get("browser_display"))
+    xdo = shutil.which("xdotool")
+    if not xdo:
+        if headless:
+            sys.stderr.write(f"# xdotool not found: could not raise the {label} Chrome window on display {display},"
+                             " another session's browser may cover it (apt install xdotool)\n")
+        return
+    env = {**os.environ, "DISPLAY": display}
+    raised = 0
+    for pid in chrome_pids(match):
+        try:
+            r = subprocess.run([xdo, "search", "--onlyvisible", "--pid", str(pid)], capture_output=True, text=True,
+                               timeout=5, env=env)
+            for wid in r.stdout.split():
+                if subprocess.run([xdo, "windowraise", wid], capture_output=True, timeout=5, env=env).returncode == 0:
+                    raised += 1
+        except (OSError, subprocess.SubprocessError):
+            continue
+    if not raised and headless:
+        sys.stderr.write(f"# could not raise the {label} Chrome window on display {display} (no window found);"
+                         " another session's browser may cover it\n")
+
+
+def human_step(cfg, msg):
+    """Exit-5 error for a step the user does in the olx window; raises that window first so he sees it."""
+    prof = str(paths.sub("browser", "profiles", session(cfg)))
+    raise_window(cfg, cfg.get("browser_display") or os.environ.get("DISPLAY"), lambda d: d == prof, "olx")
+    return Waiting(msg)
 
 
 def session(cfg):
@@ -199,9 +251,9 @@ def interpret(cfg, action, out):
     if st == "ok":
         return res
     if st == "login":
-        raise Waiting(NOT_LOGGED_IN.format(where=view_hint(cfg)))
+        raise human_step(cfg, NOT_LOGGED_IN.format(where=view_hint(cfg)))
     if st == "captcha":
-        raise Waiting(CAPTCHA.format(where=view_hint(cfg)))
+        raise human_step(cfg, CAPTCHA.format(where=view_hint(cfg)))
     if st == "usage":
         raise UsageError(res.get("error"))
     txt = dump_text(res)

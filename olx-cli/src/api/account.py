@@ -1,6 +1,6 @@
 """Login check and seller chat in the user's logged-in browser (api/browser): refs in, rows out.
 Scope is fixed: sign-in, read conversations, send a chat message. Never posts, buys or pays."""
-from ..core.errors import UsageError, Waiting
+from ..core.errors import UsageError
 from . import browser, offers, olx
 
 MAX_TEXT = 5000  # chat bundle 2026-11: "You can only write up to 5000 characters per message"
@@ -9,7 +9,7 @@ MAX_TEXT = 5000  # chat bundle 2026-11: "You can only write up to 5000 character
 def login(cfg, s):
     r = browser.run(cfg, "login", {}, olx.SITES[s])
     if not r.get("logged_in"):
-        raise Waiting(f"sign in to OLX in the Chrome window (browser session '{browser.session(cfg)}'): its sign-in page"
+        raise browser.human_step(cfg, f"sign in to OLX in the Chrome window (browser session '{browser.session(cfg)}'): its sign-in page"
                       f" is open{browser.view_hint(cfg)}; email + password or Google/Apple/Facebook. Then rerun `olx login`")
     return {"logged_in": True, "session": browser.session(cfg), "site": olx.SITES[s]}
 

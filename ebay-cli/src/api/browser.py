@@ -33,6 +33,58 @@ def view_hint(cfg):
             " also on a phone), wait for his \"done\"") if url else ""
 
 
+def chrome_pids(match):
+    """Browser (not renderer) processes whose --user-data-dir satisfies match(path); Linux /proc only."""
+    pids = []
+    for d in Path("/proc").glob("[0-9]*"):
+        try:  # Chrome rewrites its argv into one space-joined string: parse the joined line, not NUL fields
+            line = (d / "cmdline").read_bytes().decode("utf-8", "replace").replace("\0", " ").strip()
+        except OSError:
+            continue
+        if re.search(r"(?:^|\s)--type=", line):
+            continue
+        if any(match(u) for u in re.findall(r"(?:^|\s)--user-data-dir=(.+?)(?=\s--|$)", line)):
+            pids.append(int(d.name))
+    return pids
+
+
+def raise_window(cfg, display, match, label):
+    """Best-effort, before every exit-5 human step: put this session's Chrome window on top of its X display.
+    Several sessions share one always-on Xvfb with no window manager (windowactivate fails there), so another
+    session's newer window buries ours. Windows carry _NET_WM_PID = the browser pid. Never fails the command."""
+    if not sys.platform.startswith("linux") or not display:
+        return
+    headless = bool(cfg.get("browser_display"))
+    xdo = shutil.which("xdotool")
+    if not xdo:
+        if headless:
+            sys.stderr.write(f"# xdotool not found: could not raise the {label} Chrome window on display {display},"
+                             " another session's browser may cover it (apt install xdotool)\n")
+        return
+    env = {**os.environ, "DISPLAY": display}
+    raised = 0
+    for pid in chrome_pids(match):
+        try:
+            r = subprocess.run([xdo, "search", "--onlyvisible", "--pid", str(pid)], capture_output=True, text=True,
+                               timeout=5, env=env)
+            for wid in r.stdout.split():
+                if subprocess.run([xdo, "windowraise", wid], capture_output=True, timeout=5, env=env).returncode == 0:
+                    raised += 1
+        except (OSError, subprocess.SubprocessError):
+            continue
+    if not raised and headless:
+        sys.stderr.write(f"# could not raise the {label} Chrome window on display {display} (no window found);"
+                         " another session's browser may cover it\n")
+
+
+def human_step(cfg, msg):
+    """Exit-5 error for a step the user does in the ebay window; raises that window first so he sees it.
+    playwright-cli keeps a persistent session's profile in .../daemon/<hash>/ud-<session>-chrome."""
+    tail = f"/ud-{session(cfg)}-chrome"
+    raise_window(cfg, os.environ.get("DISPLAY") or cfg.get("browser_display"), lambda d: d.endswith(tail), "ebay")
+    return Waiting(msg)
+
+
 def use_display(cfg):
     """Headless Linux host with an always-on virtual display: point the browser at config browser_display."""
     if (sys.platform.startswith("linux") and cfg.get("browser_display")
@@ -142,9 +194,9 @@ def run(cfg, action, params, market=None):
     if st == "ok":
         return res
     if st == "login":
-        raise Waiting(NOT_LOGGED_IN.format(where=view_hint(cfg)))
+        raise human_step(cfg, NOT_LOGGED_IN.format(where=view_hint(cfg)))
     if st == "captcha":
-        raise Waiting(CAPTCHA.format(where=view_hint(cfg)))
+        raise human_step(cfg, CAPTCHA.format(where=view_hint(cfg)))
     if st == "usage":
         raise UsageError(res.get("error"))
     txt = _dump_text(res)

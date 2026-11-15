@@ -1,6 +1,6 @@
 """Cart and seller messages in the user's logged-in browser (api/browser): ids in, rows out.
 Scope is fixed: add/list/remove cart lines, send/read seller messages. Never checkout, pay, bid or offer."""
-from ..core.errors import CliError, UsageError, Waiting
+from ..core.errors import CliError, UsageError
 from . import browse, browser, markets
 
 # "<who>: <day> <time> <text>" labels a message; the user's own messages are labelled with "you" in the
@@ -50,7 +50,7 @@ def variation_id(item_id, spec, loc):
 def login(cfg, market=None):
     r = browser.run(cfg, "login", {}, market)
     if not r.get("logged_in"):
-        raise Waiting(f"log in to eBay in the Chrome window that just opened (browser session "
+        raise browser.human_step(cfg, f"log in to eBay in the Chrome window that just opened (browser session "
                       f"'{browser.session(cfg)}'){browser.view_hint(cfg)}, then rerun `ebay login`")
     return {"logged_in": True, "session": browser.session(cfg), "site": browser.domain(cfg, market)}
 

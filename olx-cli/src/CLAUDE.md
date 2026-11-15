@@ -5,7 +5,7 @@ Keep this file one screen. Entry `olx.py` → `src/main.py:main`. Python 3.9+, s
 ## Invariants — never break
 
 - stdlib only. The JSON API is GET only. Only `core/http.get` opens URLs (a test greps `src` for `urlopen`).
-- Account actions (login, msg) only through `api/browser` + `api/js/*.js` (playwright-cli run-code on a plain Chrome over CDP, never a Playwright-launched one). Never post, buy, pay: a rail test greps `api/js`. Every wait bounded (`browser.TIMEOUTS`, a test greps for `timeout`); every action verifies its outcome on the page; failure returns a screenshot + ARIA dump. Not signed in / captcha → exit 5 (`Waiting`) with `browser_view_url`.
+- Account actions (login, msg) only through `api/browser` + `api/js/*.js` (playwright-cli run-code on a plain Chrome over CDP, never a Playwright-launched one). Never post, buy, pay: a rail test greps `api/js`. Every wait bounded (`browser.TIMEOUTS`, a test greps for `timeout`); every action verifies its outcome on the page; failure returns a screenshot + ARIA dump. Not signed in / captcha → exit 5 via `browser.human_step` (raises the own Chrome window on a shared Xvfb, then `Waiting` with `browser_view_url`).
 - `core/http.tls_context()` keeps `post_handshake_auth = False`: CloudFront 403s urllib's default ClientHello. A test pins it.
 - Polite: `http.GAP` 1 s between requests per process (`OLX_GAP`), bounded timeout, retries only on 429/5xx/network.
 - Every request outcome appends one line to `health.tsv`; refusals (403/captcha HTML) and JSON-shape changes raise `Broken` (exit 3). Schema guards: `olx.need()`, `offers.OFFER_KEYS`.
