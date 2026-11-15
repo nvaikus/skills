@@ -4,12 +4,13 @@ Keep this file one screen. Entry `olx.py` → `src/main.py:main`. Python 3.9+, s
 
 ## Invariants — never break
 
-- stdlib only. GET only: OLX is never written to. Only `core/http.get` opens URLs (a test greps `src` for `urlopen`).
+- stdlib only. The JSON API is GET only. Only `core/http.get` opens URLs (a test greps `src` for `urlopen`).
+- Account actions (login, msg) only through `api/browser` + `api/js/*.js` (playwright-cli run-code on a plain Chrome over CDP, never a Playwright-launched one). Never post, buy, pay: a rail test greps `api/js`. Every wait bounded (`browser.TIMEOUTS`, a test greps for `timeout`); every action verifies its outcome on the page; failure returns a screenshot + ARIA dump. Not signed in / captcha → exit 5 (`Waiting`) with `browser_view_url`.
 - `core/http.tls_context()` keeps `post_handshake_auth = False`: CloudFront 403s urllib's default ClientHello. A test pins it.
 - Polite: `http.GAP` 1 s between requests per process (`OLX_GAP`), bounded timeout, retries only on 429/5xx/network.
 - Every request outcome appends one line to `health.tsv`; refusals (403/captcha HTML) and JSON-shape changes raise `Broken` (exit 3). Schema guards: `olx.need()`, `offers.OFFER_KEYS`.
 - A command never speaks HTTP and never prints: `api/` does the work, rows go to `ctx.write` / `ctx.text`. A test greps `src/commands` for `urllib|urlopen|http.get|print(`.
-- stdout = data; stderr = `# ` notes and `olx: <error>`. Exit 0 · 1 · 2 · 3 broke · 130. Branch on exception class / `e.status`, never on message text.
+- stdout = data; stderr = `# ` notes and `olx: <error>`. Exit 0 · 1 · 2 · 3 broke · 5 human step · 130. Branch on exception class / `e.status`, never on message text.
 - Config keys (`core/config.DEFAULTS`) and watch files (`api/watch.py`) are contract.
 
 ## Layers
@@ -23,13 +24,14 @@ Keep this file one screen. Entry `olx.py` → `src/main.py:main`. Python 3.9+, s
 | `api/query.py` · `categories.py` | search flags → offers params (names → ids) · category tree from home `__PRERENDERED_STATE__`, cache, resolve |
 | `api/photos.py` | full-size photo links, download (`http.get(want="bytes")`), contact sheet via ffmpeg subprocess if on PATH |
 | `api/watch.py` · `notify.py` | saved searches, seen state, new + drop · claude-tg message, failure de-dup |
+| `api/browser.py` · `account.py` · `js/` | Chrome launch/attach, run-code, result → exit code, dumps · refs → rows · one JS per action + `prelude.js` (selectors, `// live <date>` notes) |
 | `commands/<area>/<cmd>.py` | argparse + orchestration, < ~60 lines |
 
 ## Add a command
 
 1. `registry.COMMANDS["name"]` or `"watch verb"` = `("src.commands.<area>.<file>", "one-line help")`.
 2. Module: `FIELDS`, `EPILOG` (2–4 examples + traps), `add_args(p)`, `run(ctx, args)`. Never declare `-j/--fields/--no-header`.
-3. Tests in `dev/tests/` (import `support` first: temp `OLX_ROOT`, `OLX_GAP=0`). `FakeOlx` replaces `core.http.get`, routes by URL path, serves `fixtures/*` recorded live.
+3. Tests in `dev/tests/` (import `support` first: temp `OLX_ROOT`, `OLX_GAP=0`). `FakeOlx` replaces `core.http.get`, routes by URL path, serves `fixtures/*` recorded live. Account commands: `FakePw` (`test_account.py`) replaces `browser._call`, reads the generated script, answers per action.
 
 ## Route discovery
 
@@ -38,4 +40,5 @@ No docs: watch the site's own XHRs (browser devtools on olx.pt search) or probe 
 ## Test
 
 - `python3 -m unittest discover -s dev/tests` — mocked, no network, < 1 s.
-- Live: `OLX_LIVE=1 python3 -m unittest dev/tests/test_live.py` or `olx doctor`.
+- Live: `OLX_LIVE=1 python3 -m unittest dev/tests/test_live.py` or `olx doctor`. Account: `olx login`, `olx msg list` are safe; never test `msg send` on a real seller.
+- JS in run-code: no `require`, no `URL` global in the page-function scope. Probe the live DOM before changing a selector.

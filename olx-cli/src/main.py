@@ -13,7 +13,8 @@ from .core.errors import CliError, UsageError
 from .core.output import Writer
 
 EXITS = ("exit: 0 ok · 1 OLX/network/runtime failure · 2 usage, unknown name, listing not found"
-         " · 3 OLX broke: blocked (403/captcha) or the JSON changed · 130 interrupt")
+         " · 3 OLX broke: blocked (403/captcha) or the JSON changed · 5 a human step in the browser (sign-in, captcha)"
+         " · 130 interrupt")
 GLOBALS = "global: -j/--json · --fields A,B · --no-header (on every command)"
 
 
@@ -23,7 +24,7 @@ def top_help():
              "Buyer-side OLX search (olx.pt by default; --site pl ro bg ua kz uz) through OLX's unofficial",
              "frontend JSON API: listings, cards, category and place ids, saved searches that report only new",
              "listings and price drops. Output: TSV (-j JSON); data on stdout, notes on stderr as '# ...'.",
-             "Read-only: never posts, messages sellers or buys."]
+             "Account (login, seller chat) runs in the user's own logged-in Chrome. Never posts, buys or pays."]
     width = max(map(len, registry.COMMANDS))
     for key, heading in registry.AREAS.items():
         lines += ["", f"{heading}:"]

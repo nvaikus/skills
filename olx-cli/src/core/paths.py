@@ -7,6 +7,8 @@
   watch/searches.json        saved searches
   watch/seen/<name>.json     listings a saved search has already reported
   watch/alerted.json         last failure alert per watch (notify rate limit)
+  browser/                   playwright-cli cwd, chrome.log; profiles/<session>/ = the Chrome profile (login)
+  dumps/                     failure screenshot + .txt (url, title, ARIA) of browser actions
   memory.md                  skill memory"""
 import os
 from pathlib import Path
@@ -35,3 +37,9 @@ def write_private(path, text):
         os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def sub(*parts):
+    p = root().joinpath(*parts)
+    p.mkdir(parents=True, exist_ok=True)
+    return p

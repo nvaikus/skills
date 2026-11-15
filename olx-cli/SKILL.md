@@ -1,11 +1,11 @@
 ---
 name: olx-cli
-description: 'Buyer-side OLX search and price monitoring for agents through OLX''s unofficial frontend JSON API, one stdlib CLI. olx.pt by default, other OLX countries (pl, ro, bg, ua, kz, uz) via --site. Search listings with price, category, region/city + radius, condition, seller-type and sort filters; open a listing as a compact card (id or URL); find category and place ids; save searches and rerun them on a schedule to get only new listings and price drops, with an optional Telegram alert via claude-tg. Records how often the unofficial endpoint breaks. Use when a task is about buying or finding something on OLX. NOT for selling, messaging sellers, buying or OLX account actions. Triggers - "find on OLX", "search OLX for", "olx.pt", "how much is X on OLX", an olx.* /d/anuncio/ or /d/oferta/ link, "watch OLX for X", "alert me when a new X appears on OLX", "OLX price drop", "olx".'
+description: 'Buyer-side OLX search and price monitoring for agents through OLX''s unofficial frontend JSON API, one stdlib CLI. olx.pt by default, other OLX countries (pl, ro, bg, ua, kz, uz) via --site. Search listings with price, category, region/city + radius, condition, seller-type and sort filters; open a listing as a compact card (id or URL); find category and place ids; save searches and rerun them on a schedule to get only new listings and price drops, with an optional Telegram alert via claude-tg. Records how often the unofficial endpoint breaks. In the user''s own logged-in Chrome (playwright-cli): sign in once, message a listing''s seller through OLX chat and read the replies. Use when a task is about buying or finding something on OLX, or talking to an OLX seller. NOT for selling, posting ads, buying or paying. Triggers - "find on OLX", "search OLX for", "olx.pt", "how much is X on OLX", an olx.* /d/anuncio/ or /d/oferta/ link, "watch OLX for X", "alert me when a new X appears on OLX", "OLX price drop", "ask the seller on OLX", "write to the OLX seller", "did the seller reply", "OLX chat", "olx".'
 ---
 
 # olx-cli
 
-Read-only buyer search on OLX's unofficial `/api/v1/offers/` (no keys, no login). Default site from `~/.claude/olx/config.json` (`site`, default `pt`) or `OLX_SITE`; every command takes `--site CC`.
+Buyer search on OLX's unofficial `/api/v1/offers/` (no keys, no login), plus seller chat in the user's logged-in browser. Default site from `~/.claude/olx/config.json` (`site`, default `pt`) or `OLX_SITE`; every command takes `--site CC`.
 
 ```
 olx doctor                                            # live check + breakage stats (start here)
@@ -18,15 +18,22 @@ olx categories bicicleta                              # ids for --category (name
 olx places ericeira                                   # city ids; --regions for regions
 olx watch add "macbook air m2" --max-price 700 --must macbook   # saved search; records current listings
 olx watch run [--notify]                              # only NEW listings + price drops since last run
+olx login                                             # signed in? else opens OLX sign-in, exit 5
+olx msg send 674669746 "Ainda está disponível?"       # to the listing's seller, verified; text or stdin
+olx msg list [--id ID | --conversation CID]           # inbox (last_by=them = answered) or one thread
 ```
+
+## Account (browser)
+
+`login`, `msg` drive a plain headed Chrome on its own profile (playwright-cli session `olx`, attached over CDP). Exit 5 = a human step: not signed in (run `olx login`) or a captcha; tell the user at once (on a headless server the error carries a remote-view link: send it), rerun after he says done. `msg send` is not idempotent and does not retry: after exit 1 or any unclear failure the message may already be out, never rerun it before `olx msg list --id ID`. On exit 1 read the dump (`.png` + `.txt`) the error names before retrying. Setup, config keys, selectors: `references/account.md`.
 
 ## Contract
 
 - stdout TSV (`-j` JSON with more fields: price_value, price_kind, seller, photos, created/refreshed..., `--fields a,b`, `--no-header`); stderr `# ` notes; `show` prints markdown; `photos` prints n, path, bytes (default dir `./olx-<id>`).
-- Exit `0` ok · `1` OLX/network failure · `2` usage, unknown name, listing not found · `3` OLX broke: blocked (403/captcha) or JSON changed → read `references/traps.md` "When it breaks".
+- Exit `0` ok (account actions: outcome verified on the page) · `1` OLX/network/browser failure · `2` usage, unknown name, listing not found, chat disabled · `3` OLX broke: blocked (403/captcha) or JSON changed → read `references/traps.md` "When it breaks" · `5` sign-in or captcha waits on the user.
 - Price column: number in the site currency, `N neg` = negotiable, `swap` / `free` / `ask` (no number), `-` none.
 - OLX's query is fuzzy (matches word forms and unrelated categories): add `--category` and/or `--must` when results drift.
-- Never: posting, messaging sellers, buying — no code path for them.
+- Never: posting ads, buying, paying, OLX delivery checkout, offers — no code path for them, and the agent must not click them by hand either.
 
 ## Scheduling
 
@@ -35,7 +42,8 @@ olx watch run [--notify]                              # only NEW listings + pric
 
 | when | read |
 |---|---|
-| exit 3, odd results (missing listings, order, prices, filters ignored), watch semantics, messaging sellers, fallback | `references/traps.md` |
+| exit 3, odd results (missing listings, order, prices, filters ignored), watch semantics, fallback | `references/traps.md` |
+| login / msg: setup, headless host, exit 5 loops, odd thread or inbox rows, selector changes | `references/account.md` |
 
 ## Memory
 

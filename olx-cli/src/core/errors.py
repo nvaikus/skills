@@ -23,3 +23,8 @@ class Broken(CliError):
     """exit 3: OLX refused the client (403/captcha/HTML instead of JSON) or the JSON shape changed.
     The unofficial endpoint 'broke': see references/traps.md 'When it breaks'."""
     code = 3
+
+
+class Waiting(CliError):
+    """exit 5: a human step in the browser (sign in to OLX, a captcha). The text says what to tell the user."""
+    code = 5

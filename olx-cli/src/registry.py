@@ -1,7 +1,8 @@
 """Command name -> (module, one-line help). Never import a command module here."""
 
-AREAS = {"start": "Start here", "find": "Search and inspect", "watch": "Saved searches (cron / clockmaster)"}
-FAMILIES = {"watch"}
+AREAS = {"start": "Start here", "find": "Search and inspect", "watch": "Saved searches (cron / clockmaster)",
+         "account": "Account, in the user's logged-in Chrome (playwright-cli)"}
+FAMILIES = {"watch", "msg"}
 
 COMMANDS = {
     "doctor": ("src.commands.start.doctor", "live check of the OLX endpoint + breakage stats from past runs"),
@@ -14,6 +15,9 @@ COMMANDS = {
     "watch list": ("src.commands.watch.list", "saved searches"),
     "watch rm": ("src.commands.watch.rm", "delete saved searches"),
     "watch run": ("src.commands.watch.run", "rerun saved searches: only NEW listings and price drops since last run"),
+    "login": ("src.commands.account.login", "sign in once in the olx browser (exit 5 = the user signs in there)"),
+    "msg send": ("src.commands.account.msg_send", "message a listing's seller via OLX chat, verified (not idempotent)"),
+    "msg list": ("src.commands.account.msg_list", "chat inbox (who wrote last), or one conversation: --id LISTING / --conversation"),
 }
 
 

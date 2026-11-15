@@ -25,5 +25,5 @@
 
 ## Not covered
 
-- Messaging sellers / account actions: the official OLX Partner API (developer.olx.pt, OAuth app per site) covers the user's own adverts and messages but has no search of other people's listings. Future path for "ask the seller", not for search.
+- Messaging sellers goes through the browser (`references/account.md`): the official OLX Partner API (developer.olx.pt, OAuth app per site) covers only the user's own adverts, not buyer chat with other people's listings.
 - Category names come from the home page's `__PRERENDERED_STATE__` (cached a week in `cache/categories-<site>.json`; `olx categories --refresh`); `/api/v1/categories` is deprecated.
