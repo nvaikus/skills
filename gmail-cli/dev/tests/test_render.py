@@ -55,6 +55,35 @@ class TestHtml(unittest.TestCase):
         self.assertEqual(t, "Click")
 
 
+class TestPlainPartIsHtml(unittest.TestCase):
+    """DIGI: text/plain carries the HTML source (doctype, MSO conditional comments, <style>)."""
+
+    def fx(self):
+        return json.loads((Path(__file__).parent / "fixtures" / "plain_part_is_html.json").read_text("utf-8"))["payload"]
+
+    def check(self, t):
+        self.assertIn("Olá", t)
+        self.assertIn("900000001", t)
+        self.assertIn("8900000000000000001", t)
+        self.assertIn("Obrigado.", t)
+        for noise in ("<", "DOCTYPE", "mso", "padding", "@media", "Example Telecom"):
+            self.assertNotIn(noise, t)
+
+    def test_html_part_used(self):
+        self.check(render.body_text(self.fx())[0])
+        self.check(render.body_text(self.fx(), full=True)[0])
+
+    def test_html_only_in_plain_part(self):
+        payload = self.fx()
+        payload["parts"] = payload["parts"][:1]
+        self.check(render.body_text(payload)[0])
+
+    def test_real_plain_text_kept(self):
+        payload = self.fx()
+        payload["parts"][0]["body"]["data"] = render.base64.urlsafe_b64encode("Hi <b> is a tag".encode()).decode()
+        self.assertEqual(render.body_text(payload)[0], "Hi <b> is a tag")
+
+
 class TestCharset(unittest.TestCase):
     def test_mislabeled_latin_header_utf8_body(self):
         """ActivoBank: Content-Type charset ISO-8859-15, bytes UTF-8 -> was 'informaÃ§Ã£o'."""

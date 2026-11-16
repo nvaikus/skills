@@ -281,9 +281,15 @@ def strip(text, subject=""):
     return body, cut
 
 
+# A text/plain part that is really HTML source (DIGI mailer: same doctype/head/style in both parts).
+_HTML_SOURCE = re.compile(r"\A\s*(?:<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]|<!--\[if\b)", re.I)
+
+
 def body_text(payload, full=False, subject=""):
     """-> (text, stripped?) of one message."""
     plain, htm = bodies(payload)
+    if plain and _HTML_SOURCE.match(plain):
+        htm, plain = htm or plain, None
     if plain and plain.strip():
         text = plain
     elif htm:
