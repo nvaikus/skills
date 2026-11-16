@@ -353,6 +353,14 @@ class Session:
         return [{"query": r.Query, "jid": jid_str(r.JID), "is_in": bool(r.IsIn)}
                 for r in self.client.is_on_whatsapp(*phones)]
 
+    def lid_for(self, jid):
+        """Phone jid -> its lid jid from whatsmeow's LID map (session.db), None when unknown."""
+        try:
+            lid = jid_str(self.client.get_lid_from_pn(to_jid(jid)))
+        except Exception:  # GetJIDFromStoreError / no mapping: the phone jid stays the target
+            return None
+        return lid if lid and lid.endswith("@lid") else None
+
     def send_text(self, jid, text):
         from neonize.proto.waE2E.WAWebProtobufsE2E_pb2 import Message
         return _sent(self.client.send_message(to_jid(jid), Message(conversation=text)))  # verbatim: no @mention parsing

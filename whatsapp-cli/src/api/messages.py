@@ -66,16 +66,22 @@ def search(store, query, chat_jids=None, sender_jids=None, since=None, until=Non
                                    store.messages(chat_jids, query or None, sender_jids, _epoch(since), _epoch(until), limit)])
 
 
-def check_target(session, store, jid):
-    """A phone jid nobody in the store has talked to: ask WhatsApp it exists (a send to a non-user
-    jid fails silently on the phone side). -> the jid WhatsApp knows it by."""
-    if (not jid.endswith("@s.whatsapp.net") or jid == store.get_meta("me_jid") or store.chat(jid)
-            or store.contact(jid)):
+def check_target(session, store, jid, record=True):
+    """-> the jid to send to. A phone jid nobody in the store has talked to: ask WhatsApp it exists (a send to a
+    non-user jid fails silently on the phone side). A phone jid with a lid in whatsmeow's LID map -> the lid:
+    a send to the phone jid opens a second thread the phone does not show. record: the pair goes to the store."""
+    if not jid.endswith("@s.whatsapp.net") or jid == store.get_meta("me_jid"):
         return jid
-    res = session.on_whatsapp("+" + jid.split("@")[0])
-    if not res or not res[0]["is_in"]:
-        raise UsageError(f"+{jid.split('@')[0]} is not on WhatsApp - nothing sent")
-    return res[0]["jid"] or jid
+    if not (store.chat(jid) or store.contact(jid)):
+        res = session.on_whatsapp("+" + jid.split("@")[0])
+        if not res or not res[0]["is_in"]:
+            raise UsageError(f"+{jid.split('@')[0]} is not on WhatsApp - nothing sent")
+        jid = res[0]["jid"] or jid
+    lid = session.lid_for(jid) if jid.endswith("@s.whatsapp.net") else None
+    if lid and record:
+        store.upsert_chat(lid, kind=normalize.chat_kind(lid), alt_jid=jid)
+        store.commit()
+    return lid or jid
 
 
 def _record(store, jid, sent, me, kind, text):

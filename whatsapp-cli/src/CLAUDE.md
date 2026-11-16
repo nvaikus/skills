@@ -11,6 +11,7 @@ Keep this file one screen. Entry `wa-cli.py` → `src/main.py:main`; re-execs un
 - Nothing received may be lost: the server acks a delivered message and never resends it. Every connect drains into the store (`api/sync.drain`); events still queued at disconnect go through `sync.absorb` in `ctx.close`.
 - One connection per account (flock in `core/wa.py`): two would replace each other's stream.
 - Ban hygiene is product behavior: no bulk/loop paths, no retry on rate limit or ban, `join` looks at the link before joining. `send`: no preview by design (same as tg-cli); the rail is exit 2 on an ambiguous/unknown target and a WhatsApp-registration check for unseen phones. `WRITE = True` marks send/join/login/logout.
+- Phone → lid: a phone-jid target with a lid goes to the lid (`peers.resolve` via the store link, `messages.check_target` via whatsmeow's LID map `Session.lid_for`). A send to the phone jid opens a second thread the phone hides (2026-11-16).
 - Text goes out verbatim as `Message(conversation=…)` — neonize's `send_message(str)` would parse `@digits` as mentions.
 
 ## Layers

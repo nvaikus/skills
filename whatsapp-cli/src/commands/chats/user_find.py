@@ -9,7 +9,7 @@ EPILOG = """examples:
   wa-cli user-find +351912345678 --check   # is this number on WhatsApp? (one request)
 
 source: contact (address book) · chat (a chat in the store) · seen (sender seen in a group) ·
-whatsapp (--check: registered, not yet in the store). WhatsApp has no people search by name:
+whatsapp (--check: registered; jid = its lid when one is known, the chat send uses). WhatsApp has no people search by name:
 names match only what this device has seen.
 """
 
@@ -25,9 +25,15 @@ def run(ctx, args):
     if args.check:
         if not peers.PHONE_RE.fullmatch(args.query.strip()):
             raise UsageError("--check needs a full phone number in international format (+351912345678)")
-        res = ctx.session().on_whatsapp("+" + "".join(c for c in args.query if c.isdigit()))
+        session = ctx.session()
+        res = session.on_whatsapp("+" + "".join(c for c in args.query if c.isdigit()))
         names = peers.Names(ctx.store())
-        rows = [names.row(r["jid"], source="whatsapp") for r in res if r["is_in"] and r["jid"]]
+        rows = []
+        for r in res:
+            if r["is_in"] and r["jid"]:  # lid first: the chat the phone shows (same target as send)
+                lid = session.lid_for(r["jid"]) or names.lid_of(r["jid"])
+                rows.append(names.row(lid or r["jid"], source="whatsapp"))
+                rows[-1]["phone"] = rows[-1]["phone"] or peers.phone_of(r["jid"])
         ctx.write(rows, FIELDS)
         if not rows:
             ctx.note(f"{args.query} is not on WhatsApp")

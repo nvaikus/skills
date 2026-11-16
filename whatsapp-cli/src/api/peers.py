@@ -87,6 +87,17 @@ class Names:
                  self.phone(jid), jid)
         return " ".join(p for p in parts if p).casefold() + " " + (c.get("name") or "").casefold()
 
+    def lid_of(self, jid):
+        """Phone jid -> the lid jid the store links it to (a lid chat with it as alt_jid, else a lid contact with
+        the same phone), None when unknown. Own jid excluded: "me" stays on the phone jid."""
+        if not jid or not jid.endswith("@s.whatsapp.net") or jid == self.me:
+            return None
+        lid = next((j for j in self.jids(jid) if j.endswith("@lid")), None)
+        if lid:
+            return lid
+        phone = phone_of(jid)
+        return next((c["jid"] for c in self.contacts.values() if c["jid"].endswith("@lid") and c["phone"] == phone), None)
+
     def jids(self, jid):
         c = self.chats.get(jid)
         return [j for j in dict.fromkeys((jid, c and c["jid"], c and c["alt_jid"], *sorted(self.linked.get(jid, ()))))
@@ -162,11 +173,11 @@ def resolve(store, ref, kinds=None):
         if not names.me:
             raise UsageError("own jid unknown yet - run any command without --offline once")
         return names.me, [j for j in (names.me, names.me_lid) if j], "me"
-    if "@" in ref:
-        return ref, names.jids(ref), names.name(ref)
-    if PHONE_RE.fullmatch(ref):
-        jid = phone_jid(ref)
-        return jid, names.jids(jid), names.name(jid)
+    if "@" in ref or PHONE_RE.fullmatch(ref):
+        jid = ref if "@" in ref else phone_jid(ref)
+        lid = names.lid_of(jid)  # a person with a lid: the phone shows only the lid chat, so that is the target
+        main = lid or jid
+        return main, list(dict.fromkeys(names.jids(main) + names.jids(jid))), names.name(main)
     rf = ref.casefold()
     pool = [j for j in names.pool() if not kinds or chat_kind(j) in kinds]
     exact = [j for j in pool if (names.name(j) or "").casefold() == rf or (names.contact_name(j) or "").casefold() == rf]

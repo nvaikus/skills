@@ -106,6 +106,7 @@ class FakeSession:
         self.member_of = set()
         self.follows = []
         self.joined = [{"jid": QA, "name": "Команда QA", "created": T0 - 999999}]
+        self.lid_map = {}  # whatsmeow's LID map: phone jid -> lid jid
 
     def events(self, quiet=1.5, maximum=20):
         q, self.queue = self.queue, []
@@ -170,6 +171,10 @@ class FakeSession:
         self.calls.append(("on_whatsapp",) + phones)
         jid = phones[0].lstrip("+") + "@s.whatsapp.net"
         return [{"query": phones[0], "jid": jid if jid in self.registered else None, "is_in": jid in self.registered}]
+
+    def lid_for(self, jid):
+        self.calls.append(("lid_for", jid))
+        return self.lid_map.get(jid)
 
     def _sent(self):
         if self.fail:
@@ -960,3 +965,50 @@ class LinkedJids(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LidRouting(Base):
+    """A person with a lid: sends by phone or phone jid go to the lid chat (the one the phone shows)."""
+    PN, LID = "351969554775@s.whatsapp.net", "268706609385667@lid"
+
+    def lid_history(self):
+        conv = P(ID=self.LID, name="", displayName="", pnJID=self.PN, lidJID="", conversationTimestamp=T0 - 50,
+                 unreadCount=0, messages=[hmsg(self.LID, "l1", "Posso marcar?", T0 - 50, self.LID)])
+        return ("history", P(Data=P(conversations=[conv], pushnames=[])))
+
+    def test_store_link_routes_phone_and_phone_jid_to_lid(self):
+        self.session.queue = [self.lid_history()]
+        for ref in ("+351969554775", self.PN, self.LID):
+            code, out, _ = self.cli("send", ref, "hi", "--fields", "chat_jid", "--no-header")
+            self.assertEqual((code, out), (0, f"{self.LID}\n"), ref)
+        self.assertEqual({j for j, _ in self.session.sent}, {self.LID})
+        _, out, _ = self.offline("history", "+351969554775", "--fields", "chat_jid,text", "--no-header")
+        self.assertEqual(out.splitlines()[-1], f"{self.LID}\tPosso marcar?")
+
+    def test_session_lid_map_wins_over_a_known_phone_chat(self):
+        # the bug: the phone jid already had a chat/contact row, so the send went to a thread the phone hides
+        self.session.queue = [live(self.PN, self.PN, "p1", P(conversation="old"), T0 - 99)]
+        self.session.lid_map = {self.PN: self.LID}
+        code, out, _ = self.cli("send", "+351969554775", "hi", "--fields", "chat_jid", "--no-header")
+        self.assertEqual((code, out, self.session.sent), (0, f"{self.LID}\n", [(self.LID, "hi")]))
+        _, out, _ = self.offline("history", "+351969554775", "--fields", "chat_jid,text", "--no-header")
+        self.assertEqual(out.splitlines(), [f"{self.LID}\thi", f"{self.PN}\told"])
+
+    def test_dry_run_sends_nothing(self):
+        self.session.lid_map = {self.PN: self.LID}
+        self.session.registered.add(self.PN)
+        code, out, _ = self.cli("send", "+351969554775", "--dry-run", "--fields", "jid,phone", "--no-header")
+        self.assertEqual((code, out, self.session.sent), (0, f"{self.LID}\t+351969554775\n", []))
+        _, out, _ = self.offline("chats", "--fields", "jid", "--no-header")
+        self.assertNotIn(self.LID, out)
+
+    def test_user_find_check_returns_lid(self):
+        self.session.lid_map = {self.PN: self.LID}
+        self.session.registered.add(self.PN)
+        _, out, _ = self.cli("user-find", "+351969554775", "--check", "--fields", "jid,phone", "--no-header")
+        self.assertEqual(out, f"{self.LID}\t+351969554775\n")
+
+    def test_no_mapping_keeps_phone_jid_and_me_stays(self):
+        self.cli("send", "+351933333333", "hi")
+        self.cli("send", "me", "hi")
+        self.assertEqual([j for j, _ in self.session.sent], [IVAN, ME])
