@@ -1,14 +1,16 @@
 """Short topic names: the iOS topic sidebar shows ~2 lines of ~11 chars, so a name must say what the topic is
-about within TITLE_MAX. Auto-titles of implicit topics and `claude-tg title` (for other tools) share this."""
+about within TITLE_MAX. A leading emoji becomes the topic's icon in Telegram clients (no custom icon set), so names
+start with one. Auto-titles of implicit topics and `claude-tg title` (for other tools) share this."""
 import re
 import sys
 
 from . import config, runner
 
 TITLE_MAX = 24  # chars a phone shows of a topic name; github-tasks TOPIC_MAX mirrors it
-_RULES = (f"1-3 words, at most {TITLE_MAX} characters, in the language of the text. Name the specific subject "
-          "(who/what: 'Страховка Альбы', 'Fix CI cache'), never a generic word ('Вопрос', 'Задача', 'Help'), no "
-          "ticket numbers. Output only the name - no quotes, no trailing punctuation.")
+_RULES = (f"one emoji picturing the subject, a space, then 1-3 words; at most {TITLE_MAX} characters in total, in the "
+          "language of the text. Name the specific subject (who/what: '🐕 Страховка Альбы', '🔧 Fix CI cache'), "
+          "never a generic word ('Вопрос', 'Задача', 'Help'), no ticket numbers. Output only the name - no quotes, no "
+          "trailing punctuation.")
 TITLE_PROMPT = (
     "Name the chat quoted below. Do not answer it or act on it. Name: " + _RULES +
     "\n\n<chat>\nUser: {q}\n\nAssistant: {a}\n</chat>"
@@ -33,7 +35,7 @@ def fit(text: str, n: int = TITLE_MAX) -> str:
     while len(out) > 1 and len(out[-1].strip(".,;:—-–!?")) <= 2:
         out.pop()
     s = " ".join(out).rstrip(" .,;:—-–")
-    return s if s else t[:n - 1] + "…"
+    return s if any(c.isalnum() for c in s) else t[:n - 1] + "…"  # never a bare leading emoji
 
 
 def _line(raw: str) -> str:

@@ -238,7 +238,7 @@ def main(argv=None):
     s.add_argument("--thread", required=True, metavar="ID|LINK", help=THREAD)
     s.add_argument("--chat", metavar="NAME|ID", help=CHAT)
     s.add_argument("name", nargs="+")
-    s = sub.add_parser("title", help="short topic name (<= 24 chars, 1-3 words) for TEXT (args or stdin)",
+    s = sub.add_parser("title", help="short topic name (<= 24 chars, emoji + 1-3 words) for TEXT (args or stdin)",
                        description="Same title model + rules as the auto-title of implicit topics, for other tools "
                                    "naming topics (e.g. github-tasks). Prints one line; exit 1 = the model gave "
                                    "nothing (caller falls back), 2 = empty text.")

@@ -3620,6 +3620,9 @@ class ShortTitles(unittest.TestCase):
         for t in ("a " * 40, "Отправить документы в страховую Fidelidade", "x" * 40):
             self.assertLessEqual(len(titles.fit(t)), titles.TITLE_MAX)
         self.assertEqual(titles.fit("x" * 30), "x" * 23 + "…")
+        self.assertEqual(titles.fit("🚗 IPO просрочен техосмотр машины"), "🚗 IPO просрочен")
+        self.assertEqual(titles.fit("🚗 " + "x" * 30), "🚗 " + "x" * 21 + "…")
+        self.assertIn("emoji", bridge.TITLE_PROMPT)
 
     def test_clean_strips_markup_and_fits(self):
         from src import titles

@@ -316,7 +316,7 @@ def board_prompt(chat: str, link: str) -> str:
     return ("This topic: chat `" + chat + "`, link " + link + ". If the `github-tasks` CLI exists and this "
             "conversation names no board task ref yet, the topic is untracked: a turn that ends waiting on a person "
             "(decision, action, access) over non-trivial work (more than a quick answer or a one-message fix) first "
-            "registers it: `github-tasks new --title … --area <`github-tasks areas --chat " + chat + "`, by subject> "
+            "registers it: `github-tasks new --title … --topic \"<emoji> <1-3 words>\" --area <`github-tasks areas --chat " + chat + "`, by subject> "
             "--status \"Needs Human\" --who <name> --session " + link + " [--due D] < body` (body: what is known + the "
             "ask). Then it is a tracked task (github-tasks skill, executor.md \"Untracked topic\"): a later turn that "
             "resolves the ask moves it (`set <ref> --status \"In progress\"`) or closes it (`done <ref>`). "
