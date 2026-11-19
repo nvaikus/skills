@@ -2,6 +2,8 @@
     if (P.keepalive) {
       // scheduled touch: load the site in a fresh tab (refreshes the session cookies), the user's tab stays as it is
       step = 'keepalive-tab';
+      // keep-alive leaves its tab open when signed out or on error: drop leftovers first, so at most one stays (live 2026-11-19: 25 stale ebay tabs, ~8 GB)
+      for (const p of page.context().pages().slice(1)) await p.close().catch(() => {});
       page = await page.context().newPage();
       await page.goto(WWW + '/', {timeout: T.nav, waitUntil: 'domcontentloaded'});
       await page.waitForLoadState('load', {timeout: T.nav}).catch(() => {});

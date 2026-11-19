@@ -1,6 +1,7 @@
     // Signed-in check; when signed out, leaves the browser on OLX's sign-in page for the human.
     // P.keepalive: check in a fresh tab (the user's tab stays as it is), closed again when signed in
-    if (P.keepalive) { step = 'new-tab'; page = await page.context().newPage(); }
+    // keep-alive leaves its tab open when signed out or on error: drop leftovers first, so at most one stays (live 2026-11-19: 25 stale ebay tabs, ~8 GB)
+    if (P.keepalive) { step = 'new-tab'; for (const p of page.context().pages().slice(1)) await p.close().catch(() => {}); page = await page.context().newPage(); }
     step = 'open-inbox';
     await page.goto(INBOX, {timeout: T.nav, waitUntil: 'domcontentloaded'});
     await page.waitForLoadState('load', {timeout: T.nav}).catch(() => {});
