@@ -10,7 +10,7 @@
     const btn = ta.locator('xpath=ancestor::form[1]').locator('button[type=submit]').first();
     await waitFor(async () => (await btn.isVisible().catch(() => false)) && (await btn.isEnabled().catch(() => false)),
                   T.el, 'enabled send button');
-    await btn.click({timeout: T.el});
+    await tap(btn);
     step = 'verify-sent';
     // sent = a new own bubble with this text whose status label shows a time (sending / undelivered show none)
     const want = norm(P.text).slice(0, 80);

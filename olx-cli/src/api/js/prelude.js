@@ -30,6 +30,13 @@
     inboxPage: '[data-testid=active-conversations-list-page], [data-testid=conversations-list-header], [data-testid=empty-list], [data-testid^=conversations-list-item-]',
   };
 
+  async function tap(loc) {
+    // live 2026-11-19 olx.pt: buttons are visible but ad iframes keep shifting the layout, so Playwright's
+    // actionability wait ("visible, enabled and stable") never settles and click() times out -> DOM click.
+    // A click() timeout dispatched nothing, so the fallback never double-clicks; callers verify the outcome.
+    await loc.click({timeout: 5000}).catch(() => loc.evaluate(b => b.click()));
+  }
+
   async function dismissCookies() {
     // live 2026-11-15: OneTrust banner on the first load (www and login.*); "necessary only" closes it
     for (const b of [page.locator('#onetrust-reject-all-handler'), page.getByRole('button', {name: /Aceitar necessários|Reject all|Rejeitar/i})]) {
@@ -111,11 +118,11 @@
     } else {
       step = 'open-listing';
       await go(P.url);
-      const btn = page.locator(SEL.adChat).first();
+      const btn = page.locator(SEL.adChat).filter({visible: true}).first();
       try { await btn.waitFor({state: 'visible', timeout: T.el}); }
       catch (e) { return {status: 'usage', error: `listing ${P.id} shows no "send message" button (inactive listing, or the seller takes no chat)`}; }
       step = 'click-message';
-      await btn.click({timeout: T.el});
+      await tap(btn);
     }
     step = 'wait-chat';
     // a desktop ad page may open the chat in a popup instead of routing: the composer is the proof either way
