@@ -85,7 +85,9 @@ def search(s, params, limit, must=None):
                 seen.add(r["id"])
                 rows.append(r)
         organic = len(data) - len(promo & set(range(len(data))))
-        if organic < page:
+        # end = empty page or total reached; a short page is not the end: with promoted ads mixed in,
+        # OLX can serve 49 organic of a 50-page (sort newest) and still have more pages
+        if not organic or (total and offset + page >= total):
             break
         offset += page
     return rows[:limit], total, promoted

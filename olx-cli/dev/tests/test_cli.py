@@ -145,6 +145,24 @@ class Search(Base):
         self.assertEqual([(c["params"]["offset"], c["params"]["limit"]) for c in self.fake.searches()],
                          [(0, 50), (50, 50), (100, 20)])
 
+    def test_paging_past_short_first_page(self):
+        """Promoted ads can push page 0 to 49 organic of 50 (sort newest): not the end while total says more."""
+        def pages(params):
+            body = synthetic_page(params)
+            if int(params["offset"]) == 0:
+                body["data"] = body["data"][:49] + copy.deepcopy(body["data"][:6])
+                for i, o in enumerate(body["data"][49:]):
+                    o["id"] = 800000000 + i
+                body["data"] = body["data"][49:] + body["data"][:49]
+                body["metadata"]["source"]["promoted"] = list(range(6))
+            body["metadata"]["visible_total_count"] = 130
+            return body
+        self.fake.pages = pages
+        rc, out, err = run("search", "x", "--limit", "200")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([c["params"]["offset"] for c in self.fake.searches()], [0, 50, 100])
+        self.assertEqual(len(self.tsv(out)), 149)
+
     def test_must_filters_titles(self):
         rc, out, err = run("search", "bicicleta", "--must", "bicicleta")
         self.assertEqual(rc, 0, err)
