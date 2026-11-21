@@ -13,7 +13,7 @@
 ## Item
 - `id` column = legacy listing id (the number in eBay URLs). Multi-variation listings (sizes, colours): `item` shows the cheapest variation + all; a single variation needs its `v1|<id>|<variation>` id or the URL with `?var=`.
 - Ended or removed listings → exit 2 "not found". `11004` = seller is editing, retry in minutes.
-- Description is seller HTML flattened to text and cut at 1500 chars unless `--full`.
+- Description is seller HTML flattened to text.
 
 ## Watch
 - `watch add` records current matches at once; only later listings are reported as `new`. `drop` = fixed price lower than last run (same currency); auction bids are never compared.

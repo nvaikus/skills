@@ -18,14 +18,14 @@
 - One action at a time per session: commands share a lock; a second one waits up to 300 s. A Chrome of another profile on the port → exit 1, never driven (seen: a scheduled job's Chrome on 9335).
 - Keep-alive: schedule `olx login --keepalive` every few hours (clockmaster): checks in a fresh tab, closed when signed in, the user's tab stays; busy → skipped, exit 0; signed out → exit 5 (notify the user). `access_token` lives 24 h, the `login.olx.<tld>` session 29 days: a visit within that renews it.
 
-## How it works (live 2026-11-15 olx.pt; the EU sites share one frontend)
+## How it works (seen live on olx.pt; the EU sites share one frontend)
 
 - Signed-in check = `/myaccount/answers/` stays on www (conversation list) instead of redirecting to `login.olx.<tld>`. The redirect is client-side, after load.
 - `msg send` / `msg list --id`: listing id/URL → offer API (url, seller name, `contact.chat`; chat off → exit 2 before the browser) → ad page → its own "Enviar mensagem" button (`data-testid=ad-contact-message-button`). OLX routes to the existing conversation `/myaccount/answer/<cid>/` or a new one `/myaccount/answer/new/?ad_id=…&user_uuid=…`, so a second message lands in the same thread.
 - Composer: `textarea[name="message.text"]` + the form's `button[type=submit]` (shown once there is text); max 5000 chars.
 - Bubbles: `data-testid=sent-message | received-message` (aria-label names the sender), text `[data-testid=message]`, `[data-testid=message-status-label]` = time, or a sending / undelivered / read note. Sent = a new own bubble with the text whose label shows a digit (time).
 - Inbox rows: `data-testid=conversations-list-item-<cid>`; name, ad title, snippet, date testids `list-item-*`. A status icon before the snippet = own last message (`last_by=me`); bold = unread.
-- Inbox: two tabs, "A comprar" `?my_ads=0` (buyer chats, the one read) and "A anunciar" `?my_ads=1`; the bare URL opens the last used tab. Empty inbox = `[data-testid=empty-list]` (live 2026-11-15 signed in). Bubbles not seen signed in yet; thread order assumed oldest first. A wrong row → read the dump / ARIA, fix `src/api/js/prelude.js`, add a `// live <date>` note.
+- Inbox: two tabs, "A comprar" `?my_ads=0` (buyer chats, the one read) and "A anunciar" `?my_ads=1`; the bare URL opens the last used tab. Empty inbox = `[data-testid=empty-list]` (seen live, signed in). Bubbles not seen signed in yet; thread order assumed oldest first. A wrong row → read the dump / ARIA, fix `src/api/js/prelude.js`, add a `// live <date>` note.
 - An image-only last message from the other side shows an attachment icon: `last_by` may say `me`. `msg list --conversation CID` to check.
 
 ## Failures
