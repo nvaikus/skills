@@ -3640,6 +3640,29 @@ class ShortTitles(unittest.TestCase):
             self.assertLessEqual(len(name), 24)
             self.assertEqual(name, "Очень длинное название")
 
+    def test_auto_title_emoji_becomes_icon(self):
+        from src import titles
+        self.assertEqual(titles.split_icon("🤖 Помощник Натальи"), ("🤖", "Помощник Натальи"))
+        self.assertEqual(titles.split_icon("Помощник Натальи"), ("", "Помощник Натальи"))
+        self.assertEqual(titles.split_icon("🤖"), ("", "🤖"))
+
+        class IconBot(FakeBot):
+            def call(self, method, _timeout=35, _retries=3, **p):
+                if method == "getForumTopicIconStickers":
+                    return [{"emoji": "🤖", "custom_emoji_id": "77"}]
+                return super().call(method, **p)
+        for raw, name, icon in (("🤖 Помощник Натальи", "Помощник Натальи", "77"),
+                                ("🦄 Единороги", "🦄 Единороги", None)):
+            with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "STATE_DIR", Path(d)):
+                b = TopicCommands.bridge(None, d)
+                b.bot = IconBot()
+                with mock.patch.object(runner, "one_shot", return_value=raw) as os_:
+                    bridge.Worker(b, 1, 50).rename("q", "a")
+                self.assertIn("🤖", os_.call_args[0][1])  # the prompt offers the icon emojis
+                p = b.bot.calls[-1][1]
+                self.assertEqual((p["name"], p.get("icon_custom_emoji_id")), (name, icon))
+                self.assertEqual(b.store.topic(b.key(1, 50)).get("icon"), icon)
+
     def test_title_cli(self):
         from src import main as m
         cfg = dict(config.DEFAULTS)

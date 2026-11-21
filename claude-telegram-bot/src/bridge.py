@@ -1420,17 +1420,23 @@ class Worker:
     def rename(self, question, answer):
         b = self.b
         try:
-            raw = runner.one_shot(b.claude, TITLE_PROMPT.format(q=question[:1500], a=answer[:1500]), b.env,
-                                  str(config.STATE_DIR), b.cfg["title_model"])
+            icons = notify.icon_emojis(b.bot)
+            hint = titles.ICONS_HINT.format(" ".join(icons)) if icons else ""
+            raw = runner.one_shot(b.claude, TITLE_PROMPT.format(q=question[:1500], a=answer[:1500], icons=hint),
+                                  b.env, str(config.STATE_DIR), b.cfg["title_model"])
         except Exception as e:
             return log.warning("title: %s", e)
         title = titles.clean(raw)  # the prompt asks for <= TITLE_MAX; clean() cuts on a word boundary if not
         if not title:
             return
+        # a leading topic-icon emoji becomes the icon (like notify topics) and leaves the name: no double emoji
+        emoji, rest = titles.split_icon(title)
+        cid = notify.icon_id(b.bot, emoji, quiet=True) if emoji else None
+        extra, name = ({"icon_custom_emoji_id": cid}, rest) if cid else ({}, title)
         try:
-            b.bot.call("editForumTopic", chat_id=self.chat, message_thread_id=self.thread, name=title)
-            b.store.update(self.key, title=title, implicit=False)
-            log.info("topic %s renamed: %r", self.thread, title)
+            b.bot.call("editForumTopic", chat_id=self.chat, message_thread_id=self.thread, name=name, **extra)
+            b.store.update(self.key, title=name, implicit=False, **({"icon": cid} if cid else {}))
+            log.info("topic %s renamed: %r%s", self.thread, name, f" icon {emoji}" if cid else "")
         except TgError as e:
             log.warning("editForumTopic: %s", e)
 

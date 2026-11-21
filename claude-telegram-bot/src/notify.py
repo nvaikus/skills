@@ -146,7 +146,21 @@ def bot_username(bot):
         return None
 
 
-def icon_id(bot, icon):
+def _stickers(bot, ttl=None):
+    return cached("stickers", STICKERS_TTL if ttl is None else ttl, lambda: [
+        {"emoji": s.get("emoji", ""), "custom_emoji_id": s["custom_emoji_id"]}
+        for s in bot.call("getForumTopicIconStickers")])
+
+
+def icon_emojis(bot) -> list:
+    """Emojis allowed as topic icons (cached); [] when the lookup fails (cosmetic: never blocks a rename)."""
+    try:
+        return [s["emoji"] for s in _stickers(bot) if s.get("emoji")]
+    except Exception:
+        return []
+
+
+def icon_id(bot, icon, quiet=False):
     """custom_emoji_id for an icon given as emoji or id; None (with a warning) when unknown.
     The sticker list is cached (STICKERS_TTL); an emoji missing from it refetches once the cache is > 1 h old."""
     if not icon:
@@ -154,21 +168,18 @@ def icon_id(bot, icon):
     if str(icon).isdigit():
         return str(icon)
     want = str(icon).rstrip("\ufe0f")
-
-    def fetch():
-        return [{"emoji": s.get("emoji", ""), "custom_emoji_id": s["custom_emoji_id"]}
-                for s in bot.call("getForumTopicIconStickers")]
     try:
         for ttl in (STICKERS_TTL, 0):
             if ttl == 0 and _cache_age("stickers") < MISS_TTL:
                 break
-            for s in cached("stickers", ttl, fetch):
+            for s in _stickers(bot, ttl):
                 if s.get("emoji", "").rstrip("\ufe0f") == want:
                     return s["custom_emoji_id"]
     except TgError as e:
         print(f"claude-tg notify: no topic icons ({e.description})", file=sys.stderr)
         return None
-    print(f"claude-tg notify: icon {icon} is not a topic icon (getForumTopicIconStickers); none set", file=sys.stderr)
+    if not quiet:
+        print(f"claude-tg notify: icon {icon} is not a topic icon (getForumTopicIconStickers); none set", file=sys.stderr)
     return None
 
 
