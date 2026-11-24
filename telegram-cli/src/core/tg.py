@@ -235,6 +235,9 @@ def media_filter(kind):
 
 def translate(exc):
     """Telethon exception -> CliError, or None when it is not a Telegram error (then it is our bug)."""
+    if type(exc) is ValueError and str(exc).startswith("Request was unsuccessful"):  # Telethon gave up retrying
+        return CliError("Telegram server error, retries exhausted (transient, Telegram-side) - retry later; "
+                        "for a chat by @username pass the @ so it resolves directly, not via the dialog list")
     try:
         from telethon import errors
     except ImportError:

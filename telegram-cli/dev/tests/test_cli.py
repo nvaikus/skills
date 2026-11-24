@@ -709,5 +709,13 @@ class Pipes(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
 
+class Translate(unittest.TestCase):
+    def test_retries_exhausted_is_telegram_side_not_our_bug(self):
+        e = tg.translate(ValueError("Request was unsuccessful 6 time(s)"))
+        self.assertIsNotNone(e)
+        self.assertIn("retries exhausted", str(e))
+        self.assertIsNone(tg.translate(ValueError("something else")))
+
+
 if __name__ == "__main__":
     unittest.main()
