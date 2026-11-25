@@ -268,6 +268,10 @@ class TestScripts(unittest.TestCase):
     def test_who(self):
         self.assertEqual(account._who({"mine": True}, "Helder"), "me")
         self.assertEqual(account._who({"mine": False, "who": "x"}, None), "x")
+        # --conversation (no listing lookup): the aria text minus its "sent by" prefix
+        self.assertEqual(account._who({"mine": False, "who": "Mensagem enviada por Diogo"}, None), "Diogo")
+        self.assertEqual(account._who({"mine": False, "who": "Mensagem de Helder"}, None), "Helder")
+        self.assertEqual(account._who({"mine": False, "who": "Ana de Sousa"}, None), "Ana de Sousa")
 
 
 if __name__ == "__main__":

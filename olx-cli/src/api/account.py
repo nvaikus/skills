@@ -1,5 +1,7 @@
 """Login check and seller chat in the user's logged-in browser (api/browser): refs in, rows out.
 Scope is fixed: sign-in, read conversations, send a chat message. Never posts, buys or pays."""
+import re
+
 from ..core.errors import UsageError
 from . import browser, offers, olx
 
@@ -36,10 +38,14 @@ def message_text(text, stdin):
     return text
 
 
+_SENT_BY = re.compile(r"^(?:mensagem (?:enviada por|de)|message (?:sent by|from)|wiadomość (?:wysłana przez|od))\s+", re.I)
+
+
 def _who(m, seller):
     if m.get("mine"):
         return "me"
-    return seller or m.get("who") or "?"
+    # no listing lookup (--conversation): the bubble's aria text, e.g. "Mensagem enviada por Diogo"
+    return seller or _SENT_BY.sub("", m.get("who") or "") or "?"
 
 
 def msg_send(cfg, ref, text, s):
