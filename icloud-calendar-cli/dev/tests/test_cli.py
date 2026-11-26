@@ -366,6 +366,45 @@ class TestShowEditDelete(Base):
         self.assertIn("RECURRENCE-ID", b)  # override kept
         self.assertIn("SEQUENCE:3", b)
 
+    def test_edit_until_timed_utc(self):
+        rc, out, err = self.cli("edit", "WEEKLY-1", "--until", "2026-12-31", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261231T235959Z", out)  # Lisbon = UTC in winter
+        self.assertEqual(self.dav.puts(), [])
+        rc, out, err = self.cli("edit", "WEEKLY-1", "--until", "2026-10-14")
+        self.assertEqual(rc, 0, err)
+        b = self.dav.puts()[0]["body"]
+        self.assertIn("RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261014T225959Z", b)  # 23:59:59 WEST -> UTC
+        for keep in ("DTSTART;TZID=Europe/Lisbon:20261005T093000", "EXDATE;TZID=Europe/Lisbon:20261007T093000",
+                     "X-APPLE-TRAVEL-ADVISORY-BEHAVIOR:AUTOMATIC", "VALARM", "RECURRENCE-ID", "SEQUENCE:3"):
+            self.assertIn(keep, b)
+        self.assertIn("until", out)
+
+    def test_edit_until_replaces_count_and_clears(self):
+        self.dav.add(P + "work/C.ics", WEEKLY.replace("UID:WEEKLY-1", "UID:COUNT-1")
+                     .replace("BYDAY=MO,WE", "COUNT=10;BYDAY=MO,WE;UNTIL=20270101T000000Z"), '"c1"')
+        rc, out, err = self.cli("edit", "COUNT-1", "--until", "2026-11-30", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261130T235959Z\n", out)
+        rc, out, err = self.cli("edit", "COUNT-1", "--until", "", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("RRULE:FREQ=WEEKLY;BYDAY=MO,WE\n", out)
+
+    def test_edit_until_all_day_date(self):
+        self.dav.add(P + "work/Y.ics", FEED.replace("hol-1", "YEAR-1"), '"y1"')
+        rc, out, err = self.cli("edit", "YEAR-1", "--until", "2030-10-05", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("RRULE:FREQ=YEARLY;UNTIL=20301005\n", out)
+
+    def test_edit_until_refusals(self):
+        rc, out, err = self.cli("edit", "SINGLE-ABCDEF", "--until", "2026-12-31")
+        self.assertEqual(rc, 2)
+        self.assertIn("not a repeating event", err)
+        rc, out, err = self.cli("edit", "WEEKLY-1", "--until", "2026-10-04")
+        self.assertEqual(rc, 2)
+        self.assertIn("delete", err)
+        self.assertEqual(self.dav.puts(), [])
+
     def test_edit_412(self):
         self.dav.res[P + "work/SINGLE.ics"] = ('"v2"', SINGLE)
         with mock.patch("src.api.events.find") as f:

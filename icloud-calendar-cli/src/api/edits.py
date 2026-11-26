@@ -2,7 +2,7 @@
 import datetime as dt
 
 from ..core.errors import UsageError
-from . import when
+from . import ics, when
 
 
 def resolve_times(start_s, end_s, duration_s, all_day, zone, old=None):
@@ -54,3 +54,30 @@ def resolve_times(start_s, end_s, duration_s, all_day, zone, old=None):
     if end <= start:
         raise UsageError("--end must be after --start")
     return start, end, False
+
+
+def set_until(ev, vcal, last_day, local):
+    """End a series: the last occurrence falls on/before last_day (inclusive); None = repeat forever.
+    Replaces UNTIL and COUNT, keeps every other RRULE part. UNTIL type follows DTSTART (RFC 5545):
+    DATE for all-day, UTC for TZID/UTC starts (end of last_day in that zone), floating for floating."""
+    rr = ev.get("RRULE")
+    if rr is None:
+        raise UsageError("not a repeating event: --until needs an RRULE (use delete or --start instead)")
+    parts = [x for x in rr.value.split(";") if x and x.split("=", 1)[0].upper() not in ("UNTIL", "COUNT")]
+    if last_day is not None:
+        p = ev.get("DTSTART")
+        start, is_date = ics.parse_value(p, vcal, local)
+        zone = start.tzinfo if not is_date and p.params.get("TZID") else local
+        first = start if is_date else start.astimezone(zone).date()
+        if last_day < first:
+            raise UsageError(f"--until {last_day} is before the first occurrence ({first}): "
+                             "use `delete` to drop the whole series")
+        if is_date:
+            u = ics.fmt_date(last_day)
+        else:
+            end = dt.datetime.combine(last_day, dt.time(23, 59, 59), zone)
+            floating = "TZID" not in p.params and not p.value.strip().upper().endswith("Z")
+            u = ics.fmt_local(end) if floating else ics.fmt_utc(end)
+        parts.append(f"UNTIL={u}")
+    rr.value = ";".join(parts)
+    return rr.value

@@ -15,7 +15,7 @@ icloud-calendar list --from mon --to fri --cal Work -j
 icloud-calendar show UID                                   # markdown; uid or >= 6 leading chars (show/edit/delete; ambiguous → exit 2 + candidates); -j adds raw ics
 icloud-calendar add --title Dentist --start 'tomorrow 14:00' --duration 45m --alarm 1h [--cal Family]
 icloud-calendar add --title Trip --start 2026-10-10 --end 2026-10-12 --all-day     # --end inclusive
-icloud-calendar edit UID --start 'fri 15:00'               # keeps duration; --title --end --location --geo --no-geo --notes --alarm --no-alarms --timed
+icloud-calendar edit UID --start 'fri 15:00'               # keeps duration; --title --end --location --geo --no-geo --notes --alarm --no-alarms --timed --until DATE (end a series, inclusive; '' = forever)
 icloud-calendar delete UID                                 # --dry-run first when unsure
 icloud-calendar invites                                    # pending share invitations (read-only)
 icloud-calendar calendars --set-default NAME               # where `add` goes without --cal

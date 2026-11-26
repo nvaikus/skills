@@ -1,7 +1,7 @@
 """edit: change fields of an existing event (the whole series when it repeats)."""
 import datetime as dt
 
-from ...api import calendars, edits, events, geo, ics, tz
+from ...api import calendars, edits, events, geo, ics, tz, when
 from ...core.errors import UsageError
 from . import _common
 
@@ -12,6 +12,8 @@ EPILOG = """examples:
   icloud-calendar edit 6F1C2A3B --geo 38.7029,-9.3531           # pin the current location text there
   icloud-calendar edit 6F1C2A3B --all-day                       # timed -> all-day, same day
   icloud-calendar edit 6F1C2A3B --alarm 30m --alarm 1d          # replaces every alarm; --no-alarms clears
+  icloud-calendar edit 6F1C2A3B --until 2026-12-31 --dry-run    # end a series: last occurrence on/before that day
+  icloud-calendar edit 6F1C2A3B --until ''                      # repeat forever again (drops UNTIL/COUNT)
 
 Only the given fields change; everything else in the event (attendees, Apple-specific properties)
 is kept as it is. A repeating event changes as a whole series - single occurrences are out of scope.
@@ -26,6 +28,8 @@ def add_args(p):
     p.add_argument("--timed", action="store_false", dest="all_day", default=None, help="all-day -> timed (needs --start with a time)")
     _common.field_args(p)
     p.add_argument("--no-alarms", action="store_true", help="remove every alarm")
+    p.add_argument("--until", metavar="DATE", help="repeating event: last day of the series, inclusive "
+                   "(replaces UNTIL/COUNT); '' = repeat forever")
 
 
 def run(ctx, args):
@@ -74,8 +78,12 @@ def run(ctx, args):
     if args.no_alarms or args.alarm:
         events.replace_alarms(ev, [] if args.no_alarms else _common.alarms(args), ev.text("SUMMARY"))
         changed.append("alarms")
+    if args.until is not None:
+        day = when.point(args.until, zone)[0] if args.until.strip() else None
+        edits.set_until(ev, vcal, day.astimezone(zone).date() if isinstance(day, dt.datetime) else day, zone)
+        changed.append("until")
     if not changed:
-        raise UsageError("nothing to change: pass --title, --start, --end, --location, --geo, --notes, --alarm ...")
+        raise UsageError("nothing to change: pass --title, --start, --end, --location, --geo, --notes, --alarm, --until ...")
     events.touch(ev)
     if args.dry_run:
         return _common.dry(ctx, vcal)
